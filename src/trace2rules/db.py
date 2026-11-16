@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import duckdb
+
+DB_PATH = Path("data/trace2rules.duckdb")
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id       VARCHAR PRIMARY KEY,
+    repo             VARCHAR NOT NULL,
+    instance_id      VARCHAR NOT NULL,
+    resolved         BOOLEAN NOT NULL,
+    total_turns      INTEGER NOT NULL,
+    source           VARCHAR DEFAULT '',
+    agent            VARCHAR DEFAULT '',
+    success_score    DOUBLE
+);
+
+CREATE TABLE IF NOT EXISTS tool_events (
+    event_id          VARCHAR PRIMARY KEY,
+    session_id        VARCHAR NOT NULL,
+    repo              VARCHAR NOT NULL,
+    step_idx          INTEGER NOT NULL,
+    tool_name         VARCHAR NOT NULL,
+    action_type       VARCHAR NOT NULL,
+    verb              VARCHAR NOT NULL,
+    object_id         VARCHAR NOT NULL,
+    target            VARCHAR NOT NULL,
+    raw_target        VARCHAR NOT NULL,
+    outcome           VARCHAR NOT NULL,
+    exit_code         INTEGER,
+    error_signature   VARCHAR NOT NULL,
+    is_error          BOOLEAN NOT NULL,
+    approx_out_tokens INTEGER NOT NULL,
+    obs_excerpt       VARCHAR NOT NULL
+);
+"""
+
+
+def connect(path: str | Path = DB_PATH) -> duckdb.DuckDBPyConnection:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(
+        str(path),
+        config={
+            "memory_limit": "4500MB",
+            "threads": "1",
+            "preserve_insertion_order": "false",
+        },
+    )
+    con.execute(SCHEMA)
+    for ddl in (
+        "ALTER TABLE sessions ADD COLUMN source VARCHAR DEFAULT ''",
+        "ALTER TABLE sessions ADD COLUMN agent VARCHAR DEFAULT ''",
+        "ALTER TABLE sessions ADD COLUMN success_score DOUBLE",
+        "ALTER TABLE tool_events ADD COLUMN verb VARCHAR DEFAULT ''",
+        "ALTER TABLE tool_events ADD COLUMN object_id VARCHAR DEFAULT ''",
+        "ALTER TABLE tool_events ADD COLUMN outcome VARCHAR DEFAULT 'unknown'",
+        "ALTER TABLE tool_events ADD COLUMN exit_code INTEGER",
+        "ALTER TABLE tool_events ADD COLUMN error_signature VARCHAR DEFAULT ''",
+        "ALTER TABLE tool_events ADD COLUMN obs_excerpt VARCHAR DEFAULT ''",
+    ):
+        try:
+            con.execute(ddl)
+        except duckdb.Error:
+            pass
+    return con

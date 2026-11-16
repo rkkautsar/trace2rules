@@ -1,0 +1,47 @@
+[project]
+name = "trace2rules"
+version = "0.1.0"
+description = "Mine coding-agent trajectories into evidence-backed AGENTS.md rules"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Rakha Kanz Kautsar", email = "rkkautsar@gmail.com" }
+]
+requires-python = ">=3.12"
+keywords = ["agents", "coding-agents", "agents.md", "trajectories", "duckdb"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "duckdb>=2.0.0",
+    "openai>=3.51.0",
+    "pydantic>=2.14.3",
+    "rich>=15.0.0",
+    "scikit-learn>=1.9.1",
+    "typer>=0.29.1",
+]
+
+[project.optional-dependencies]
+local = [
+    "agent-trajectory>=0.4.4",
+]
+
+[project.scripts]
+trace2rules = "trace2rules.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.13.4,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

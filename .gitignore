@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+build/
+dist/
+wheels/
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local data
+data/
+*.duckdb
+
+# Generated proposals
+AGENTS.proposed.md
+AGENTS.*.proposed.md
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store

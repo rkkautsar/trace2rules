@@ -58,10 +58,13 @@ def _iter_files(root: Path, source: str, limit: int | None) -> list[Path]:
     if root.is_file():
         return [root]
     suffix = ".json" if source == "opencode" else ".jsonl"
-    files = sorted(root.rglob(f"*{suffix}"))
-    if limit:
-        files = files[:limit]
-    return [path for path in files if path.is_file()]
+    skip = {"changes.jsonl"}
+    files = [
+        path
+        for path in sorted(root.rglob(f"*{suffix}"))
+        if path.is_file() and path.name not in skip
+    ]
+    return files[:limit] if limit else files
 
 
 def _repo_from_cwd(cwd: str | None) -> str:

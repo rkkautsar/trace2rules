@@ -76,23 +76,34 @@ pip install -e '.[local]'
 
 `agent-trajectory` calls its bundled JS bridge through the system Node runtime. Install Node.js 20 or newer before using `--format agent-trajectory`.
 
-## Quick start
+## Quick start: your own sessions
 
-This ingests the default **SWE-rebench OpenHands parquet** from Hugging Face. `django__django` is an `instance_id` prefix, not a GitHub slug.
+Analyze the sessions already on your machine. This example uses OMP; point `--source` at Claude Code, Codex, or Pi instead if that is what you use.
+
+```bash
+uv sync --extra local
+uv run trace2rules ingest --format agent-trajectory --source ~/.omp/agent/sessions --limit 50
+uv run trace2rules mine
+uv run trace2rules synthesize
+```
+
+`--source ~` scans all standard local stores: `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, and `~/.omp/agent/sessions`. The example imports 50 sessions; use `--limit 0` for all.
+
+LLM synthesis is the default. Add `--offline` if you do not have an API key.
+
+`ingest` writes to `data/trace2rules.duckdb` by default. `mine`, `exact`, and `synthesize` read from it.
+
+## Public dataset: SWE-rebench
+
+To reproduce the PDM example above without local sessions, ingest the default **SWE-rebench OpenHands parquet** from Hugging Face. `django__django` is an `instance_id` prefix, not a GitHub slug.
 
 ```bash
 uv run trace2rules ingest --format swe-rebench --repos django__django --limit 50
 uv run trace2rules mine
 uv run trace2rules synthesize
-# or, without an API key:
-uv run trace2rules synthesize --offline
 ```
 
-LLM synthesis is the default. `--offline` is the no-key/deterministic path.
-
-`ingest` writes to `data/trace2rules.duckdb` by default. `mine`, `exact`, and `synthesize` read from it.
-
-### Optional example corpus: SWE-chat
+## Optional example corpus: SWE-chat
 
 SWE-chat is an optional example corpus, not a core input format. It is useful for reproducing the PDM finding above.
 
@@ -116,7 +127,7 @@ uv run trace2rules synthesize
 
 `--limit 0` imports the full corpus. The default limit is 200 sessions. For `swe-rebench`, `--limit 0` also means all matching sessions.
 
-### Local agent sessions
+## Local agent sessions
 
 ```bash
 uv run trace2rules ingest \

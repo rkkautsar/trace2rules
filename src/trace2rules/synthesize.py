@@ -104,7 +104,7 @@ def print_findings(findings: list[Finding], console: Console | None = None) -> N
 
 
 def _client() -> tuple[object, str] | None:
-    key = os.getenv("TRACE2RULES_API_KEY")
+    key = os.getenv("TRACE2RULES_LLM_API_KEY") or os.getenv("TRACE2RULES_API_KEY")
     base = os.getenv("TRACE2RULES_BASE_URL")
     model = os.getenv("TRACE2RULES_MODEL")
     if key:

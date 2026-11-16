@@ -38,7 +38,7 @@ Synthesis is LLM-first. `trace2rules synthesize` sends the gated findings for ea
 
 Provider selection:
 
-1. `TRACE2RULES_API_KEY` — explicit key; optional `TRACE2RULES_BASE_URL` and `TRACE2RULES_MODEL`.
+1. `TRACE2RULES_LLM_API_KEY` — key for a custom OpenAI-compatible endpoint; pair with `TRACE2RULES_BASE_URL` and `TRACE2RULES_MODEL`. This is not a trace2rules service key.
 2. `GEMINI_API_KEY` or `GOOGLE_API_KEY` — Gemini OpenAI-compatible endpoint.
 3. `OPENAI_API_KEY` — OpenAI.
 
@@ -191,7 +191,7 @@ This is currently separate from synthesis: CLEF labels feed `patterns`, not `syn
 | `GEMINI_API_KEY` | Gemini synthesis provider |
 | `GOOGLE_API_KEY` | Alternate Gemini key |
 | `OPENAI_API_KEY` | OpenAI synthesis provider |
-| `TRACE2RULES_API_KEY` | Explicit synthesis API key |
+| `TRACE2RULES_LLM_API_KEY` | Key for a custom OpenAI-compatible endpoint; not a trace2rules key |
 | `TRACE2RULES_BASE_URL` | OpenAI-compatible base URL (including LiteLLM) |
 | `TRACE2RULES_MODEL` | Synthesis model, e.g. `gemini-4-hydrogen` |
 | `HF_TOKEN` | Gated Hugging Face dataset access |

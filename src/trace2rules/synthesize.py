@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Literal
 
@@ -331,6 +332,12 @@ def synthesize(
             console.print(f"[yellow]No rules for {repo_name}; skipped.[/yellow]")
             continue
         if repo and out_path is not None:
+            if str(out_path) == "-":
+                sys.stdout.write(text)
+                if not text.endswith("\n"):
+                    sys.stdout.write("\n")
+                results.append((Path("-"), synthesis))
+                continue
             path = Path(out_path)
         else:
             path = out_dir / f"AGENTS.{_slug(repo_name)}.proposed.md"

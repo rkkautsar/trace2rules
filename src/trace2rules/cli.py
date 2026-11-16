@@ -342,7 +342,7 @@ app.command("exact")(_exact_command)
 
 
 def _synthesize_command(
-    out: Annotated[Path | None, typer.Option("--out", "-o", help="Output path for a single --repo.")] = None,
+    out: Annotated[Path | None, typer.Option("--out", "-o", help="Output path for a single --repo; use '-' for stdout.")] = None,
     out_dir: Annotated[Path, typer.Option("--out-dir", help="Directory for per-repo AGENTS files.")] = Path("."),
     repo: Annotated[str | None, typer.Option("--repo", help="Synthesize only this repo.")] = None,
     top: Annotated[int, typer.Option(help="Findings to pass to synthesis.")] = 25,
@@ -351,11 +351,12 @@ def _synthesize_command(
 ) -> None:
     if out is not None and repo is None:
         raise typer.BadParameter("--out requires --repo; use --out-dir for multiple repos.")
+    cmd_console = Console(stderr=True) if out is not None and str(out) == "-" else console
     con = connect(db)
     try:
         session_count = con.execute("SELECT count(*) FROM sessions").fetchone()[0]
         if session_count == 0:
-            console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
+            cmd_console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
             raise typer.Exit(1)
         try:
             results = synthesize_rules(
@@ -365,13 +366,13 @@ def _synthesize_command(
                 repo=repo,
                 top=top,
                 offline=offline,
-                console=console,
+                console=cmd_console,
             )
         except ValueError as error:
-            console.print(f"[red]{escape(str(error))}[/red]")
+            cmd_console.print(f"[red]{escape(str(error))}[/red]")
             raise typer.Exit(1) from None
         for path, synthesis in results:
-            console.print(
+            cmd_console.print(
                 f"Wrote [bold]{path}[/bold] with {len(synthesis.rules)} rules for {synthesis.repo}."
             )
     finally:

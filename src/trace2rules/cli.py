@@ -631,15 +631,27 @@ app.command("exact")(_exact_command)
 
 def _synthesize_command(
     out: Annotated[Path | None, typer.Option("--out", "-o", help="Output path for a single --repo; use '-' for stdout.")] = None,
-    out_dir: Annotated[Path, typer.Option("--out-dir", help="Directory for per-repo AGENTS files.")] = Path("."),
+    out_dir: Annotated[
+        Path | None,
+        typer.Option("--out-dir", help="Directory for per-repo AGENTS files."),
+    ] = None,
     repo: Annotated[str | None, typer.Option("--repo", help="Synthesize only this repo.")] = None,
     top: Annotated[int, typer.Option(help="Findings to pass to synthesis.")] = 25,
+    max_rules: Annotated[
+        int,
+        typer.Option("--max-rules", min=1, max=20, help="Maximum rules per repo."),
+    ] = 5,
     offline: Annotated[bool, typer.Option("--offline", help="Skip the LLM and use deterministic rules.")] = False,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     if out is not None and repo is None:
         raise typer.BadParameter("--out requires --repo; use --out-dir for multiple repos.")
-    cmd_console = Console(stderr=True) if out is not None and str(out) == "-" else console
+    stdout_mode = out is None and out_dir is None
+    cmd_console = (
+        Console(stderr=True)
+        if stdout_mode or (out is not None and str(out) == "-")
+        else console
+    )
     con = connect(db)
     try:
         session_count = con.execute("SELECT count(*) FROM sessions").fetchone()[0]
@@ -653,6 +665,7 @@ def _synthesize_command(
                 out_dir=out_dir,
                 repo=repo,
                 top=top,
+                max_rules=max_rules,
                 offline=offline,
                 console=cmd_console,
             )

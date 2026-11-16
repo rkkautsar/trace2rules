@@ -354,3 +354,33 @@ def test_ingest_continues_after_a_bad_source(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Failed /bad" in result.output
     assert "/good" in result.output
+
+
+def test_synthesize_defaults_to_stdout(tmp_path: Path, monkeypatch) -> None:
+    db = tmp_path / "stdout.duckdb"
+    sessions = []
+    for index in range(3):
+        sessions.append(
+            Session(
+                f"s{index}",
+                "acme/repo",
+                source="test",
+                calls=[
+                    ToolCall(
+                        "Read",
+                        "src/a.py",
+                        observation="contents",
+                        action_type="read",
+                        target="src/a.py",
+                        verb="read",
+                        object_id="src/a.py",
+                    )
+                ],
+            )
+        )
+    write_sessions(db, sessions)
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["synthesize", "--db", str(db), "--offline"])
+    assert result.exit_code == 0
+    assert "# AGENTS.md" in result.output
+    assert not list(tmp_path.glob("AGENTS.*.proposed.md"))

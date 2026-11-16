@@ -190,9 +190,10 @@ trace2rules ingest --format swe-rebench    # opt into the public dataset
 trace2rules ingest --source PATH --limit 200
 trace2rules synthesize
 trace2rules synthesize --offline
+trace2rules synthesize --max-rules 10
+trace2rules synthesize --out-dir ./proposals
 trace2rules synthesize --repo owner/name --out AGENTS.proposed.md
 trace2rules synthesize --repo owner/name --out -
-trace2rules synthesize --out-dir ./proposals
 ```
 
 `--label` auto-detects an authenticated `wrangler` first, then `GEMINI_API_KEY`/`GOOGLE_API_KEY`, then `OPENAI_API_KEY`. It is opt-in because a full local run can have thousands of unique targets.

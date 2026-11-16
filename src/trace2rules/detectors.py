@@ -27,6 +27,7 @@ class Finding:
     intent_confidence: float = 0.0
     object_confidence: float = 0.0
     event_keys: tuple[tuple[str, str, str], ...] = field(default_factory=tuple)
+    edit_sessions: int = 0
 
     @property
     def evidence(self) -> str:
@@ -102,6 +103,7 @@ def hotspots(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[F
             sessions=sessions,
             tokens=int(wasted or 0),
             detail=f"read-only in {read_only}/{repo_sessions} sessions ({read_only / repo_sessions:.0%})",
+            edit_sessions=sessions - read_only,
         )
         for repo, target, sessions, read_only, repo_sessions, wasted in con.execute(query).fetchall()
     ]

@@ -20,7 +20,6 @@ from .redact import redact_value
 MAX_RULES = 5
 MAX_LINES = 60
 MAX_CHARS = 2500
-OUT_PATH = Path("AGENTS.proposed.md")
 EXACT_LENGTHS = (3, 4, 5)
 
 GENERATED_VERIFIER_RE = re.compile(
@@ -261,7 +260,12 @@ def _make_client(key: str, base: str | None, model: str):
     return client, model
 
 
-def _prompt(findings: list[Finding], repo: str, labels: list[dict]) -> str:
+def _prompt(
+    findings: list[Finding],
+    repo: str,
+    labels: list[dict],
+    max_rules: int = MAX_RULES,
+) -> str:
     payload = redact_value(
         [
         {
@@ -290,7 +294,7 @@ Semantic target labels observed for this repo (clef/decision-model annotations, 
 {json.dumps(redact_value(labels), indent=2)}
 
 Write AGENTS.md rules for this repository. Requirements:
-- Emit 1-5 declarative rules, not task-specific issue descriptions.
+- Emit 1-{max_rules} declarative rules, not task-specific issue descriptions.
 - Categories: test_command, architecture_map, context_hygiene, convention.
 - rule_markdown: 1-2 imperative sentences, concrete command or file names.
 - evidence_summary: sessions affected and approximate setup/rework token cost.
@@ -298,14 +302,14 @@ Write AGENTS.md rules for this repository. Requirements:
 - Ignore task-specific verifier scripts, one-off filenames, and normal edit -> test-fail loops.
 - For `recovery` findings, turn the failed -> successful transition into a convention rule.
 - If any finding has `paired_instances >= 2` and `delta_rework >= 1`, include one `convention` rule: read the exception signature; if the same signature repeats after an edit, fix the product code or test scope instead of editing the harness.
-- Total output must stay under 5 rules, 60 lines, and 2,500 characters.
+- Total output must stay under {max_rules} rules, {max(MAX_LINES, max_rules * 10)} lines, and {max(MAX_CHARS, max_rules * 500):,} characters.
 
 Return JSON only, shaped exactly as:
 {{"repo": "{repo}", "rules": [{{"category": "...", "rule_markdown": "...", "evidence_summary": "...", "estimated_tokens_saved_per_session": 0}}]}}"""
 
 
 def _llm_synthesis(
-    findings: list[Finding], repo: str, labels: list[dict]
+    findings: list[Finding], repo: str, labels: list[dict], max_rules: int = MAX_RULES
 ) -> Synthesis | None:
     resolved = _client()
     if resolved is None:
@@ -320,7 +324,7 @@ def _llm_synthesis(
                 "role": "system",
                 "content": "You convert observed coding-agent friction into terse, repo-level AGENTS.md rules.",
             },
-            {"role": "user", "content": _prompt(findings, repo, labels)},
+            {"role": "user", "content": _prompt(findings, repo, labels, max_rules)},
         ],
     )
     content = (response.choices[0].message.content or "").strip()
@@ -332,15 +336,41 @@ def _is_path_target(title: str) -> bool:
     return bool(title) and " " not in title and ("/" in title or "." in title)
 
 
-def _offline_synthesis(findings: list[Finding], repo: str) -> Synthesis:
+DOC_TARGET_RE = re.compile(
+    r"(?i)(^|/)(readme|docs?|changelog|contributing|license)(\.|/|$)"
+)
+INSTALL_RECOVERY_RE = re.compile(
+    r"(?i)\b(pip|uv|poetry)\b.*\b(install|sync)\b|pip install .* -e"
+)
+
+
+def _is_doc_target(title: str) -> bool:
+    return bool(DOC_TARGET_RE.search(title))
+
+
+def _offline_synthesis(
+    findings: list[Finding], repo: str, max_rules: int = MAX_RULES
+) -> Synthesis:
     rules: list[Rule] = []
     seen: set[tuple[str, str]] = set()
+    counts: dict[str, int] = {}
+    limits = {
+        "test_command": 1,
+        "convention": 2,
+        "architecture_map": 2,
+        "context_hygiene": 1,
+    }
 
-    def add(category: str, markdown: str, evidence: str, tokens: int) -> None:
-        key = (category, markdown)
-        if key in seen or len(rules) >= MAX_RULES:
+    def add(category: str, subject: str, markdown: str, evidence: str, tokens: int) -> None:
+        key = (category, subject)
+        if (
+            key in seen
+            or len(rules) >= max_rules
+            or counts.get(category, 0) >= limits.get(category, max_rules)
+        ):
             return
         seen.add(key)
+        counts[category] = counts.get(category, 0) + 1
         rules.append(
             Rule(
                 category=category,
@@ -350,18 +380,36 @@ def _offline_synthesis(findings: list[Finding], repo: str) -> Synthesis:
             )
         )
 
-    for finding in findings:
+    def priority(finding: Finding) -> int:
+        if finding.kind == "exact" and "pip:editable" in finding.sequence:
+            return 0
+        if finding.kind == "recovery":
+            return 1
+        if finding.kind == "cluster":
+            return 2
+        if finding.kind == "hotspot":
+            return 3
+        if finding.kind == "context":
+            return 4
+        return 5
+
+    for finding in sorted(findings, key=priority):
+        if finding.sessions < 3:
+            continue
         if finding.intent and finding.intent_confidence < 0.4:
             continue
+
         if finding.kind == "exact" and "pip:editable" in finding.sequence:
             if finding.sessions < 10:
                 continue
             add(
                 "test_command",
+                "editable-install",
                 "Run `pip install -e .` before import, CLI, or pytest probes; treat pre-install failures as setup failures, not code failures.",
-                f"{finding.sessions} sessions; {finding.setup_tax:,} setup tokens.",
+                f"{finding.sessions} sessions; {finding.setup_tax:,} setup tokens; {finding.tokens:,} window tokens.",
                 finding.setup_tax // max(finding.sessions, 1),
             )
+
         elif (
             finding.kind == "exact"
             and finding.paired_instances >= 2
@@ -369,21 +417,47 @@ def _offline_synthesis(findings: list[Finding], repo: str) -> Synthesis:
         ):
             add(
                 "convention",
+                "exception-signature",
                 "After a command fails, read the exception signature. If the same signature repeats after an edit, change the product code or test scope instead of editing the harness.",
-                f"Paired delta +{finding.delta_rework:.1f} rework in {finding.paired_instances} instances.",
+                f"Paired delta {finding.delta_rework:+.1f} rework in {finding.paired_instances} instances; {finding.cost:,} cost.",
                 int(finding.delta_rework * 1000),
             )
-        elif finding.kind == "exact":
+
+        elif finding.kind == "recovery":
+            recovery = finding.title.split("->", 1)[-1].strip()
+            if INSTALL_RECOVERY_RE.search(recovery) and finding.sessions >= 10:
+                add(
+                    "test_command",
+                    "editable-install",
+                    "Run `pip install -e .` before import, CLI, or pytest probes; treat pre-install failures as setup failures, not code failures.",
+                    f"{finding.detail}; {finding.tokens:,} tokens.",
+                    finding.tokens // max(finding.sessions, 1),
+                )
+
+        elif finding.kind == "cluster":
+            example = finding.variants[0] if finding.variants else ""
+            if (
+                not example
+                or ":err" not in finding.sequence
+                or not re.search(
+                    r"(?i)(reproduce|repro|scratch|debug|verify)[\w.-]*\.py",
+                    example,
+                )
+            ):
+                continue
             add(
                 "convention",
-                f"Treat `{_truncate(finding.sequence, 120)}` as a recurring friction sequence; inspect the failing step before repeating it.",
-                f"{finding.sessions} sessions; lift {finding.lift:.1f}; cost {finding.cost:,}.",
-                finding.cost // max(finding.sessions, 1),
+                f"sequence:{_truncate(example, 60)}",
+                f"A scripted `{_truncate(example, 120)}` loop appears across {finding.sessions} sessions. Inspect the error before editing or re-running the script.",
+                f"{finding.sessions} sessions; {finding.tokens:,} tokens.",
+                finding.tokens // max(finding.sessions, 1),
             )
+
         elif finding.kind == "hotspot":
-            if finding.object_type == "unknown":
+            if not _is_path_target(finding.title) or _is_doc_target(finding.title):
                 continue
-            if not _is_path_target(finding.title):
+            if finding.edit_sessions > 0:
+                # The path is edited somewhere in the repo; do not call it read-only.
                 continue
             basename = finding.title.rstrip("/").rsplit("/", 1)[-1]
             if "." in basename:
@@ -392,29 +466,41 @@ def _offline_synthesis(findings: list[Finding], repo: str) -> Synthesis:
                 markdown = f"Map `{_truncate(finding.title, 70)}` before editing; it is a read-only reference path."
             add(
                 "architecture_map",
+                finding.title,
                 markdown,
                 f"Read-only in {finding.sessions} sessions; {finding.tokens:,} tokens spent.",
                 finding.tokens // max(finding.sessions, 1),
             )
+
         elif finding.kind == "context":
             if finding.intent == "other":
                 continue
-            if " " not in finding.title:
+            if _is_doc_target(finding.title):
+                continue
+            if re.search(r"(?i)\b(pip|uv|poetry)\b.*\binstall\b", finding.title):
                 continue
             avg = re.search(r"avg (\d+) tokens", finding.detail)
             size = f"{int(avg.group(1)):,}" if avg else "large"
+            if " " in finding.title:
+                markdown = (
+                    f"Bound `{_truncate(finding.title, 70)}` output with `-q`, "
+                    "`| head`/`| tail`, or a narrower selector; it averages "
+                    f"{size} tokens."
+                )
+            else:
+                markdown = (
+                    f"Inspect `{_truncate(finding.title, 70)}` by targeted line "
+                    f"range instead of full-file reads; it averages {size} tokens."
+                )
             add(
                 "context_hygiene",
-                f"Bound `{_truncate(finding.title, 70)}`; scope it to one file or test and avoid unbounded output.",
+                finding.title,
+                markdown,
                 f"Average {size} output tokens in {finding.sessions} sessions.",
                 finding.tokens // max(finding.sessions, 1),
             )
-        elif finding.kind == "recovery":
-            # Recovery titles are task-specific command fragments; leave them to
-            # the LLM, which can generalize them into a convention rule.
-            continue
 
-    return Synthesis(repo=repo, rules=rules[:MAX_RULES])
+    return Synthesis(repo=repo, rules=rules[:max_rules])
 
 
 def render(synthesis: Synthesis, repo: str, sessions: int) -> str:
@@ -432,14 +518,18 @@ def render(synthesis: Synthesis, repo: str, sessions: int) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def enforce_caps(synthesis: Synthesis, repo: str, sessions: int) -> tuple[Synthesis, str]:
-    synthesis = Synthesis(repo=synthesis.repo, rules=synthesis.rules[:MAX_RULES])
+def enforce_caps(
+    synthesis: Synthesis, repo: str, sessions: int, max_rules: int = MAX_RULES
+) -> tuple[Synthesis, str]:
+    max_lines = max(MAX_LINES, max_rules * 10)
+    max_chars = max(MAX_CHARS, max_rules * 500)
+    synthesis = Synthesis(repo=synthesis.repo, rules=synthesis.rules[:max_rules])
     while True:
         text = render(synthesis, repo, sessions)
-        if len(text) <= MAX_CHARS and len(text.splitlines()) <= MAX_LINES:
+        if len(text) <= max_chars and len(text.splitlines()) <= max_lines:
             return synthesis, text
         if not synthesis.rules:
-            return synthesis, text[:MAX_CHARS]
+            return synthesis, text[:max_chars]
         synthesis = Synthesis(repo=synthesis.repo, rules=synthesis.rules[:-1])
 
 
@@ -450,10 +540,11 @@ def _slug(repo: str) -> str:
 def synthesize(
     con,
     out_path: str | Path | None = None,
-    out_dir: str | Path = ".",
+    out_dir: str | Path | None = None,
     repo: str | None = None,
     top: int = 25,
     offline: bool = False,
+    max_rules: int = MAX_RULES,
     console: Console | None = None,
 ) -> list[tuple[Path, Synthesis]]:
     from .cluster import exact_sequences, mine
@@ -478,8 +569,9 @@ def synthesize(
             )
         )
     mined = mine(con, top=None)
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir_path = Path(out_dir) if out_dir else None
+    if out_dir_path is not None:
+        out_dir_path.mkdir(parents=True, exist_ok=True)
     results: list[tuple[Path, Synthesis]] = []
 
     for row in repo_rows:
@@ -499,12 +591,14 @@ def synthesize(
         llm_failed = False
         if not offline:
             try:
-                synthesis = _llm_synthesis(findings, repo_name, labels)
+                synthesis = _llm_synthesis(
+                    findings, repo_name, labels, max_rules=max_rules
+                )
             except Exception as error:  # noqa: BLE001 - degrade to deterministic output
                 llm_failed = True
                 console.print(f"[yellow]LLM synthesis unavailable: {escape(str(error))}[/yellow]")
         if synthesis is None:
-            synthesis = _offline_synthesis(findings, repo_name)
+            synthesis = _offline_synthesis(findings, repo_name, max_rules=max_rules)
             if offline:
                 reason = "--offline"
             elif llm_failed:
@@ -513,7 +607,9 @@ def synthesize(
                 reason = "no LLM credentials"
             console.print(f"[yellow]Deterministic rules for {escape(repo_name)} ({reason}).[/yellow]")
 
-        synthesis, text = enforce_caps(synthesis, repo_name, row["sessions"])
+        synthesis, text = enforce_caps(
+            synthesis, repo_name, row["sessions"], max_rules=max_rules
+        )
         if not synthesis.rules:
             if repo and out_path is not None and str(out_path) != "-":
                 Path(out_path).unlink(missing_ok=True)
@@ -527,8 +623,14 @@ def synthesize(
                 results.append((Path("-"), synthesis))
                 continue
             path = Path(out_path)
+        elif out_dir_path is not None:
+            path = out_dir_path / f"AGENTS.{_slug(repo_name)}.proposed.md"
         else:
-            path = out_dir / f"AGENTS.{_slug(repo_name)}.proposed.md"
+            sys.stdout.write(text)
+            if not text.endswith("\n"):
+                sys.stdout.write("\n")
+            results.append((Path("-"), synthesis))
+            continue
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
         results.append((path, synthesis))

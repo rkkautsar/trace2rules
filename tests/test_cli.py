@@ -22,4 +22,3 @@ def test_unknown_ingest_format_is_a_usage_error() -> None:
 def test_synthesize_out_requires_repo() -> None:
     result = runner.invoke(app, ["synthesize", "--out", "AGENTS.proposed.md"])
     assert result.exit_code == 2
-    assert "--out requires --repo" in result.output

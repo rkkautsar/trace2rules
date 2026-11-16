@@ -5,6 +5,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rich.progress import Progress
+
 from ..models import Session, ToolCall
 from .common import classify_tool_call, parse_arguments, target_from_args
 
@@ -80,6 +82,83 @@ def _walk_tool_ids(value: object):
             yield from _walk_tool_ids(child)
 
 
+def _tool_ids(row: dict, source: str) -> tuple[str, ...]:
+    if source in {"omp", "pi"}:
+        message = row.get("message") or {}
+        if message.get("role") != "assistant":
+            return ()
+        content = message.get("content")
+        if not isinstance(content, list):
+            return ()
+        return tuple(
+            str(part["id"])
+            for part in content
+            if isinstance(part, dict)
+            and part.get("type") in {"toolCall", "tool_call"}
+            and part.get("id")
+        )
+    if source == "codex":
+        payload = row.get("payload") or {}
+        if payload.get("type") not in TOOL_CALL_TYPES:
+            return ()
+        call_id = payload.get("id") or payload.get("call_id")
+        return (str(call_id),) if call_id else ()
+    if source == "claude-code":
+        message = row.get("message") or {}
+        content = message.get("content")
+        if not isinstance(content, list):
+            return ()
+        return tuple(
+            str(part["id"])
+            for part in content
+            if isinstance(part, dict)
+            and part.get("type") in {"tool_use", "toolCall", "tool_call"}
+            and part.get("id")
+        )
+    return tuple(_walk_tool_ids(row))
+
+
+def _relevant_line(line: str, source: str) -> bool:
+    if source in {"omp", "pi"}:
+        return any(
+            marker in line
+            for marker in (
+                '"type":"session"',
+                '"type": "session"',
+                '"type":"compaction"',
+                '"type": "compaction"',
+                '"toolCall"',
+            )
+        )
+    if source == "codex":
+        return any(
+            marker in line
+            for marker in (
+                '"type":"session_meta"',
+                '"type": "session_meta"',
+                '"type":"compaction"',
+                '"type": "compaction"',
+                '"function_call"',
+                '"custom_tool_call"',
+                '"local_shell_call"',
+                '"web_search_call"',
+                '"mcp_tool_call"',
+            )
+        )
+    if source == "claude-code":
+        return any(
+            marker in line
+            for marker in (
+                '"sessionId"',
+                '"tool_use"',
+                '"type":"summary"',
+                '"type": "summary"',
+                '"compaction"',
+            )
+        )
+    return True
+
+
 def extract_transcript_meta(path: Path, source: str, text: str) -> TranscriptMeta:
     """Extract header id, parent id, and compaction episode boundaries.
 
@@ -90,6 +169,8 @@ def extract_transcript_meta(path: Path, source: str, text: str) -> TranscriptMet
     segment = 0
     for line in text.splitlines():
         if not line.strip():
+            continue
+        if not _relevant_line(line, source):
             continue
         try:
             row = json.loads(line)
@@ -126,7 +207,7 @@ def extract_transcript_meta(path: Path, source: str, text: str) -> TranscriptMet
         if _is_compaction(row, source):
             segment += 1
             continue
-        for call_id in _walk_tool_ids(row):
+        for call_id in _tool_ids(row, source):
             meta.segment_of_call[call_id] = segment
 
     meta.segments = segment + 1
@@ -316,6 +397,7 @@ def ingest_agent_sessions(
     *,
     limit: int | None = None,
     repo: str | None = None,
+    progress: Progress | None = None,
 ):
     """Normalize local agent sessions with @letta-ai/trajectory."""
     try:
@@ -379,6 +461,13 @@ def ingest_agent_sessions(
                     )
                 continue
             transcripts: list[tuple[Path, str]] = []
+            read_task = (
+                progress.add_task(
+                    f"Reading {source_name}", total=len(files)
+                )
+                if progress
+                else None
+            )
             for path in files:
                 try:
                     transcripts.append(
@@ -386,11 +475,22 @@ def ingest_agent_sessions(
                     )
                 except OSError as error:
                     print(f"Skipping {path}: {error}")
+                if progress and read_task is not None:
+                    progress.update(read_task, advance=1)
             metas_by_id: dict[str, TranscriptMeta] = {}
             transcript_metas: list[tuple[Path, str, TranscriptMeta]] = []
+            scan_task = (
+                progress.add_task(
+                    f"Scanning {source_name}", total=len(transcripts)
+                )
+                if progress
+                else None
+            )
             for path, text in transcripts:
                 meta = extract_transcript_meta(path, source_name, text)
                 meta.session_id = meta.session_id or _session_id(path)
+                if progress and scan_task is not None:
+                    progress.update(scan_task, advance=1)
                 if meta.session_id in metas_by_id:
                     continue
                 metas_by_id[meta.session_id] = meta
@@ -398,6 +498,13 @@ def ingest_agent_sessions(
             for meta in metas_by_id.values():
                 meta.instance_id = _resolve_instance(meta.session_id, metas_by_id)
 
+            task_id = (
+                progress.add_task(
+                    f"Ingesting {source_name}", total=len(transcript_metas)
+                )
+                if progress
+                else None
+            )
             results: list[dict] = []
             BATCH = 32
             for start in range(0, len(transcript_metas), BATCH):
@@ -457,5 +564,12 @@ def ingest_agent_sessions(
             "agent-trajectory requires Node.js 20 or newer on PATH."
         ) from error
 
+    write_task = (
+        progress.add_task("Writing sessions", total=len(all_sessions))
+        if progress
+        else None
+    )
     write_sessions(db_path, all_sessions)
+    if progress and write_task is not None:
+        progress.update(write_task, completed=len(all_sessions))
     return stats

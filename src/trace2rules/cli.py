@@ -17,14 +17,13 @@ import typer
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.markup import escape
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from .cluster import exact_sequences, mine as mine_friction
 from .db import DB_PATH, connect
 from .ingest import DEFAULT_REPOS, SOURCE, ingest as ingest_traces
 from .labels import label_targets
 from .patterns import mine_sequences
-from .synthesize import EXACT_LENGTHS, synthesize as synthesize_rules
 
 load_dotenv(Path.cwd() / ".env")
 
@@ -109,18 +108,29 @@ def _ingest_command(
 
         selected_sources = sources or [str(Path.home())]
         stats = []
-        for selected_source in selected_sources:
-            try:
-                stats.extend(
-                    ingest_agent_sessions(
-                        selected_source,
-                        db,
-                        limit=limit or None,
-                        repo=repo,
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+            console=Console(stderr=True),
+            transient=False,
+        )
+        with progress:
+            for selected_source in selected_sources:
+                try:
+                    stats.extend(
+                        ingest_agent_sessions(
+                            selected_source,
+                            db,
+                            limit=limit or None,
+                            repo=repo,
+                            progress=progress,
+                        )
                     )
-                )
-            except (FileNotFoundError, ValueError, RuntimeError) as error:
-                failed_sources.append((selected_source, error))
+                except (FileNotFoundError, ValueError, RuntimeError) as error:
+                    failed_sources.append((selected_source, error))
     else:
         raise typer.BadParameter(
             "Unknown format. Use swe-rebench, swe-chat, or agent-trajectory."
@@ -328,6 +338,7 @@ def _report_command(
             "SELECT repo, count(*) FROM sessions GROUP BY repo ORDER BY repo"
         ).fetchall()
 
+        from .synthesize import EXACT_LENGTHS
         mined = mine_friction(con, top=top)
         findings = [
             finding
@@ -659,6 +670,8 @@ def _synthesize_command(
             cmd_console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
             raise typer.Exit(1)
         try:
+            from .synthesize import synthesize as synthesize_rules
+
             results = synthesize_rules(
                 con,
                 out_path=out,

@@ -564,6 +564,7 @@ def write_sessions(
     """Write canonical sessions/events, replacing rows with the same ids."""
     session_list = list(sessions)
     con = connect(db_path)
+    con.execute("BEGIN TRANSACTION")
     event_count = 0
     try:
         for session in session_list:
@@ -656,12 +657,16 @@ def write_sessions(
                     events,
                 )
                 event_count += len(events)
+        con.execute("COMMIT")
         return IngestStats(
             prefix="canonical",
             matched=len(session_list),
             sessions=len(session_list),
             events=event_count,
         )
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
     finally:
         con.close()
 

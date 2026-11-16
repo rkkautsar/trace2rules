@@ -557,18 +557,19 @@ def synthesize(
             raise ValueError(f"repo not found in database: {repo}")
 
     exact: list[Finding] = []
-    for length in EXACT_LENGTHS:
-        exact.extend(
-            exact_sequences(
-                con,
-                length=length,
-                min_sessions=3,
-                top=500,
-                min_instances=2,
-                min_lift=1.5,
+    with console.status("[cyan]Mining exact sequences and friction clusters...[/cyan]"):
+        for length in EXACT_LENGTHS:
+            exact.extend(
+                exact_sequences(
+                    con,
+                    length=length,
+                    min_sessions=3,
+                    top=500,
+                    min_instances=2,
+                    min_lift=1.5,
+                )
             )
-        )
-    mined = mine(con, top=None)
+        mined = mine(con, top=None)
     out_dir_path = Path(out_dir) if out_dir else None
     if out_dir_path is not None:
         out_dir_path.mkdir(parents=True, exist_ok=True)
@@ -591,9 +592,12 @@ def synthesize(
         llm_failed = False
         if not offline:
             try:
-                synthesis = _llm_synthesis(
-                    findings, repo_name, labels, max_rules=max_rules
-                )
+                with console.status(
+                    f"[cyan]Synthesizing {escape(repo_name)}...[/cyan]"
+                ):
+                    synthesis = _llm_synthesis(
+                        findings, repo_name, labels, max_rules=max_rules
+                    )
             except Exception as error:  # noqa: BLE001 - degrade to deterministic output
                 llm_failed = True
                 console.print(f"[yellow]LLM synthesis unavailable: {escape(str(error))}[/yellow]")

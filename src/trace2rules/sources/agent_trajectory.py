@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..models import Session, ToolCall
@@ -14,8 +16,152 @@ SOURCE_DIRS = {
     "opencode": ("opencode", ""),
 }
 
+TOOL_CALL_TYPES = {
+    "tool_use",
+    "toolCall",
+    "tool_call",
+    "function_call",
+    "custom_tool_call",
+    "local_shell_call",
+    "web_search_call",
+    "mcp_tool_call",
+}
+
+
+@dataclass(slots=True)
+class TranscriptMeta:
+    """Source-neutral session/episode metadata extracted from raw JSONL."""
+
+    session_id: str = ""
+    parent_session_id: str = ""
+    instance_id: str = ""
+    title: str = ""
+    is_continuation: bool = False
+    segment_of_call: dict[str, int] = field(default_factory=dict)
+    segments: int = 1
+
+
+def _child_meta(row: dict, *keys: str) -> str:
+    value: object = row
+    for key in keys:
+        if not isinstance(value, dict):
+            return ""
+        value = value.get(key)
+    return value if isinstance(value, str) else ""
+
+
+def _is_compaction(row: dict, source: str) -> bool:
+    if source == "codex":
+        return row.get("type") == "response_item" and _child_meta(
+            row, "payload", "type"
+        ) == "compaction"
+    if source in {"omp", "pi"}:
+        return row.get("type") == "compaction"
+    if source == "claude-code":
+        message = row.get("message") or {}
+        return (
+            row.get("type") in {"summary", "compaction"}
+            or row.get("isCompactSummary") is True
+            or message.get("isCompactSummary") is True
+        )
+    return str(row.get("type", "")).lower().startswith("compact")
+
+
+def _walk_tool_ids(value: object):
+    if isinstance(value, dict):
+        if value.get("type") in TOOL_CALL_TYPES:
+            call_id = value.get("id") or value.get("call_id")
+            if isinstance(call_id, str) and call_id:
+                yield call_id
+        for child in value.values():
+            yield from _walk_tool_ids(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_tool_ids(child)
+
+
+def extract_transcript_meta(path: Path, source: str, text: str) -> TranscriptMeta:
+    """Extract header id, parent id, and compaction episode boundaries.
+
+    The trajectory normalizer drops source-specific boundary records, so this
+    pre-pass runs over the same raw transcript before normalization.
+    """
+    meta = TranscriptMeta()
+    segment = 0
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+
+        if source == "codex" and row.get("type") == "session_meta":
+            payload = row.get("payload") or {}
+            meta.session_id = str(payload.get("id") or payload.get("session_id") or "")
+            meta.parent_session_id = str(
+                payload.get("parent_thread_id")
+                or _child_meta(payload, "source", "subagent", "thread_spawn", "parent_thread_id")
+                or ""
+            )
+            meta.title = str(payload.get("title") or "")
+        elif source in {"omp", "pi"} and row.get("type") == "session":
+            meta.session_id = str(row.get("id") or "")
+            meta.parent_session_id = str(
+                row.get("parentSession") or row.get("continuationOf") or ""
+            )
+            meta.is_continuation = bool(row.get("continuationOf"))
+            meta.title = str(row.get("title") or "")
+        elif source == "claude-code":
+            meta.session_id = meta.session_id or str(
+                row.get("sessionId") or row.get("session_id") or ""
+            )
+            meta.parent_session_id = meta.parent_session_id or str(
+                row.get("parentSessionId") or row.get("parent_session_id") or ""
+            )
+            meta.title = meta.title or str(row.get("title") or "")
+
+        if _is_compaction(row, source):
+            segment += 1
+            continue
+        for call_id in _walk_tool_ids(row):
+            meta.segment_of_call[call_id] = segment
+
+    meta.segments = segment + 1
+    return meta
+
+
+def _normalize_parent(value: str) -> str:
+    if not value:
+        return ""
+    if value.endswith(".jsonl"):
+        return Path(value).stem.split("_")[-1].removesuffix(".jsonl")
+    return value
+
+
+def _resolve_instance(
+    session_id: str,
+    metas: dict[str, TranscriptMeta],
+    seen: tuple[str, ...] = (),
+) -> str:
+    meta = metas.get(session_id)
+    if meta is None:
+        return session_id
+    parent = _normalize_parent(meta.parent_session_id)
+    if not parent or parent not in metas or parent in seen:
+        return session_id
+    if meta.is_continuation and metas[parent].title != meta.title:
+        return session_id
+    return _resolve_instance(parent, metas, seen + (session_id,))
+
 
 def _detect_source(path: Path) -> str | None:
+    if path.is_file() and path.suffix == ".db":
+        return "opencode"
+    if path.is_dir() and any(path.glob("opencode*.db")):
+        return "opencode"
     if path.is_file() and path.suffix == ".json":
         return "opencode"
     if path.is_dir() and any(path.glob("*.json")):
@@ -34,9 +180,41 @@ def _detect_source(path: Path) -> str | None:
     return None
 
 
+WINDOWS_AGENT_STORES = (
+    (".codex/sessions", "codex"),
+    (".claude/projects", "claude-code"),
+    (".pi/agent/sessions", "pi"),
+    (".local/share/opencode", "opencode"),
+    ("AppData/Roaming/opencode", "opencode"),
+    ("AppData/Local/opencode", "opencode"),
+)
+
+
+def _append_root(
+    roots: list[tuple[str, Path]],
+    seen: set[Path],
+    source: str,
+    candidate: Path,
+) -> None:
+    try:
+        exists = candidate.exists()
+    except OSError:
+        return
+    if exists and candidate not in seen:
+        seen.add(candidate)
+        roots.append((source, candidate))
+
+
 def _source_roots(root: Path) -> list[tuple[str, Path]]:
     roots: list[tuple[str, Path]] = []
     seen: set[Path] = set()
+    opencode = root / ".local" / "share" / "opencode"
+    _append_root(roots, seen, "opencode", opencode)
+    for relative, source in (
+        ("AppData/Roaming/opencode", "opencode"),
+        ("AppData/Local/opencode", "opencode"),
+    ):
+        _append_root(roots, seen, source, root / relative)
     for source, (marker, suffix) in SOURCE_DIRS.items():
         if not marker:
             continue
@@ -48,9 +226,11 @@ def _source_roots(root: Path) -> list[tuple[str, Path]]:
             ]
         )
         for candidate in candidates:
-            if candidate.exists() and candidate not in seen:
-                seen.add(candidate)
-                roots.append((source, candidate))
+            _append_root(roots, seen, source, candidate)
+    if root.resolve() == Path.home().resolve():
+        for user in sorted(Path("/mnt/c/Users").glob("*")):
+            for relative, source in WINDOWS_AGENT_STORES:
+                _append_root(roots, seen, source, user / relative)
     return roots
 
 
@@ -79,15 +259,20 @@ def _session_id(path: Path) -> str:
 
 
 def _records_to_session(
-    path: Path, source: str, records: list[dict], repo_override: str | None
+    path: Path,
+    source: str,
+    records: list[dict],
+    repo_override: str | None,
+    *,
+    meta: TranscriptMeta | None = None,
 ) -> Session:
-    meta = next((record for record in records if record.get("role") == "meta"), {})
-    repo = repo_override or _repo_from_cwd(meta.get("cwd")) or "unknown"
-    session_id = _session_id(path)
+    meta_record = next((record for record in records if record.get("role") == "meta"), {})
+    repo = repo_override or _repo_from_cwd(meta_record.get("cwd")) or "unknown"
+    session_id = (meta.session_id if meta and meta.session_id else _session_id(path))
     session = Session(
         session_id=session_id,
         repo=repo,
-        instance_id=session_id,
+        instance_id=(meta.instance_id if meta and meta.instance_id else session_id),
         source="agent-trajectory",
         agent=source,
     )
@@ -107,6 +292,11 @@ def _records_to_session(
                     target=target,
                     verb=verb,
                     object_id=object_id,
+                    segment_idx=(
+                        meta.segment_of_call.get(tool_call.get("id") or "", 0)
+                        if meta
+                        else 0
+                    ),
                 )
                 session.calls.append(call)
                 if tool_call.get("id"):
@@ -141,11 +331,12 @@ def ingest_agent_sessions(
     root = Path(source).expanduser()
     if not root.exists():
         raise FileNotFoundError(f"Session source does not exist: {root}")
-    if root.is_file() and root.suffix == ".db":
-        raise ValueError(
-            "agent-trajectory does not read OpenCode SQLite directly; export the "
-            "session with `opencode export <session-id>` first."
-        )
+    if (root.is_file() and root.suffix == ".db") or (
+        root.is_dir() and any(root.glob("opencode*.db"))
+    ):
+        from .opencode import ingest_opencode
+
+        return ingest_opencode(root, db_path, limit=limit, repo=repo)
 
     if root.is_file():
         detected = _detect_source(root)
@@ -165,8 +356,20 @@ def ingest_agent_sessions(
 
     stats: list[IngestStats] = []
     all_sessions: list[Session] = []
+    seen_session_ids: set[str] = set()
+    bounds = {"toolResults": {"maxCharacters": 20000, "strategy": "head-tail"}}
     try:
         for source_name, source_root in roots:
+            if source_name == "opencode" and (
+                (source_root.is_file() and source_root.suffix == ".db")
+                or (source_root.is_dir() and any(source_root.glob("opencode*.db")))
+            ):
+                from .opencode import ingest_opencode
+
+                stats.extend(
+                    ingest_opencode(source_root, db_path, limit=limit, repo=repo)
+                )
+                continue
             files = _iter_files(source_root, source_name, limit)
             if not files:
                 if source_name == "opencode":
@@ -178,32 +381,64 @@ def ingest_agent_sessions(
             transcripts: list[tuple[Path, str]] = [
                 (path, path.read_text(encoding="utf-8", errors="replace")) for path in files
             ]
+            metas_by_id: dict[str, TranscriptMeta] = {}
+            transcript_metas: list[tuple[Path, str, TranscriptMeta]] = []
+            for path, text in transcripts:
+                meta = extract_transcript_meta(path, source_name, text)
+                meta.session_id = meta.session_id or _session_id(path)
+                if meta.session_id in metas_by_id:
+                    continue
+                metas_by_id[meta.session_id] = meta
+                transcript_metas.append((path, text, meta))
+            for meta in metas_by_id.values():
+                meta.instance_id = _resolve_instance(meta.session_id, metas_by_id)
+
             results: list[dict] = []
             BATCH = 32
-            for start in range(0, len(transcripts), BATCH):
-                batch = transcripts[start : start + BATCH]
+            for start in range(0, len(transcript_metas), BATCH):
+                batch = transcript_metas[start : start + BATCH]
                 try:
                     results.extend(
                         normalize_many(
                             [
-                                {"source": source_name, "transcript": text}
-                                for _, text in batch
+                                {
+                                    "source": source_name,
+                                    "transcript": text,
+                                    "bounds": bounds,
+                                }
+                                for _, text, _ in batch
                             ]
                         )
                     )
                 except NormalizationError:
-                    for path, text in batch:
+                    for path, text, _ in batch:
                         try:
                             results.extend(
-                                [normalize_many([{"source": source_name, "transcript": text}])[0]]
+                                [
+                                    normalize_many(
+                                        [
+                                            {
+                                                "source": source_name,
+                                                "transcript": text,
+                                                "bounds": bounds,
+                                            }
+                                        ]
+                                    )[0]
+                                ]
                             )
                         except NormalizationError as error:
                             print(f"Skipping {path}: {error}")
                             results.append({"records": [], "diagnostics": []})
-            for (path, _), result in zip(transcripts, results):
+            for (path, _text, meta), result in zip(transcript_metas, results):
                 if not result.get("records"):
                     continue
-                all_sessions.append(_records_to_session(path, source_name, result["records"], repo))
+                session = _records_to_session(
+                    path, source_name, result["records"], repo, meta=meta
+                )
+                if session.session_id in seen_session_ids:
+                    continue
+                seen_session_ids.add(session.session_id)
+                all_sessions.append(session)
             stats.append(
                 IngestStats(
                     f"agent-trajectory:{source_name}",

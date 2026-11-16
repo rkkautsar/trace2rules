@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -111,8 +112,43 @@ class RateLimiter:
             self.next_slot = max(now, self.next_slot) + self.interval
 
 
+def _wrangler_ready() -> bool:
+    if not shutil.which("wrangler"):
+        return False
+    try:
+        result = subprocess.run(
+            ["wrangler", "whoami", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and '"loggedIn": true' in result.stdout
+
+
+def detect_model() -> str | None:
+    """Pick the cheapest available decision backend without requiring config."""
+    configured = os.getenv("TRACE2RULES_DECISION_MODEL")
+    if configured:
+        return configured
+    if _wrangler_ready():
+        return "clef-flash"
+    if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
+        return "gemini-decision-1"
+    if os.getenv("OPENAI_API_KEY"):
+        return "gpt-6-luna"
+    return None
+
+
 def _resolve_model(name: str | None) -> dict[str, str]:
-    selected = (name or os.getenv("TRACE2RULES_DECISION_MODEL") or DEFAULT_MODEL).strip()
+    selected = (name or os.getenv("TRACE2RULES_DECISION_MODEL") or detect_model() or "").strip()
+    if not selected:
+        raise RuntimeError(
+            "No decision backend found; set GEMINI_API_KEY, OPENAI_API_KEY, "
+            "TRACE2RULES_DECISION_MODEL, or install wrangler."
+        )
     selected = MODEL_ALIASES.get(selected, selected)
     if selected not in MODELS:
         raise RuntimeError(

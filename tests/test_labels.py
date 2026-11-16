@@ -7,6 +7,7 @@ from trace2rules.labels import (
     _openai_answers,
     _openai_questions,
     _resolve_model,
+    detect_model,
     label_targets,
 )
 from trace2rules.models import Session, ToolCall
@@ -29,7 +30,10 @@ def test_openai_decision_payload_and_answers() -> None:
     questions = _openai_questions()
     intent = next(question for question in questions if question["name"] == "intent")
     assert intent["type"] == "choice"
-    assert {"value": "run_tests", "description": "Run pytest or a specific test file/selector"} in intent["choices"]
+    assert {
+        "value": "run_tests",
+        "description": "Run pytest or a specific test file/selector",
+    } in intent["choices"]
 
     answers = _openai_answers(
         {
@@ -147,3 +151,28 @@ def test_label_targets_uses_selected_backend(tmp_path, monkeypatch) -> None:
         ).fetchone() == ("read", "file", "gpt-6-luna")
     finally:
         con.close()
+
+
+def test_detect_model_prefers_explicit_setting(monkeypatch) -> None:
+    monkeypatch.setenv("TRACE2RULES_DECISION_MODEL", "gpt-6-luna")
+    assert detect_model() == "gpt-6-luna"
+
+
+def test_detect_model_prefers_gemini_key(monkeypatch) -> None:
+    monkeypatch.delenv("TRACE2RULES_DECISION_MODEL", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setattr("trace2rules.labels._wrangler_ready", lambda: False)
+    assert detect_model() == "gemini-decision-1"
+
+
+def test_detect_model_without_backend(monkeypatch) -> None:
+    for key in (
+        "TRACE2RULES_DECISION_MODEL",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENAI_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr("trace2rules.labels._wrangler_ready", lambda: False)
+    assert detect_model() is None

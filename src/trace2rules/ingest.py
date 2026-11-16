@@ -49,14 +49,20 @@ class IngestStats:
 def _is_path_token(token: str) -> bool:
     if token.startswith("-") or token in {"=", "&&", ";", "|"}:
         return False
+    if token.startswith(("2>", "1>", "&>")) or any(char in token for char in "<>|&"):
+        return False
+    if token.startswith(("skill:", "xd:")):
+        return False
     if "/" in token:
         return True
     return bool(re.search(r"\.(py|pyi|txt|md|rst|toml|cfg|ini|yaml|yml|json)$", token))
 
 
 def normalize_path(path: str, instance_id: str = "") -> str:
-    path = (path or "").strip().strip("'\"")
+    path = (path or "").strip().strip("'\"").rstrip(";,)")
     if not path:
+        return ""
+    if path.startswith(("skill:", "xd:")):
         return ""
     path = path.replace("\\", "/")
     if path.rstrip("/") in ("/workspace", "/testbed", "/repo", "/app"):
@@ -622,6 +628,7 @@ def write_sessions(
                         session.session_id,
                         session.repo or "unknown",
                         step_idx,
+                        call.segment_idx,
                         call.tool_name,
                         action,
                         verb,
@@ -640,10 +647,11 @@ def write_sessions(
                 con.executemany(
                     """
                     INSERT INTO tool_events (
-                        event_id, session_id, repo, step_idx, tool_name, action_type,
+                        event_id, session_id, repo, step_idx, segment_idx,
+                        tool_name, action_type,
                         verb, object_id, target, raw_target, outcome, exit_code,
                         error_signature, is_error, approx_out_tokens, obs_excerpt
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     events,
                 )

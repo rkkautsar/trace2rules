@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sqlite3
 from pathlib import Path
 
 import duckdb
@@ -11,11 +12,15 @@ from trace2rules.detectors import Finding
 from trace2rules.ingest import write_sessions
 from trace2rules.models import Session, ToolCall
 from trace2rules.sources.agent_trajectory import (
+    TranscriptMeta,
     _detect_source,
     _records_to_session,
+    _resolve_instance,
+    extract_transcript_meta,
     ingest_agent_sessions,
 )
 from trace2rules.sources.common import classify_tool_call
+from trace2rules.sources.opencode import ingest_opencode
 from trace2rules.sources.swe_chat import ingest_swe_chat
 from trace2rules.synthesize import _offline_synthesis
 
@@ -52,6 +57,257 @@ def _write_swe_chat(root: Path) -> None:
         con.execute(
             f"COPY conversations TO '{root / 'conversations.parquet'}' (FORMAT PARQUET)"
         )
+    finally:
+        con.close()
+
+
+def test_detect_codex_sessions() -> None:
+    assert _detect_source(Path("/home/user/.codex/sessions")) == "codex"
+
+
+def _jsonl(rows: list[dict]) -> str:
+    return "\n".join(json.dumps(row) for row in rows)
+
+
+def test_omp_compaction_segments_calls() -> None:
+    text = _jsonl(
+        [
+            {"type": "session", "id": "omp-1", "parentSession": "parent-1"},
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "toolCall", "id": "c1"}],
+                },
+            },
+            {"type": "compaction"},
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "toolCall", "id": "c2"}],
+                },
+            },
+        ]
+    )
+    meta = extract_transcript_meta(Path("omp.jsonl"), "omp", text)
+    assert meta.session_id == "omp-1"
+    assert meta.parent_session_id == "parent-1"
+    assert meta.segments == 2
+    assert meta.segment_of_call == {"c1": 0, "c2": 1}
+
+
+def test_codex_compaction_segments_calls() -> None:
+    text = _jsonl(
+        [
+            {"type": "session_meta", "payload": {"id": "cx-1", "parent_thread_id": "p"}},
+            {
+                "type": "response_item",
+                "payload": {"type": "function_call", "call_id": "f1"},
+            },
+            {"type": "response_item", "payload": {"type": "compaction"}},
+            {
+                "type": "response_item",
+                "payload": {"type": "function_call", "call_id": "f2"},
+            },
+        ]
+    )
+    meta = extract_transcript_meta(Path("codex.jsonl"), "codex", text)
+    assert meta.session_id == "cx-1"
+    assert meta.parent_session_id == "p"
+    assert meta.segments == 2
+    assert meta.segment_of_call == {"f1": 0, "f2": 1}
+
+
+def test_claude_compaction_segments_calls() -> None:
+    text = _jsonl(
+        [
+            {"type": "user", "sessionId": "cc-1", "message": {"content": "hi"}},
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "tool_use", "id": "t1"}]},
+            },
+            {"type": "summary", "summary": "compact"},
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "tool_use", "id": "t2"}]},
+            },
+        ]
+    )
+    meta = extract_transcript_meta(Path("claude.jsonl"), "claude-code", text)
+    assert meta.session_id == "cc-1"
+    assert meta.segments == 2
+    assert meta.segment_of_call == {"t1": 0, "t2": 1}
+
+
+def test_pi_compaction_segments_calls() -> None:
+    text = _jsonl(
+        [
+            {"type": "session", "id": "pi-1"},
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "toolCall", "id": "p1"}],
+                },
+            },
+            {"type": "compaction"},
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "toolCall", "id": "p2"}],
+                },
+            },
+        ]
+    )
+    meta = extract_transcript_meta(Path("pi.jsonl"), "pi", text)
+    assert meta.session_id == "pi-1"
+    assert meta.segments == 2
+    assert meta.segment_of_call == {"p1": 0, "p2": 1}
+
+
+def test_continuation_identity_preserves_titles() -> None:
+    metas = {
+        "root": TranscriptMeta(session_id="root", title="Task"),
+        "same": TranscriptMeta(
+            session_id="same",
+            parent_session_id="root",
+            title="Task",
+            is_continuation=True,
+        ),
+        "changed": TranscriptMeta(
+            session_id="changed",
+            parent_session_id="root",
+            title="Different",
+            is_continuation=True,
+        ),
+        "subagent": TranscriptMeta(
+            session_id="subagent",
+            parent_session_id="root",
+            title="Subtask",
+        ),
+    }
+    assert _resolve_instance("same", metas) == "root"
+    assert _resolve_instance("changed", metas) == "changed"
+    assert _resolve_instance("subagent", metas) == "root"
+
+
+def test_opencode_v2_ingests_tools_and_compaction(tmp_path: Path) -> None:
+    db = tmp_path / "opencode.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE session_v2 (id TEXT, parent_id TEXT, directory TEXT, title TEXT)"
+    )
+    con.execute(
+        "CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER, data TEXT)"
+    )
+    con.execute(
+        "INSERT INTO session_v2 VALUES ('s1', NULL, '/repo', 'task')"
+    )
+    con.execute(
+        "INSERT INTO session_message VALUES (?, ?, ?, ?, ?)",
+        (
+            "m1",
+            "s1",
+            "assistant",
+            0,
+            json.dumps(
+                {
+                    "content": [
+                        {
+                            "type": "tool",
+                            "name": "bash",
+                            "state": {
+                                "status": "completed",
+                                "input": {"command": "git status"},
+                                "output": "ok",
+                            },
+                        }
+                    ]
+                }
+            ),
+        ),
+    )
+    con.execute(
+        "INSERT INTO session_message VALUES (?, ?, ?, ?, ?)",
+        ("m2", "s1", "assistant", 1, json.dumps({"content": [{"type": "compaction"}]})),
+    )
+    con.execute(
+        "INSERT INTO session_message VALUES (?, ?, ?, ?, ?)",
+        (
+            "m3",
+            "s1",
+            "assistant",
+            2,
+            json.dumps(
+                {
+                    "content": [
+                        {
+                            "type": "tool",
+                            "name": "read",
+                            "state": {
+                                "status": "error",
+                                "input": {"filePath": "src/a.py"},
+                                "error": "missing",
+                            },
+                        }
+                    ]
+                }
+            ),
+        ),
+    )
+    con.commit()
+    con.close()
+    out = tmp_path / "trace.duckdb"
+    stats = ingest_opencode(db, out)
+    assert stats[0].sessions == 1
+    assert stats[0].events == 2
+    con = duckdb.connect(str(out), read_only=True)
+    try:
+        rows = con.execute(
+            "SELECT target, segment_idx FROM tool_events ORDER BY step_idx"
+        ).fetchall()
+        assert rows == [("git status", 0), ("src/a.py", 1)]
+    finally:
+        con.close()
+
+
+def test_opencode_v1_ingests_tools(tmp_path: Path) -> None:
+    db = tmp_path / "opencode.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE session (id TEXT, parent_id TEXT, directory TEXT, title TEXT)")
+    con.execute("CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)")
+    con.execute("CREATE TABLE part (message_id TEXT, ordinal INTEGER, data TEXT)")
+    con.execute("INSERT INTO session VALUES ('s1', NULL, '/repo', 'task')")
+    con.execute("INSERT INTO message VALUES ('m1', 's1', 1, '{}')")
+    con.execute(
+        "INSERT INTO part VALUES (?, ?, ?)",
+        (
+            "m1",
+            0,
+            json.dumps(
+                {
+                    "type": "tool",
+                    "tool": "bash",
+                    "state": {
+                        "status": "completed",
+                        "input": {"command": "pytest -q"},
+                        "output": "ok",
+                    },
+                }
+            ),
+        ),
+    )
+    con.commit()
+    con.close()
+    out = tmp_path / "trace.duckdb"
+    stats = ingest_opencode(db, out)
+    assert stats[0].sessions == 1
+    assert stats[0].events == 1
+    con = duckdb.connect(str(out), read_only=True)
+    try:
+        assert con.execute("SELECT target FROM tool_events").fetchone() == ("pytest -q",)
     finally:
         con.close()
 

@@ -23,9 +23,9 @@ source adapter
 |---|---|---|
 | `swe-rebench` | `ingest.py` | OpenHands-style parquet, streamed from Hugging Face |
 | `swe-chat` | `sources/swe_chat.py` | Optional example corpus; normalized `sessions.parquet` + `conversations.parquet` |
-| `agent-trajectory` | `sources/agent_trajectory.py` | Claude Code, Codex, Pi, OMP, and OpenCode JSON exports |
+| `agent-trajectory` | `sources/agent_trajectory.py`, `sources/opencode.py` | Claude Code, Codex, Pi, OMP, and OpenCode SQLite/JSON |
 
-`agent-trajectory` is an optional extra because it requires Node.js 20+.
+`agent-trajectory` is a base dependency; Claude Code, Codex, Pi, and OMP still require Node.js 20+ at runtime. OpenCode SQLite ingestion is pure Python.
 
 ## DuckDB
 
@@ -36,14 +36,18 @@ session_id, repo, instance_id, resolved, total_turns,
 source, agent, success_score
 ```
 
+`session_id` identifies one agent run. `instance_id` identifies the user task: title-preserving continuation chains and subagent transcripts share the parent task.
+
 `tool_events` stores normalized tool calls:
 
 ```text
-event_id, session_id, repo, step_idx,
+event_id, session_id, repo, step_idx, segment_idx,
 tool_name, action_type, verb, object_id, target, raw_target,
 outcome, exit_code, error_signature, is_error,
 approx_out_tokens, obs_excerpt
 ```
+
+`segment_idx` is the compaction episode within a session. It is extracted from the raw transcript for Claude Code, Codex, Pi, and OMP; windows never cross a segment boundary.
 
 `target_labels` is optional and populated by `trace2rules label`:
 
@@ -62,8 +66,8 @@ model, labeled_at
 - Same-error loops: repeated exception signatures across edits.
 - Hotspots: read-only files or paths touched across many sessions.
 - Context blasts: commands or reads averaging large output.
-- Exact sequences: 3-step windows with support, lift, and paired-rework evidence.
-- Intent labels: optional decision-model classification of `(intent, object_type)` used by `patterns` and to annotate/filter findings during synthesis.
+- Exact sequences: recurring 3–5-step windows with support, lift, and paired-rework evidence; windows never cross a compaction boundary, and nested windows are deduplicated before synthesis.
+- Intent labels: optional decision-model classification of `(intent, object_type)` used to annotate/filter findings during synthesis and to name structural sequence events when confident.
 
 Generated verifier scripts and low-support task-specific sequences are filtered before synthesis.
 

@@ -16,6 +16,7 @@ class ToolCall:
     object_id: str | None = None
     exit_code: int | None = None
     is_error: bool | None = None
+    segment_idx: int = 0
 
 
 @dataclass(slots=True)

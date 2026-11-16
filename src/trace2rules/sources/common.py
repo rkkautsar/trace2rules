@@ -53,7 +53,7 @@ def target_from_args(tool_name: str, args: dict[str, Any], fallback: str = "") -
         value = args.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
-    for key in ("file_path", "path", "filename", "file"):
+    for key in ("file_path", "filePath", "path", "filename", "file"):
         value = args.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -67,7 +67,7 @@ def target_from_args(tool_name: str, args: dict[str, Any], fallback: str = "") -
 
 
 def _path_from_args(args: dict[str, Any]) -> str:
-    for key in ("file_path", "path", "filename", "file"):
+    for key in ("file_path", "filePath", "path", "filename", "file"):
         value = args.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()

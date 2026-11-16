@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS tool_events (
     session_id        VARCHAR NOT NULL,
     repo              VARCHAR NOT NULL,
     step_idx          INTEGER NOT NULL,
+    segment_idx       INTEGER NOT NULL DEFAULT 0,
     tool_name         VARCHAR NOT NULL,
     action_type       VARCHAR NOT NULL,
     verb              VARCHAR NOT NULL,
@@ -74,6 +75,7 @@ def connect(path: str | Path = DB_PATH) -> duckdb.DuckDBPyConnection:
         "ALTER TABLE tool_events ADD COLUMN exit_code INTEGER",
         "ALTER TABLE tool_events ADD COLUMN error_signature VARCHAR DEFAULT ''",
         "ALTER TABLE tool_events ADD COLUMN obs_excerpt VARCHAR DEFAULT ''",
+        "ALTER TABLE tool_events ADD COLUMN segment_idx INTEGER DEFAULT 0",
     ):
         try:
             con.execute(ddl)

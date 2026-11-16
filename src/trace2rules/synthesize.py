@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+from collections import defaultdict
 from dataclasses import replace
 from pathlib import Path
 from typing import Literal
@@ -19,6 +20,7 @@ MAX_RULES = 5
 MAX_LINES = 60
 MAX_CHARS = 2500
 OUT_PATH = Path("AGENTS.proposed.md")
+EXACT_LENGTHS = (3, 4, 5)
 
 GENERATED_VERIFIER_RE = re.compile(
     r"final_|validation_test|test_fix_verification|test_reproduce_issue|comprehensive_test"
@@ -57,6 +59,20 @@ def _usable_exact(finding: Finding) -> bool:
     return high_coverage_setup or paired_rework
 
 
+def _sequence_tokens(finding: Finding) -> tuple[str, ...]:
+    return tuple(
+        part.split(":", 1)[1]
+        for part in re.split(r" \| (?=s\d+:)", finding.sequence)
+        if ":" in part
+    )
+
+
+def _is_subsequence(inner: tuple[str, ...], outer: tuple[str, ...]) -> bool:
+    if not inner or len(inner) > len(outer):
+        return False
+    return any(outer[index : index + len(inner)] == inner for index in range(len(outer) - len(inner) + 1))
+
+
 def select_findings(
     exact: list[Finding],
     mined: dict[str, list[Finding]],
@@ -65,14 +81,23 @@ def select_findings(
 ) -> list[Finding]:
     findings: list[Finding] = []
     exact_repo = [finding for finding in exact if finding.repo == repo]
-    findings.extend(
-        sorted(
-            (finding for finding in exact_repo if _usable_exact(finding)),
-            key=lambda finding: finding.cost,
-            reverse=True,
-        )[:10]
-    )
-    for key in ("hotspots", "context"):
+    selected_tokens: list[tuple[str, ...]] = []
+    for finding in sorted(
+        (finding for finding in exact_repo if _usable_exact(finding)),
+        key=lambda finding: (len(_sequence_tokens(finding)), finding.cost),
+        reverse=True,
+    ):
+        tokens = _sequence_tokens(finding)
+        if any(
+            _is_subsequence(tokens, seen) or _is_subsequence(seen, tokens)
+            for seen in selected_tokens
+        ):
+            continue
+        selected_tokens.append(tokens)
+        findings.append(finding)
+        if len(findings) >= 10:
+            break
+    for key in ("recovery", "hotspots", "context", "clusters"):
         findings.extend(
             [finding for finding in mined[key] if finding.repo == repo][:2]
         )
@@ -80,26 +105,60 @@ def select_findings(
 
 
 def annotate_findings(con, findings: list[Finding]) -> list[Finding]:
-    """Attach clef intent/object labels to findings with a matching target."""
-    targets = sorted({finding.title for finding in findings if finding.title})
+    """Attach labels by full event key, falling back to the finding title."""
+    targets = sorted(
+        {finding.title for finding in findings if finding.title}
+        | {
+            target
+            for finding in findings
+            for _tool, _action, target in finding.event_keys
+        }
+    )
     if not targets:
         return findings
     placeholders = ",".join("?" for _ in targets)
     rows = con.execute(
         f"""
-        SELECT target, intent, object_type, intent_confidence, object_confidence
+        SELECT tool_name, action_type, target,
+               intent, object_type, intent_confidence, object_confidence
         FROM target_labels
         WHERE target IN ({placeholders})
         """,
         targets,
     ).fetchall()
-    labels = {
-        target: (intent, object_type, intent_confidence, object_confidence)
-        for target, intent, object_type, intent_confidence, object_confidence in rows
+
+    grouped: dict[tuple[str, str, str], list[tuple[str, str, float, float]]] = defaultdict(list)
+    for tool_name, action_type, target, intent, object_type, intent_confidence, object_confidence in rows:
+        grouped[(tool_name, action_type, target)].append(
+            (intent, object_type, float(intent_confidence), float(object_confidence))
+        )
+
+    labels: dict[tuple[str, str, str], tuple[str, str, float, float]] = {}
+    for key, entries in grouped.items():
+        intents = {entry[0] for entry in entries}
+        objects = {entry[1] for entry in entries}
+        if len(intents) != 1 or len(objects) != 1:
+            continue
+        intent, object_type, intent_confidence, object_confidence = max(
+            entries, key=lambda entry: (entry[2] + entry[3], entry[3], entry[2])
+        )
+        if intent_confidence < 0.4 or object_confidence < 0.6:
+            continue
+        labels[key] = (intent, object_type, intent_confidence, object_confidence)
+
+    title_labels = {
+        key[2]: value for key, value in labels.items() if key[0] and key[1]
     }
     annotated = []
     for finding in findings:
-        label = labels.get(finding.title)
+        candidates = [
+            labels[key] for key in finding.event_keys if key in labels
+        ]
+        label = (
+            max(candidates, key=lambda item: (item[2] + item[3], item[3], item[2]))
+            if candidates
+            else title_labels.get(finding.title)
+        )
         if label is None:
             annotated.append(finding)
             continue
@@ -234,6 +293,7 @@ Write AGENTS.md rules for this repository. Requirements:
 - evidence_summary: sessions affected and approximate setup/rework token cost.
 - No generic platitudes ("be careful", "read the docs").
 - Ignore task-specific verifier scripts, one-off filenames, and normal edit -> test-fail loops.
+- For `recovery` findings, turn the failed -> successful transition into a convention rule.
 - If any finding has `paired_instances >= 2` and `delta_rework >= 1`, include one `convention` rule: read the exception signature; if the same signature repeats after an edit, fix the product code or test scope instead of editing the harness.
 - Total output must stay under 5 rules, 60 lines, and 2,500 characters.
 
@@ -310,6 +370,13 @@ def _offline_synthesis(findings: list[Finding], repo: str) -> Synthesis:
                 f"Paired delta +{finding.delta_rework:.1f} rework in {finding.paired_instances} instances.",
                 int(finding.delta_rework * 1000),
             )
+        elif finding.kind == "exact":
+            add(
+                "convention",
+                f"Treat `{_truncate(finding.sequence, 120)}` as a recurring friction sequence; inspect the failing step before repeating it.",
+                f"{finding.sessions} sessions; lift {finding.lift:.1f}; cost {finding.cost:,}.",
+                finding.cost // max(finding.sessions, 1),
+            )
         elif finding.kind == "hotspot":
             if finding.object_type == "unknown":
                 continue
@@ -340,6 +407,8 @@ def _offline_synthesis(findings: list[Finding], repo: str) -> Synthesis:
                 finding.tokens // max(finding.sessions, 1),
             )
         elif finding.kind == "recovery":
+            # Recovery titles are task-specific command fragments; leave them to
+            # the LLM, which can generalize them into a convention rule.
             continue
 
     return Synthesis(repo=repo, rules=rules[:MAX_RULES])
@@ -393,10 +462,19 @@ def synthesize(
         if not repo_rows:
             raise ValueError(f"repo not found in database: {repo}")
 
-    exact = exact_sequences(
-        con, length=3, min_sessions=3, top=500, min_instances=3, min_lift=1.5
-    )
-    mined = mine(con, top=top)
+    exact: list[Finding] = []
+    for length in EXACT_LENGTHS:
+        exact.extend(
+            exact_sequences(
+                con,
+                length=length,
+                min_sessions=3,
+                top=500,
+                min_instances=2,
+                min_lift=1.5,
+            )
+        )
+    mined = mine(con, top=None)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     results: list[tuple[Path, Synthesis]] = []
@@ -408,6 +486,11 @@ def synthesize(
         )
         labels = label_summary(con, repo_name)
         print_findings(findings, console)
+        if not findings:
+            if repo and out_path is not None and str(out_path) != "-":
+                Path(out_path).unlink(missing_ok=True)
+            console.print(f"[yellow]No rules for {escape(repo_name)}; skipped.[/yellow]")
+            continue
 
         synthesis: Synthesis | None = None
         llm_failed = False

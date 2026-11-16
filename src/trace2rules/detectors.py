@@ -26,6 +26,7 @@ class Finding:
     object_type: str = ""
     intent_confidence: float = 0.0
     object_confidence: float = 0.0
+    event_keys: tuple[tuple[str, str, str], ...] = field(default_factory=tuple)
 
     @property
     def evidence(self) -> str:
@@ -67,17 +68,25 @@ def hotspots(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[F
                    bool_or(action_type = 'edit') AS was_edited
             FROM tool_events
             WHERE target NOT IN ('', '.')
+              AND target NOT LIKE '<%'
+              AND target NOT LIKE '% %'
+              AND target NOT LIKE '%>%'
+              AND target NOT LIKE '%;'
+              AND target NOT LIKE 'skill:%'
+              AND target NOT LIKE 'xd:%'
             GROUP BY repo, target, session_id
         ),
         agg AS (
             SELECT repo, target,
                    count(*) AS sessions,
+                   count(*) FILTER (WHERE NOT was_edited) AS read_only_sessions,
                    sum(CASE WHEN NOT was_edited THEN coalesce(read_tokens, 0) ELSE 0 END) AS wasted_tokens
             FROM per_session
             WHERE read_tokens IS NOT NULL
             GROUP BY repo, target
         )
-        SELECT a.repo, a.target, a.sessions, s.n AS repo_sessions, a.wasted_tokens
+        SELECT a.repo, a.target, a.sessions, a.read_only_sessions,
+               s.n AS repo_sessions, a.wasted_tokens
         FROM agg a
         JOIN (SELECT repo, count(*) AS n FROM sessions GROUP BY repo) s USING (repo)
         WHERE a.sessions >= 3 AND a.sessions >= 0.25 * s.n
@@ -92,15 +101,15 @@ def hotspots(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[F
             title=target,
             sessions=sessions,
             tokens=int(wasted or 0),
-            detail=f"read-only in {sessions}/{repo_sessions} sessions ({sessions / repo_sessions:.0%})",
+            detail=f"read-only in {read_only}/{repo_sessions} sessions ({read_only / repo_sessions:.0%})",
         )
-        for repo, target, sessions, repo_sessions, wasted in con.execute(query).fetchall()
+        for repo, target, sessions, read_only, repo_sessions, wasted in con.execute(query).fetchall()
     ]
 
 
 def recovery_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     query = """
-        SELECT a.repo, a.target AS failed, b.target AS recovery,
+        SELECT a.repo, a.target AS failed, a.error_signature, b.target AS recovery,
                count(DISTINCT a.session_id) AS sessions,
                count(*) AS occurrences,
                sum(a.approx_out_tokens) AS wasted_tokens
@@ -109,11 +118,10 @@ def recovery_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
           ON a.session_id = b.session_id
          AND b.step_idx > a.step_idx
          AND b.step_idx - a.step_idx <= 6
-         AND a.target <> b.target
         WHERE a.is_error AND NOT b.is_error
           AND a.action_type = 'exec' AND b.action_type = 'exec'
           AND a.target <> '' AND b.target <> ''
-        GROUP BY 1, 2, 3
+        GROUP BY 1, 2, 3, 4
         HAVING count(DISTINCT a.session_id) >= 2
         ORDER BY sessions DESC, wasted_tokens DESC
     """
@@ -126,9 +134,9 @@ def recovery_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
             title=f"{failed}  ->  {recovery}",
             sessions=sessions,
             tokens=int(wasted or 0),
-            detail=f"{occurrences} recurrences across {sessions} sessions",
+            detail=f"{occurrences} recurrences across {sessions} sessions; signature {signature}",
         )
-        for repo, failed, recovery, sessions, occurrences, wasted in con.execute(query).fetchall()
+        for repo, failed, signature, recovery, sessions, occurrences, wasted in con.execute(query).fetchall()
     ]
 
 
@@ -142,8 +150,14 @@ def context_blasts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
         FROM tool_events
         WHERE action_type IN ('exec', 'read')
           AND target <> ''
+          AND target NOT LIKE '<%'
+          AND target NOT LIKE '%>%'
+          AND target NOT LIKE '%;'
+          AND target NOT LIKE 'skill:%'
+          AND target NOT LIKE 'xd:%'
         GROUP BY 1, 2, 3, 4
         HAVING avg(approx_out_tokens) >= 1500 AND count(DISTINCT session_id) >= 2
+           AND count(*) >= 2
         ORDER BY total_tokens DESC
     """
     if limit is not None:

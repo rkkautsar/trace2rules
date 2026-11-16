@@ -19,6 +19,7 @@ class _Window:
     wasted_tokens: int = 0
     examples: list[str] = field(default_factory=list)
     tokens: tuple[str, ...] = field(default_factory=tuple)
+    keys: tuple[tuple[str, str, str], ...] = field(default_factory=tuple)
 
 
 def _encode(window: list[tuple]) -> str:
@@ -42,7 +43,9 @@ def _example(window: list[tuple]) -> str:
 
 
 def friction_windows(
-    con: duckdb.DuckDBPyConnection, min_session_count: int = 2
+    con: duckdb.DuckDBPyConnection,
+    min_session_count: int = 2,
+    lengths: tuple[int, ...] = (3, 4),
 ) -> list[_Window]:
     hotspot_targets: dict[str, set[str]] = defaultdict(set)
     for finding in hotspots(con):
@@ -52,7 +55,8 @@ def friction_windows(
     rows = con.execute(
         """
         SELECT session_id, repo, step_idx, tool_name, action_type, verb, object_id,
-               outcome, error_signature, approx_out_tokens, target, raw_target
+               outcome, error_signature, approx_out_tokens, target, raw_target,
+               segment_idx
         FROM tool_events
         WHERE target <> '' AND action_type <> 'other'
         ORDER BY session_id, step_idx
@@ -64,9 +68,11 @@ def friction_windows(
 
     aggregates: dict[tuple[str, str], _Window] = {}
     for session_id, events in sessions.items():
-        for k in (3, 4):
+        for k in lengths:
             for start in range(len(events) - k + 1):
                 window = events[start : start + k]
+                if len({event[12] for event in window}) > 1:
+                    continue
                 relevant = any(event[7] == "err" for event in window)
                 if not relevant:
                     relevant = any(
@@ -90,6 +96,9 @@ def friction_windows(
                         repo=window[0][1],
                         encoded=encoded,
                         tokens=_tokens(window),
+                        keys=tuple(
+                            (event[3], event[4], event[10]) for event in window
+                        ),
                     )
                 agg.sessions.add(session_id)
                 agg.wasted_tokens += sum(
@@ -119,6 +128,11 @@ def exact_sequences(
 ) -> list[Finding]:
     repo_sessions = dict(
         con.execute("SELECT repo, count(*) FROM sessions GROUP BY repo").fetchall()
+    )
+    repo_instances = dict(
+        con.execute(
+            "SELECT repo, count(DISTINCT instance_id) FROM sessions GROUP BY repo"
+        ).fetchall()
     )
     session_instances = dict(
         con.execute("SELECT session_id, instance_id FROM sessions").fetchall()
@@ -169,15 +183,18 @@ def exact_sequences(
         token_sessions[repo][f"{action}:{verb}:{object_id}:{outcome}"].add(session_id)
 
     scored: list[tuple[float, Finding]] = []
-    for window in friction_windows(con):
-        if window.encoded.count(" | ") + 1 != length:
-            continue
+    for window in friction_windows(con, lengths=(length,)):
         if require_error and ":err" not in window.encoded:
             continue
         if len(window.sessions) < min_sessions:
             continue
-        instances = {session_instances.get(session) for session in window.sessions}
-        if len(instances) < min_instances:
+        instances = {
+            session_instances.get(session) for session in window.sessions
+        } - {None}
+        required_instances = min(
+            min_instances, repo_instances.get(window.repo, min_instances)
+        )
+        if len(instances) < required_instances:
             continue
         n = repo_sessions.get(window.repo, 0)
         expected = float(n)
@@ -213,7 +230,7 @@ def exact_sequences(
             continue
         delta_rework = sum(rework_deltas) / len(rework_deltas) if rework_deltas else 0.0
         delta_setup = sum(setup_deltas) / len(setup_deltas) if setup_deltas else 0.0
-        cost = setup_tax + rework * retry_weight
+        cost = window.wasted_tokens + rework * retry_weight
         finding = Finding(
             kind="exact",
             repo=window.repo,
@@ -227,6 +244,7 @@ def exact_sequences(
             ),
             sequence=window.encoded,
             variants=tuple(window.examples[:3]),
+            event_keys=window.keys,
             lift=lift,
             rework=rework,
             setup_tax=setup_tax,
@@ -292,13 +310,16 @@ def _cluster_windows(windows: list[_Window], distance_threshold: float) -> list[
                 detail=f"{len(members)} distinct windows merged",
                 sequence=medoid.encoded,
                 variants=tuple(variants),
+                event_keys=medoid.keys,
             )
         )
     return findings
 
 
 def cluster_friction(
-    con: duckdb.DuckDBPyConnection, top: int = 25, distance_threshold: float = 0.25
+    con: duckdb.DuckDBPyConnection,
+    top: int | None = 25,
+    distance_threshold: float = 0.25,
 ) -> list[Finding]:
     by_repo: dict[str, list[_Window]] = defaultdict(list)
     for window in friction_windows(con):
@@ -313,11 +334,11 @@ def cluster_friction(
         findings.extend(_cluster_windows(repo_windows, distance_threshold))
 
     findings.sort(key=lambda f: (f.sessions, f.tokens), reverse=True)
-    return findings[:top]
+    return findings[:top] if top is not None else findings
 
 
 def mine(
-    con: duckdb.DuckDBPyConnection, top: int = 25
+    con: duckdb.DuckDBPyConnection, top: int | None = 25
 ) -> dict[str, list[Finding]]:
     return {
         "hotspots": hotspots(con, limit=top),

@@ -26,14 +26,11 @@ dependencies = [
     "rich>=15.0.0",
     "scikit-learn>=1.9.1",
     "typer>=0.29.1",
-]
-
-[project.optional-dependencies]
-local = [
     "agent-trajectory>=0.4.4",
 ]
 
 [project.urls]
+Homepage = "https://github.com/rkkautsar/trace2rules"
 Repository = "https://github.com/rkkautsar/trace2rules"
 Issues = "https://github.com/rkkautsar/trace2rules/issues"
 

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
+from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
@@ -16,7 +19,7 @@ from .db import DB_PATH, connect
 from .ingest import DEFAULT_REPOS, SOURCE, ingest as ingest_traces
 from .labels import label_targets
 from .patterns import mine_sequences
-from .synthesize import synthesize as synthesize_rules
+from .synthesize import EXACT_LENGTHS, synthesize as synthesize_rules
 
 load_dotenv(Path.cwd() / ".env")
 
@@ -31,49 +34,67 @@ def _ingest_command(
     ] = None,
     format: Annotated[
         str,
-        typer.Option("--format", "-f", help="swe-rebench, swe-chat, or agent-trajectory."),
-    ] = "swe-rebench",
+        typer.Option(
+            "--format",
+            "-f",
+            help="agent-trajectory (default), swe-rebench, or swe-chat.",
+        ),
+    ] = "agent-trajectory",
     limit: Annotated[int, typer.Option(help="Max sessions (per source where applicable).")] = 200,
     repo: Annotated[
         str | None,
         typer.Option("--repo", help="Override repo label for local/SWE-chat sessions."),
     ] = None,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
+    label: Annotated[
+        bool,
+        typer.Option(
+            "--label",
+            help="After ingest, label targets if a decision backend is available.",
+        ),
+    ] = False,
     source: Annotated[
-        str | None,
+        list[str] | None,
         typer.Option(
             "--source",
             "-s",
-            help="Parquet path, dataset directory, or local session root.",
+            help="Parquet path, dataset directory, or local session root; repeat for multiple.",
         ),
     ] = None,
 ) -> None:
     fmt = format.strip().lower()
+    sources = source or []
     if repos and fmt != "swe-rebench":
         raise typer.BadParameter("--repos is only valid with --format swe-rebench.")
     if fmt == "swe-rebench":
         prefixes = repos or DEFAULT_REPOS
-        selected_source = source or SOURCE
-        if selected_source.startswith(("hf://", "http://", "https://")):
-            console.print("[dim]Scanning remote parquet; first run downloads metadata/data...[/dim]")
+        selected_sources = sources or [SOURCE]
+        stats = []
         try:
-            stats = ingest_traces(
-                prefixes, limit=limit, db_path=db, source=selected_source
-            )
+            for selected_source in selected_sources:
+                if selected_source.startswith(("hf://", "http://", "https://")):
+                    console.print("[dim]Scanning remote parquet; first run downloads metadata/data...[/dim]")
+                stats.extend(
+                    ingest_traces(
+                        prefixes, limit=limit, db_path=db, source=selected_source
+                    )
+                )
         except (duckdb.Error, OSError, RuntimeError) as error:
             console.print(f"[red]{escape(str(error))}[/red]")
             raise typer.Exit(1) from None
     elif fmt == "swe-chat":
         from .sources.swe_chat import ingest_swe_chat
 
+        selected_sources = sources or ["data/swe-chat"]
         try:
             stats = [
                 ingest_swe_chat(
-                    source or "data/swe-chat",
+                    selected_source,
                     db,
                     limit=limit or None,
                     repo=repo,
                 )
+                for selected_source in selected_sources
             ]
         except (FileNotFoundError, ValueError, RuntimeError) as error:
             console.print(f"[red]{escape(str(error))}[/red]")
@@ -81,13 +102,18 @@ def _ingest_command(
     elif fmt in {"agent-trajectory", "agent"}:
         from .sources.agent_trajectory import ingest_agent_sessions
 
+        selected_sources = sources or [str(Path.home())]
+        stats = []
         try:
-            stats = ingest_agent_sessions(
-                source or str(Path.home()),
-                db,
-                limit=limit or None,
-                repo=repo,
-            )
+            for selected_source in selected_sources:
+                stats.extend(
+                    ingest_agent_sessions(
+                        selected_source,
+                        db,
+                        limit=limit or None,
+                        repo=repo,
+                    )
+                )
         except (FileNotFoundError, ValueError, RuntimeError) as error:
             console.print(f"[red]{escape(str(error))}[/red]")
             raise typer.Exit(1) from None
@@ -110,6 +136,23 @@ def _ingest_command(
     for stat in stats:
         if stat.matched == 0:
             console.print(f"[yellow]No sessions found for {stat.prefix!r}.[/yellow]")
+    if label:
+        from .labels import detect_model
+
+        model = detect_model()
+        if model is None:
+            console.print(
+                "[yellow]No decision backend detected; skipping labeling.[/yellow]"
+            )
+        else:
+            try:
+                done, failed = label_targets(db, model=model)
+                console.print(
+                    f"Labeled [bold]{done}[/bold] targets with [bold]{escape(model)}[/bold]"
+                    f" ({failed} failed)."
+                )
+            except RuntimeError as error:
+                console.print(f"[yellow]Labeling skipped: {escape(str(error))}[/yellow]")
     console.print(f"Database: [bold]{db}[/bold]")
 
 
@@ -254,6 +297,77 @@ def _mine_command(
 app.command("mine")(_mine_command)
 
 
+def _report_command(
+    top: Annotated[int, typer.Option(help="Rows per detector / pattern cap.")] = 25,
+    repo: Annotated[
+        str | None,
+        typer.Option("--repo", help="Limit findings to one repository label."),
+    ] = None,
+    db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
+) -> None:
+    con = connect(db)
+    try:
+        session_count, instance_count = con.execute(
+            "SELECT count(*), count(DISTINCT instance_id) FROM sessions"
+        ).fetchone()
+        if session_count == 0:
+            console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
+            raise typer.Exit(1)
+        label_count = con.execute("SELECT count(*) FROM target_labels").fetchone()[0]
+        repo_rows = con.execute(
+            "SELECT repo, count(*) FROM sessions GROUP BY repo ORDER BY repo"
+        ).fetchall()
+
+        mined = mine_friction(con, top=top)
+        findings = [
+            finding
+            for key in ("hotspots", "recovery", "context", "clusters")
+            for finding in mined[key]
+        ]
+        exact = []
+        for length in EXACT_LENGTHS:
+            exact.extend(
+                exact_sequences(
+                    con,
+                    length=length,
+                    min_sessions=3,
+                    top=500,
+                    min_instances=2,
+                    min_lift=1.5,
+                )
+            )
+        findings.extend(exact)
+        if repo:
+            findings = [finding for finding in findings if finding.repo == repo]
+            repo_rows = [row for row in repo_rows if row[0] == repo]
+            exact = [finding for finding in exact if finding.repo == repo]
+        patterns = [
+            pattern
+            for pattern in mine_sequences(con, top=top)
+            if not repo or repo in pattern.repos
+        ]
+        payload = {
+            "schema_version": 1,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "db": str(db),
+            "sessions": session_count,
+            "instances": instance_count,
+            "labels": label_count,
+            "repos": [{"repo": name, "sessions": count} for name, count in repo_rows],
+            "findings": [
+                {**asdict(finding), "evidence": finding.evidence}
+                for finding in findings
+            ],
+            "patterns": [asdict(pattern) for pattern in patterns],
+        }
+        typer.echo(json.dumps(payload, indent=2))
+    finally:
+        con.close()
+
+
+app.command("report")(_report_command)
+
+
 def _label_command(
     limit: Annotated[int, typer.Option(help="Max pending targets; 0 = all.")] = 0,
     rpm: Annotated[int, typer.Option(help="Requests per minute cap.")] = 270,
@@ -262,7 +376,7 @@ def _label_command(
         str,
         typer.Option(
             "--model",
-            help="clef-flash, clef, jev, gemini-decision-1, or gpt-6-luna.",
+            help="clef-flash, clef, jev, gemini-decision-1, or gpt-6-luna; auto-detected if omitted.",
         ),
     ] = "",
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
@@ -293,9 +407,9 @@ def _patterns_command(
 ) -> None:
     con = connect(db)
     try:
-        label_count = con.execute("SELECT count(*) FROM target_labels").fetchone()[0]
-        if label_count == 0:
-            console.print("[red]No labels. Run `trace2rules label` first.[/red]")
+        session_count = con.execute("SELECT count(*) FROM sessions").fetchone()[0]
+        if session_count == 0:
+            console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
             raise typer.Exit(1)
         patterns = mine_sequences(
             con,

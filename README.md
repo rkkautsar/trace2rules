@@ -123,8 +123,8 @@ Use `--repo owner/name` to override the repository label for local sessions.
 |---|---|
 | `ingest` | Load sessions and tool events into DuckDB |
 | `mine` | Show friction clusters, hotspots, recovery loops, and context blasts |
-| `label` | Label normalized targets through the configured Cloudflare backend |
-| `patterns` | Mine multi-step sequence patterns |
+| `label` | Classify targets with Cloudflare CLEF (`intent`, `object_type`, confidence) |
+| `patterns` | Mine intent-labeled multi-step friction sequences |
 | `exact` | Show exact recurring sequences with evidence |
 | `synthesize` | Write per-repo `.proposed.md` files |
 
@@ -143,11 +143,51 @@ trace2rules synthesize --out-dir ./proposals
 
 `--offline` skips the LLM and uses deterministic rules. Without `--offline`, synthesis uses an OpenAI-compatible endpoint.
 
+### LLM synthesis
+
+`synthesize` sends the gated findings for one repo to a chat model and returns structured rules. Provider selection:
+
+1. `TRACE2RULES_API_KEY` — explicit key; optional `TRACE2RULES_BASE_URL` and `TRACE2RULES_MODEL`.
+2. `GEMINI_API_KEY` or `GOOGLE_API_KEY` — Gemini OpenAI-compatible endpoint.
+3. `OPENAI_API_KEY` — OpenAI.
+
+If no key is configured, or the call fails, synthesis falls back to deterministic rules and keeps going. `--offline` forces that path.
+
+`TRACE2RULES_BASE_URL` makes any OpenAI-compatible endpoint usable, including a LiteLLM proxy.
+
+```bash
+export GEMINI_API_KEY=...
+trace2rules synthesize --repo pdm-project/pdm --out AGENTS.proposed.md
+```
+
+### Intent labels with CLEF
+
+`trace2rules label` asks Cloudflare Workers AI’s `@cf/cloudflare/clef-flash` to classify each distinct normalized target:
+
+- `intent`: explore, read, search, edit, run_tests, run_script, install, env_check, git, other
+- `object_type`: file, directory, test_scope, package, module, config, unknown
+
+It stores the chosen labels and confidence in `target_labels`. `trace2rules patterns` joins that table to `tool_events` and mines error-containing 2–4 step windows keyed by `(intent, object_type, outcome)`.
+
+Requirements:
+
+```bash
+npm install -g wrangler
+wrangler login
+trace2rules label
+trace2rules patterns --min-confidence 0.4
+```
+
+Auth is resolved through `wrangler auth token --json` and `wrangler whoami --json`; the first Cloudflare account is used. Labeling defaults to 270 requests/minute with 6 workers and retries 429/5xx responses.
+
+This is currently separate from synthesis: CLEF labels feed `patterns`, not `synthesize`. Intent-aware synthesis is not wired yet. `label` sends a raw command example to Cloudflare, so do not run it on private sessions without review.
+
 ## Configuration
 
 | Variable | Purpose |
 |---|---|
 | `GEMINI_API_KEY` | Gemini synthesis provider |
+| `GOOGLE_API_KEY` | Alternate Gemini key |
 | `OPENAI_API_KEY` | OpenAI synthesis provider |
 | `TRACE2RULES_API_KEY` | Explicit synthesis API key |
 | `TRACE2RULES_BASE_URL` | OpenAI-compatible base URL (including LiteLLM) |
@@ -161,7 +201,8 @@ trace2rules synthesize --out-dir ./proposals
 1. **Ingest** normalizes tool calls into DuckDB (`sessions`, `tool_events`).
 2. **Detectors** find high-coverage setup failures, repeated exception signatures, read-only hotspots, and large output calls.
 3. **Exact sequence mining** groups recurring 3-step tool sequences with lift and paired-rework evidence.
-4. **Synthesis** selects gated findings and writes one proposal per repo, via an LLM or deterministically with `--offline`.
+4. **Intent labels** (optional) classify normalized targets with CLEF; `patterns` uses them for intent-aware sequence mining.
+5. **Synthesis** selects gated findings and writes one proposal per repo, via an LLM or deterministically with `--offline`.
 
 Generated verifier scripts and low-support task-specific sequences are filtered before synthesis.
 
@@ -170,7 +211,7 @@ Generated verifier scripts and low-support task-specific sequences are filtered 
 - Session data stays in your local DuckDB database.
 - `--offline` performs no LLM calls.
 - LLM synthesis sends mined findings, not the full raw session database. Findings can still contain commands, paths, and repository names; review before using an external provider.
-- `label` uses an external backend and should not be used on sensitive private sessions without review.
+- `label` sends a normalized target plus a raw example to Cloudflare Workers AI; do not use it on sensitive private sessions without review.
 - `data/` and generated `AGENTS.*.proposed.md` files are gitignored.
 
 ## Known limits
@@ -179,6 +220,7 @@ Generated verifier scripts and low-support task-specific sequences are filtered 
 - SWE-chat has no `resolved` field; `session_success` (0–100) is stored separately as `success_score`.
 - SWE-chat tool results are truncated to 10 KB and do not carry an explicit error flag; outcomes are inferred from text and exit codes.
 - Local-session formats change frequently. `agent-trajectory` is the compatibility layer; pin its version.
+- CLEF labels currently feed `patterns`, not `synthesize`; intent-aware synthesis is not wired yet.
 - Full SWE-chat import and synthesis were not part of the release smoke test.
 
 ## Development

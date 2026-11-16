@@ -45,6 +45,15 @@ outcome, exit_code, error_signature, is_error,
 approx_out_tokens, obs_excerpt
 ```
 
+`target_labels` is optional and populated by `trace2rules label`:
+
+```text
+tool_name, action_type, target,
+intent, intent_confidence,
+object_type, object_confidence,
+model, labeled_at
+```
+
 `write_sessions()` replaces rows by `session_id`, so re-importing a session is idempotent.
 
 ## Evidence
@@ -54,6 +63,7 @@ approx_out_tokens, obs_excerpt
 - Hotspots: read-only files or paths touched across many sessions.
 - Context blasts: commands or reads averaging large output.
 - Exact sequences: 3-step windows with support, lift, and paired-rework evidence.
+- Intent labels: optional CLEF classification of `(intent, object_type)` used by `patterns` to mine semantic friction sequences.
 
 Generated verifier scripts and low-support task-specific sequences are filtered before synthesis.
 

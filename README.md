@@ -8,7 +8,7 @@ Status: alpha. The output is a proposal, not an automatically applied `AGENTS.md
 
 ## Example finding
 
-On the demo corpus, PDM's most expensive repeated friction was a setup loop: `import pdm` failed until `pip install -e .` was run. It appeared in 39 sessions and accounted for ~95,576 setup tokens.
+On the demo corpus, [PDM](https://github.com/pdm-project/pdm), a Python package manager, showed its most expensive repeated friction as a setup loop: `import pdm` failed until `pip install -e .` was run. It appeared in 39 sessions and accounted for ~95,576 setup tokens.
 
 `synthesize` turns that into:
 

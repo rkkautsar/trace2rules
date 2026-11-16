@@ -562,16 +562,22 @@ def write_sessions(
     sessions: Iterable[Session],
 ) -> IngestStats:
     """Write canonical sessions/events, replacing rows with the same ids."""
-    session_list = list(sessions)
+    session_list = list({session.session_id: session for session in sessions}.values())
     con = connect(db_path)
     con.execute("BEGIN TRANSACTION")
-    event_count = 0
     try:
-        for session in session_list:
-            con.execute("DELETE FROM tool_events WHERE session_id = ?", [session.session_id])
-            con.execute("DELETE FROM sessions WHERE session_id = ?", [session.session_id])
-            total_turns = len(session.calls)
+        if session_list:
+            session_ids = [session.session_id for session in session_list]
+            placeholders = ",".join("?" for _ in session_ids)
             con.execute(
+                f"DELETE FROM tool_events WHERE session_id IN ({placeholders})",
+                session_ids,
+            )
+            con.execute(
+                f"DELETE FROM sessions WHERE session_id IN ({placeholders})",
+                session_ids,
+            )
+            con.executemany(
                 """
                 INSERT INTO sessions (
                     session_id, repo, instance_id, resolved, total_turns,
@@ -579,17 +585,22 @@ def write_sessions(
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    session.session_id,
-                    session.repo or "unknown",
-                    session.instance_id or session.session_id,
-                    session.resolved,
-                    total_turns,
-                    session.source,
-                    session.agent,
-                    session.success_score,
+                    (
+                        session.session_id,
+                        session.repo or "unknown",
+                        session.instance_id or session.session_id,
+                        session.resolved,
+                        len(session.calls),
+                        session.source,
+                        session.agent,
+                        session.success_score,
+                    )
+                    for session in session_list
                 ],
             )
-            events = []
+
+        events = []
+        for session in session_list:
             for step_idx, call in enumerate(session.calls):
                 if call.action_type:
                     action = call.action_type
@@ -644,32 +655,31 @@ def write_sessions(
                         observation[:400],
                     )
                 )
-            if events:
-                con.executemany(
-                    """
-                    INSERT INTO tool_events (
-                        event_id, session_id, repo, step_idx, segment_idx,
-                        tool_name, action_type,
-                        verb, object_id, target, raw_target, outcome, exit_code,
-                        error_signature, is_error, approx_out_tokens, obs_excerpt
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    events,
-                )
-                event_count += len(events)
+
+        if events:
+            con.executemany(
+                """
+                INSERT INTO tool_events (
+                    event_id, session_id, repo, step_idx, segment_idx,
+                    tool_name, action_type,
+                    verb, object_id, target, raw_target, outcome, exit_code,
+                    error_signature, is_error, approx_out_tokens, obs_excerpt
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                events,
+            )
         con.execute("COMMIT")
         return IngestStats(
             prefix="canonical",
             matched=len(session_list),
             sessions=len(session_list),
-            events=event_count,
+            events=len(events),
         )
     except Exception:
         con.execute("ROLLBACK")
         raise
     finally:
         con.close()
-
 
 def _flush_sessions(con: duckdb.DuckDBPyConnection, sessions: list[dict]) -> None:
     if not sessions:

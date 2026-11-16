@@ -4,8 +4,6 @@
 
 Turn coding-agent sessions into a small set of repository-specific `AGENTS.md` proposals backed by measured evidence.
 
-The tool is local-first. Datasets are inputs; only the CLI and its tests are published.
-
 ## Pipeline
 
 ```text

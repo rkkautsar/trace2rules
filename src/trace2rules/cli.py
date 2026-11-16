@@ -301,6 +301,7 @@ def _mine_command(
             console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
             raise typer.Exit(1)
         from .detectors import session_summary
+        from .cluster import mine as mine_friction
 
         _print_summary(session_summary(con))
         mined = mine_friction(con, top=top)
@@ -338,7 +339,9 @@ def _report_command(
             "SELECT repo, count(*) FROM sessions GROUP BY repo ORDER BY repo"
         ).fetchall()
 
+        from .cluster import exact_sequences, mine as mine_friction
         from .synthesize import EXACT_LENGTHS
+
         mined = mine_friction(con, top=top)
         findings = [
             finding
@@ -598,6 +601,8 @@ def _exact_command(
 ) -> None:
     con = connect(db)
     try:
+        from .cluster import exact_sequences
+
         findings = exact_sequences(
             con,
             length=length,

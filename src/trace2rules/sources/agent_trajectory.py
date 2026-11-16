@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -505,12 +506,10 @@ def ingest_agent_sessions(
                 if progress
                 else None
             )
-            results: list[dict] = []
-            BATCH = 32
-            for start in range(0, len(transcript_metas), BATCH):
-                batch = transcript_metas[start : start + BATCH]
+            def normalize_batch(batch):
+                normalized = []
                 try:
-                    results.extend(
+                    return list(
                         normalize_many(
                             [
                                 {
@@ -525,7 +524,7 @@ def ingest_agent_sessions(
                 except NormalizationError:
                     for path, text, _ in batch:
                         try:
-                            results.extend(
+                            normalized.extend(
                                 [
                                     normalize_many(
                                         [
@@ -540,7 +539,30 @@ def ingest_agent_sessions(
                             )
                         except NormalizationError as error:
                             print(f"Skipping {path}: {error}")
-                            results.append({"records": [], "diagnostics": []})
+                            normalized.append({"records": [], "diagnostics": []})
+                return normalized
+
+            BATCH = 16
+            batches = [
+                transcript_metas[start : start + BATCH]
+                for start in range(0, len(transcript_metas), BATCH)
+            ]
+            ordered_results: list[list[dict] | None] = [None] * len(batches)
+            workers = min(3, len(batches)) if batches else 1
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(normalize_batch, batch): index
+                    for index, batch in enumerate(batches)
+                }
+                for future in as_completed(futures):
+                    index = futures[future]
+                    ordered_results[index] = future.result()
+                    if progress and task_id is not None:
+                        progress.update(task_id, advance=len(batches[index]))
+            results: list[dict] = []
+            for batch_results in ordered_results:
+                if batch_results:
+                    results.extend(batch_results)
             for (path, _text, meta), result in zip(transcript_metas, results):
                 if not result.get("records"):
                     continue

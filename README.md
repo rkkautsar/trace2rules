@@ -16,6 +16,8 @@ On the demo corpus, [PDM](https://github.com/pdm-project/pdm), a Python package 
 trace2rules synthesize --repo pdm-project/pdm --offline --out -
 ```
 
+This example uses `--offline` for reproducibility; omit it to use the configured LLM.
+
 ```markdown
 # AGENTS.md
 
@@ -63,6 +65,8 @@ uv run trace2rules ingest --repos django__django --limit 50
 uv run trace2rules mine
 uv run trace2rules synthesize --offline
 ```
+
+The examples use `--offline` so they run without an API key and produce deterministic output. Omit `--offline` to use the configured LLM.
 
 `ingest` writes to `data/trace2rules.duckdb` by default. `mine`, `exact`, and `synthesize` read from it.
 

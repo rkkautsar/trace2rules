@@ -13,7 +13,7 @@ source adapter
   -> detectors (hotspots, recovery loops, context blasts)
   -> exact sequence mining + lift / paired rework
   -> gated findings
-  -> deterministic or LLM synthesis
+  -> LLM synthesis (deterministic fallback)
   -> AGENTS.<owner>__<repo>.proposed.md
 ```
 

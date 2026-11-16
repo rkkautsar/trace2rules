@@ -39,7 +39,7 @@ Synthesis is LLM-first. `trace2rules synthesize` sends the gated findings for ea
 
 Provider selection:
 
-1. `TRACE2RULES_LLM_API_KEY` — key for a custom OpenAI-compatible endpoint; pair with `TRACE2RULES_BASE_URL` and `TRACE2RULES_MODEL`. This is not a trace2rules service key.
+1. `TRACE2RULES_LLM_API_KEY` — API key for a custom OpenAI-compatible endpoint.
 2. `GEMINI_API_KEY` or `GOOGLE_API_KEY` — Gemini OpenAI-compatible endpoint.
 3. `OPENAI_API_KEY` — OpenAI.
 
@@ -52,14 +52,15 @@ If no key is configured, or the call fails, synthesis falls back to deterministi
 | Format | What it reads | Notes |
 |---|---|---|
 | `swe-rebench` | `nebius/SWE-rebench-openhands-trajectories` parquet | Default; streamed from Hugging Face |
-| `swe-chat` | `SALT-NLP/SWE-chat` parquet tables | Normalized `sessions.parquet` + `conversations.parquet`; gated dataset |
 | `agent-trajectory` | Local Claude Code, Codex, Pi, OMP, and OpenCode exports | Uses [`agent-trajectory`](https://github.com/letta-ai/trajectory); requires Node.js 20+ |
+
+SWE-chat is not a primary input. It is used below as an optional example corpus.
 
 Datasets are not included in this repository.
 
 ## Install
 
-Base install (SWE-rebench and SWE-chat):
+Base install (SWE-rebench):
 
 ```bash
 uv sync
@@ -77,8 +78,10 @@ pip install -e '.[local]'
 
 ## Quick start
 
+This ingests the default **SWE-rebench OpenHands parquet** from Hugging Face. `django__django` is an `instance_id` prefix, not a GitHub slug.
+
 ```bash
-uv run trace2rules ingest --repos django__django --limit 50
+uv run trace2rules ingest --format swe-rebench --repos django__django --limit 50
 uv run trace2rules mine
 uv run trace2rules synthesize
 # or, without an API key:
@@ -89,7 +92,9 @@ LLM synthesis is the default. `--offline` is the no-key/deterministic path.
 
 `ingest` writes to `data/trace2rules.duckdb` by default. `mine`, `exact`, and `synthesize` read from it.
 
-### SWE-chat
+### Optional example corpus: SWE-chat
+
+SWE-chat is an optional example corpus, not a core input format. It is useful for reproducing the PDM finding above.
 
 Request access on the [dataset page](https://huggingface.co/datasets/SALT-NLP/SWE-chat), then download the two tables:
 
@@ -142,7 +147,7 @@ Use `--repo owner/name` to override the repository label for local sessions.
 |---|---|
 | `ingest` | Load sessions and tool events into DuckDB |
 | `mine` | Show friction clusters, hotspots, recovery loops, and context blasts |
-| `label` | Classify targets with Cloudflare clef (`intent`, `object_type`, confidence) |
+| `label` | Classify targets with a decision model (`intent`, `object_type`, confidence) |
 | `patterns` | Mine intent-labeled multi-step friction sequences |
 | `exact` | Show exact recurring sequences with evidence |
 | `synthesize` | Write per-repo `.proposed.md` files |
@@ -150,7 +155,7 @@ Use `--repo owner/name` to override the repository label for local sessions.
 Useful options:
 
 ```bash
-trace2rules ingest --format swe-rebench|swe-chat|agent-trajectory
+trace2rules ingest --format swe-rebench|agent-trajectory
 trace2rules ingest --source PATH --limit 200
 trace2rules synthesize
 trace2rules synthesize --offline
@@ -163,27 +168,38 @@ trace2rules synthesize --out-dir ./proposals
 
 Synthesis is LLM-first. `--offline` skips the LLM and uses deterministic rules.
 
-### Intent labels with clef
+### Decision labels
 
-`trace2rules label` asks Cloudflare Workers AI’s [`@cf/cloudflare/clef-flash`](https://developers.cloudflare.com/workers-ai/models/clef-flash/), a decision model that returns typed choices with confidence, to classify each distinct normalized target:
-
+`trace2rules label` classifies each distinct normalized target with a decision model:
 - `intent`: explore, read, search, edit, run_tests, run_script, install, env_check, git, other
 - `object_type`: file, directory, test_scope, package, module, config, unknown
 
-It stores the chosen labels and confidence in `target_labels`. `trace2rules patterns` joins that table to `tool_events` and mines error-containing 2–4 step windows keyed by `(intent, object_type, outcome)`.
+It stores the chosen labels and confidence in `target_labels`. `synthesize` annotates matching findings, sends the label summary to the LLM prompt, and drops low-confidence or `other` labels from deterministic rules. `patterns` also uses labels to mine semantic friction sequences.
 
-Requirements:
+Supported models:
+
+| `--model` | Provider | Credential |
+|---|---|---|
+| `clef-flash` (default) | Cloudflare Workers AI | `wrangler login` |
+| `clef` | Cloudflare Workers AI | `wrangler login` |
+| `jev` | Cloudflare Workers AI (`typesafe/jev`) | `wrangler login` |
+| `gemini-decision-1` | Gemini Decisions API | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
+| `gpt-6-luna` (alias `luna`) | OpenAI Decisions API | `OPENAI_API_KEY` |
+
+`TRACE2RULES_DECISION_MODEL` sets the default; `--model` overrides it.
 
 ```bash
-npm install -g wrangler
-wrangler login
+# default: clef-flash
 trace2rules label
+trace2rules label --model jev
+trace2rules label --model gemini-decision-1
+trace2rules label --model gpt-6-luna
 trace2rules patterns --min-confidence 0.4
 ```
 
-Auth is resolved through `wrangler auth token --json` and `wrangler whoami --json`; the first Cloudflare account is used. Labeling defaults to 270 requests/minute with 6 workers and retries 429/5xx responses.
+Cloudflare models authenticate through `wrangler auth token --json` and `wrangler whoami --json`; the first account is used. Gemini and OpenAI use their standard keys. Labeling defaults to 270 requests/minute with 6 workers and retries 429/5xx responses.
 
-This is currently separate from synthesis: clef labels feed `patterns`, not `synthesize`. Intent-aware synthesis is not wired yet. `label` sends a raw command example to Cloudflare, so do not run it on private sessions without review.
+`label` sends the tool name, action type, normalized target, and a raw command example to the selected provider. Do not run it on private sessions without review.
 
 ## Configuration
 
@@ -192,9 +208,10 @@ This is currently separate from synthesis: clef labels feed `patterns`, not `syn
 | `GEMINI_API_KEY` | Gemini synthesis provider |
 | `GOOGLE_API_KEY` | Alternate Gemini key |
 | `OPENAI_API_KEY` | OpenAI synthesis provider |
-| `TRACE2RULES_LLM_API_KEY` | Key for a custom OpenAI-compatible endpoint; not a trace2rules key |
+| `TRACE2RULES_LLM_API_KEY` | API key for a custom OpenAI-compatible endpoint |
 | `TRACE2RULES_BASE_URL` | OpenAI-compatible base URL (including LiteLLM) |
 | `TRACE2RULES_MODEL` | Synthesis model, e.g. `gemini-4-hydrogen` |
+| `TRACE2RULES_DECISION_MODEL` | Labeling backend: `clef-flash` (default), `clef`, `jev`, `gemini-decision-1`, `gpt-6-luna` |
 | `HF_TOKEN` | Used by `hf download` for gated datasets; not read by trace2rules |
 
 `TRACE2RULES_BASE_URL` also works with an OpenAI-compatible LiteLLM proxy.
@@ -204,7 +221,7 @@ This is currently separate from synthesis: clef labels feed `patterns`, not `syn
 1. **Ingest** normalizes tool calls into DuckDB (`sessions`, `tool_events`).
 2. **Detectors** find high-coverage setup failures, repeated exception signatures, read-only hotspots, and large output calls.
 3. **Exact sequence mining** groups recurring 3-step tool sequences with lift and paired-rework evidence.
-4. **Intent labels** (optional) classify normalized targets with CLEF; `patterns` uses them for intent-aware sequence mining.
+4. **Decision labels** (optional) classify normalized targets with clef/Jev/Gemini Decisions/Luna; `synthesize` uses them for category and filtering, and `patterns` uses them for intent-aware sequence mining.
 5. **Synthesis** is LLM-first. It selects gated findings and asks the configured model for structured rules; `--offline` forces deterministic rules.
 
 Generated verifier scripts and low-support task-specific sequences are filtered before synthesis.
@@ -220,11 +237,8 @@ Generated verifier scripts and low-support task-specific sequences are filtered 
 ## Known limits
 
 - Detectors are heuristics. Review every proposed rule.
-- SWE-chat has no `resolved` field; `session_success` (0–100) is stored separately as `success_score`.
-- SWE-chat tool results are truncated to 10 KB and do not carry an explicit error flag; outcomes are inferred from text and exit codes.
 - Local-session formats change frequently. `agent-trajectory` is the compatibility layer; pin its version.
-- clef labels currently feed `patterns`, not `synthesize`; intent-aware synthesis is not wired yet.
-- Full SWE-chat import and synthesis were not part of the release smoke test.
+- Decision-model labels are probabilistic; inspect low-confidence labels before relying on them.
 
 ## Development
 

@@ -22,7 +22,7 @@ source adapter
 | Format | Adapter | Notes |
 |---|---|---|
 | `swe-rebench` | `ingest.py` | OpenHands-style parquet, streamed from Hugging Face |
-| `swe-chat` | `sources/swe_chat.py` | Normalized `sessions.parquet` + `conversations.parquet` |
+| `swe-chat` | `sources/swe_chat.py` | Optional example corpus; normalized `sessions.parquet` + `conversations.parquet` |
 | `agent-trajectory` | `sources/agent_trajectory.py` | Claude Code, Codex, Pi, OMP, and OpenCode JSON exports |
 
 `agent-trajectory` is an optional extra because it requires Node.js 20+.
@@ -63,7 +63,7 @@ model, labeled_at
 - Hotspots: read-only files or paths touched across many sessions.
 - Context blasts: commands or reads averaging large output.
 - Exact sequences: 3-step windows with support, lift, and paired-rework evidence.
-- Intent labels: optional clef classification of `(intent, object_type)` used by `patterns` to mine semantic friction sequences.
+- Intent labels: optional decision-model classification of `(intent, object_type)` used by `patterns` and to annotate/filter findings during synthesis.
 
 Generated verifier scripts and low-support task-specific sequences are filtered before synthesis.
 
@@ -76,7 +76,7 @@ Per repository:
 - at most 2,500 characters;
 - no file is written when no rule survives.
 
-`--offline` uses deterministic rules. The LLM path receives gated findings, not the raw database.
+`--offline` uses deterministic rules. The LLM path receives gated findings, optional decision-model labels, and not the raw database.
 
 ## Non-goals
 

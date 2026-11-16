@@ -22,6 +22,10 @@ class Finding:
     paired_instances: int = 0
     delta_rework: float = 0.0
     delta_setup: float = 0.0
+    intent: str = ""
+    object_type: str = ""
+    intent_confidence: float = 0.0
+    object_confidence: float = 0.0
 
     @property
     def evidence(self) -> str:

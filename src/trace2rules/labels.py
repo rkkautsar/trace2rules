@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import time
@@ -13,7 +14,7 @@ import duckdb
 
 from .db import DB_PATH, connect
 
-MODEL = "@cf/cloudflare/clef-flash"
+DEFAULT_MODEL = "clef-flash"
 DEFAULT_RPM = 270
 DEFAULT_WORKERS = 6
 
@@ -53,6 +54,47 @@ QUESTIONS = {
     },
 }
 
+MODELS: dict[str, dict[str, str]] = {
+    "clef-flash": {
+        "name": "clef-flash",
+        "provider": "cloudflare",
+        "model_id": "@cf/cloudflare/clef-flash",
+        "wire_model": "clef-flash",
+        "style": "clef",
+    },
+    "clef": {
+        "name": "clef",
+        "provider": "cloudflare",
+        "model_id": "@cf/cloudflare/clef",
+        "wire_model": "clef",
+        "style": "clef",
+    },
+    "jev": {
+        "name": "jev",
+        "provider": "cloudflare",
+        "model_id": "typesafe/jev",
+        "wire_model": "typesafe/jev",
+        "style": "jev",
+    },
+    "gemini-decision-1": {
+        "name": "gemini-decision-1",
+        "provider": "gemini",
+        "model_id": "gemini-decision-1",
+    },
+    "gpt-6-luna": {
+        "name": "gpt-6-luna",
+        "provider": "openai",
+        "model_id": "gpt-6-luna",
+    },
+}
+
+MODEL_ALIASES = {
+    "luna": "gpt-6-luna",
+    "gemini": "gemini-decision-1",
+    "gemini-decision": "gemini-decision-1",
+    "jev-1.13": "jev",
+}
+
 
 class RateLimiter:
     def __init__(self, rpm: int) -> None:
@@ -67,6 +109,17 @@ class RateLimiter:
                 time.sleep(self.next_slot - now)
                 now = time.monotonic()
             self.next_slot = max(now, self.next_slot) + self.interval
+
+
+def _resolve_model(name: str | None) -> dict[str, str]:
+    selected = (name or os.getenv("TRACE2RULES_DECISION_MODEL") or DEFAULT_MODEL).strip()
+    selected = MODEL_ALIASES.get(selected, selected)
+    if selected not in MODELS:
+        raise RuntimeError(
+            "Unknown decision model "
+            f"{selected!r}; choose one of: {', '.join(sorted(MODELS))}."
+        )
+    return MODELS[selected]
 
 
 def _wrangler_json(*args: str) -> dict:
@@ -96,32 +149,135 @@ def _cloudflare_auth() -> tuple[str, str]:
     return accounts[0]["id"], token
 
 
-def _post(account: str, token: str, state: dict) -> dict:
-    body = json.dumps(
-        {"model": "clef-flash", "state": state, "questions": QUESTIONS}
-    ).encode()
-    request = urllib.request.Request(
-        f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{MODEL}",
-        data=body,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=90) as response:
-        payload = json.load(response)
-    if not payload.get("success"):
-        raise RuntimeError(f"clef-flash error: {payload.get('errors')}")
-    return payload["result"]
+def _auth_for(spec: dict[str, str]):
+    provider = spec["provider"]
+    if provider == "cloudflare":
+        return _cloudflare_auth()
+    if provider == "gemini":
+        key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not key:
+            raise RuntimeError(
+                "gemini-decision-1 requires GEMINI_API_KEY or GOOGLE_API_KEY."
+            )
+        return key
+    if provider == "openai":
+        key = os.getenv("OPENAI_API_KEY")
+        if not key:
+            raise RuntimeError("gpt-6-luna requires OPENAI_API_KEY.")
+        return key
+    raise RuntimeError(f"Unsupported decision provider: {provider}")
 
 
-def _retry(account: str, token: str, state: dict, limiter: RateLimiter) -> dict:
+def _openai_questions() -> list[dict]:
+    return [
+        {
+            "type": "choice",
+            "name": name,
+            "instructions": question["instructions"],
+            "choices": [
+                {"value": value, "description": description}
+                for value, description in question["criteria"].items()
+            ],
+        }
+        for name, question in QUESTIONS.items()
+    ]
+
+
+def _openai_answers(payload: dict) -> dict:
+    answers = payload.get("answers") or []
+    return {
+        answer.get("name"): {
+            "choice": answer.get("choice"),
+            "confidence": answer.get("confidence") or 0.0,
+        }
+        for answer in answers
+        if answer.get("name")
+    }
+
+
+def _post(auth, state: dict, spec: dict[str, str]) -> dict:
+    provider = spec["provider"]
+    if provider == "cloudflare":
+        account, token = auth
+        if spec["style"] == "jev":
+            url = "https://api.cloudflare.com/client/v4/accounts/{}/ai/run".format(account)
+            body = {
+                "model": spec["wire_model"],
+                "input": {"state": state, "questions": QUESTIONS},
+            }
+        else:
+            url = (
+                "https://api.cloudflare.com/client/v4/accounts/{}/ai/run/{}".format(
+                    account, spec["model_id"]
+                )
+            )
+            body = {
+                "model": spec["wire_model"],
+                "state": state,
+                "questions": QUESTIONS,
+            }
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode(),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=90) as response:
+            payload = json.load(response)
+        if not payload.get("success"):
+            raise RuntimeError(f"{spec['name']} error: {payload.get('errors')}")
+        return payload["result"]["answers"]
+
+    if provider == "gemini":
+        body = {
+            "model": spec["model_id"],
+            "input": json.dumps(state, ensure_ascii=False),
+            "questions": QUESTIONS,
+        }
+        request = urllib.request.Request(
+            "https://generativelanguage.googleapis.com/v1beta/decisions",
+            data=json.dumps(body).encode(),
+            headers={
+                "x-goog-api-key": auth,
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=90) as response:
+            payload = json.load(response)
+        return payload["answers"]
+
+    if provider == "openai":
+        body = {
+            "model": spec["model_id"],
+            "input": json.dumps(state, ensure_ascii=False),
+            "questions": _openai_questions(),
+        }
+        request = urllib.request.Request(
+            "https://api.openai.com/v1/decisions",
+            data=json.dumps(body).encode(),
+            headers={
+                "Authorization": f"Bearer {auth}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=90) as response:
+            payload = json.load(response)
+        return _openai_answers(payload)
+
+    raise RuntimeError(f"Unsupported decision provider: {provider}")
+
+
+def _retry(auth, state: dict, limiter: RateLimiter, spec: dict[str, str]) -> dict:
     last_error: Exception | None = None
     for attempt in range(6):
         limiter.wait()
         try:
-            return _post(account, token, state)
+            return _post(auth, state, spec)
         except urllib.error.HTTPError as error:
             detail = error.read().decode(errors="replace")[:500]
             if error.code == 429 or error.code >= 500:
@@ -134,7 +290,9 @@ def _retry(account: str, token: str, state: dict, limiter: RateLimiter) -> dict:
         except (urllib.error.URLError, TimeoutError) as error:
             last_error = error
             time.sleep(2**attempt)
-    raise RuntimeError(f"clef-flash failed after retries: {last_error}")
+    raise RuntimeError(
+        f"{spec['name']} failed after retries: {last_error}"
+    )
 
 
 def _pending(
@@ -171,6 +329,7 @@ def label_targets(
     limit: int | None = None,
     rpm: int = DEFAULT_RPM,
     workers: int = DEFAULT_WORKERS,
+    model: str | None = None,
 ) -> tuple[int, int]:
     con = connect(db_path)
     rows = _pending(con, limit)
@@ -178,7 +337,8 @@ def label_targets(
         con.close()
         return 0, 0
 
-    account, token = _cloudflare_auth()
+    spec = _resolve_model(model)
+    auth = _auth_for(spec)
     limiter = RateLimiter(rpm)
     done = 0
     failed = 0
@@ -186,10 +346,9 @@ def label_targets(
     started = time.monotonic()
 
     def work(row: tuple[str, str, str, str]) -> tuple:
-        result = _retry(account, token, _state(row), limiter)
-        answers = result["answers"]
-        intent = answers["intent"]
-        object_type = answers["object_type"]
+        result = _retry(auth, _state(row), limiter, spec)
+        intent = result["intent"]
+        object_type = result["object_type"]
         return (
             row[0],
             row[1],
@@ -198,7 +357,7 @@ def label_targets(
             float(intent.get("confidence") or 0.0),
             object_type["choice"],
             float(object_type.get("confidence") or 0.0),
-            "clef-flash",
+            spec["name"],
         )
 
     try:

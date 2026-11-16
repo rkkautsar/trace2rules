@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Annotated
 
@@ -257,10 +258,23 @@ def _label_command(
     limit: Annotated[int, typer.Option(help="Max pending targets; 0 = all.")] = 0,
     rpm: Annotated[int, typer.Option(help="Requests per minute cap.")] = 270,
     workers: Annotated[int, typer.Option(help="Concurrent requests.")] = 6,
+    model: Annotated[
+        str,
+        typer.Option(
+            "--model",
+            help="clef-flash, clef, jev, gemini-decision-1, or gpt-6-luna.",
+        ),
+    ] = "",
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     try:
-        done, failed = label_targets(db, limit=limit or None, rpm=rpm, workers=workers)
+        done, failed = label_targets(
+            db,
+            limit=limit or None,
+            rpm=rpm,
+            workers=workers,
+            model=model or os.getenv("TRACE2RULES_DECISION_MODEL"),
+        )
     except RuntimeError as error:
         console.print(f"[red]{escape(str(error))}[/red]")
         raise typer.Exit(1) from None

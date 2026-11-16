@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
@@ -78,6 +79,76 @@ def select_findings(
     return findings[:limit]
 
 
+def annotate_findings(con, findings: list[Finding]) -> list[Finding]:
+    """Attach clef intent/object labels to findings with a matching target."""
+    targets = sorted({finding.title for finding in findings if finding.title})
+    if not targets:
+        return findings
+    placeholders = ",".join("?" for _ in targets)
+    rows = con.execute(
+        f"""
+        SELECT target, intent, object_type, intent_confidence, object_confidence
+        FROM target_labels
+        WHERE target IN ({placeholders})
+        """,
+        targets,
+    ).fetchall()
+    labels = {
+        target: (intent, object_type, intent_confidence, object_confidence)
+        for target, intent, object_type, intent_confidence, object_confidence in rows
+    }
+    annotated = []
+    for finding in findings:
+        label = labels.get(finding.title)
+        if label is None:
+            annotated.append(finding)
+            continue
+        intent, object_type, intent_confidence, object_confidence = label
+        annotated.append(
+            replace(
+                finding,
+                intent=intent,
+                object_type=object_type,
+                intent_confidence=float(intent_confidence),
+                object_confidence=float(object_confidence),
+            )
+        )
+    return annotated
+
+
+def label_summary(con, repo: str, limit: int = 12) -> list[dict]:
+    rows = con.execute(
+        """
+        SELECT l.intent, l.object_type,
+               count(*) AS calls,
+               count(DISTINCT e.session_id) AS sessions,
+               avg(l.intent_confidence) AS intent_confidence,
+               avg(l.object_confidence) AS object_confidence
+        FROM tool_events e
+        JOIN target_labels l
+          ON e.tool_name = l.tool_name
+         AND e.action_type = l.action_type
+         AND e.target = l.target
+        WHERE e.repo = ?
+        GROUP BY 1, 2
+        ORDER BY calls DESC
+        LIMIT ?
+        """,
+        [repo, limit],
+    ).fetchall()
+    return [
+        {
+            "intent": intent,
+            "object_type": object_type,
+            "calls": calls,
+            "sessions": sessions,
+            "intent_confidence": round(float(intent_confidence or 0), 2),
+            "object_confidence": round(float(object_confidence or 0), 2),
+        }
+        for intent, object_type, calls, sessions, intent_confidence, object_confidence in rows
+    ]
+
+
 def _truncate(text: str, width: int) -> str:
     text = " ".join(text.split())
     return text if len(text) <= width else text[: width - 1] + "…"
@@ -130,7 +201,7 @@ def _make_client(key: str, base: str | None, model: str):
     return client, model
 
 
-def _prompt(findings: list[Finding], repo: str) -> str:
+def _prompt(findings: list[Finding], repo: str, labels: list[dict]) -> str:
     payload = [
         {
             "kind": finding.kind,
@@ -143,6 +214,8 @@ def _prompt(findings: list[Finding], repo: str) -> str:
             "detail": finding.detail,
             "sequence": finding.sequence,
             "variants": list(finding.variants),
+            "intent": finding.intent,
+            "object_type": finding.object_type,
         }
         for finding in findings
     ]
@@ -150,6 +223,9 @@ def _prompt(findings: list[Finding], repo: str) -> str:
 
 Findings from mined agent trajectories for this repo only (JSON):
 {json.dumps(payload, indent=2)}
+
+Semantic target labels observed for this repo (clef/decision-model annotations, JSON):
+{json.dumps(labels, indent=2)}
 
 Write AGENTS.md rules for this repository. Requirements:
 - Emit 1-5 declarative rules, not task-specific issue descriptions.
@@ -165,7 +241,9 @@ Return JSON only, shaped exactly as:
 {{"repo": "{repo}", "rules": [{{"category": "...", "rule_markdown": "...", "evidence_summary": "...", "estimated_tokens_saved_per_session": 0}}]}}"""
 
 
-def _llm_synthesis(findings: list[Finding], repo: str) -> Synthesis | None:
+def _llm_synthesis(
+    findings: list[Finding], repo: str, labels: list[dict]
+) -> Synthesis | None:
     resolved = _client()
     if resolved is None:
         return None
@@ -179,7 +257,7 @@ def _llm_synthesis(findings: list[Finding], repo: str) -> Synthesis | None:
                 "role": "system",
                 "content": "You convert observed coding-agent friction into terse, repo-level AGENTS.md rules.",
             },
-            {"role": "user", "content": _prompt(findings, repo)},
+            {"role": "user", "content": _prompt(findings, repo, labels)},
         ],
     )
     content = (response.choices[0].message.content or "").strip()
@@ -210,6 +288,8 @@ def _offline_synthesis(findings: list[Finding], repo: str) -> Synthesis:
         )
 
     for finding in findings:
+        if finding.intent and finding.intent_confidence < 0.4:
+            continue
         if finding.kind == "exact" and "pip:editable" in finding.sequence:
             if finding.sessions < 10:
                 continue
@@ -231,6 +311,8 @@ def _offline_synthesis(findings: list[Finding], repo: str) -> Synthesis:
                 int(finding.delta_rework * 1000),
             )
         elif finding.kind == "hotspot":
+            if finding.object_type == "unknown":
+                continue
             if not _is_path_target(finding.title):
                 continue
             basename = finding.title.rstrip("/").rsplit("/", 1)[-1]
@@ -245,6 +327,8 @@ def _offline_synthesis(findings: list[Finding], repo: str) -> Synthesis:
                 finding.tokens // max(finding.sessions, 1),
             )
         elif finding.kind == "context":
+            if finding.intent == "other":
+                continue
             if " " not in finding.title:
                 continue
             avg = re.search(r"avg (\d+) tokens", finding.detail)
@@ -319,14 +403,17 @@ def synthesize(
 
     for row in repo_rows:
         repo_name = row["repo"]
-        findings = select_findings(exact, mined, repo_name)
+        findings = annotate_findings(
+            con, select_findings(exact, mined, repo_name)
+        )
+        labels = label_summary(con, repo_name)
         print_findings(findings, console)
 
         synthesis: Synthesis | None = None
         llm_failed = False
         if not offline:
             try:
-                synthesis = _llm_synthesis(findings, repo_name)
+                synthesis = _llm_synthesis(findings, repo_name, labels)
             except Exception as error:  # noqa: BLE001 - degrade to deterministic output
                 llm_failed = True
                 console.print(f"[yellow]LLM synthesis unavailable: {escape(str(error))}[/yellow]")

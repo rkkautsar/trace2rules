@@ -15,6 +15,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from .detectors import Finding
+from .redact import redact_value
 
 MAX_RULES = 5
 MAX_LINES = 60
@@ -261,7 +262,8 @@ def _make_client(key: str, base: str | None, model: str):
 
 
 def _prompt(findings: list[Finding], repo: str, labels: list[dict]) -> str:
-    payload = [
+    payload = redact_value(
+        [
         {
             "kind": finding.kind,
             "sessions": finding.sessions,
@@ -277,14 +279,15 @@ def _prompt(findings: list[Finding], repo: str, labels: list[dict]) -> str:
             "object_type": finding.object_type,
         }
         for finding in findings
-    ]
+        ]
+    )
     return f"""Repo: {repo}
 
 Findings from mined agent trajectories for this repo only (JSON):
 {json.dumps(payload, indent=2)}
 
 Semantic target labels observed for this repo (clef/decision-model annotations, JSON):
-{json.dumps(labels, indent=2)}
+{json.dumps(redact_value(labels), indent=2)}
 
 Write AGENTS.md rules for this repository. Requirements:
 - Emit 1-5 declarative rules, not task-specific issue descriptions.

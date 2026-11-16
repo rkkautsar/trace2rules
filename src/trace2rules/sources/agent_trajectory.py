@@ -378,9 +378,14 @@ def ingest_agent_sessions(
                         "export sessions with `opencode export <session-id>` first."
                     )
                 continue
-            transcripts: list[tuple[Path, str]] = [
-                (path, path.read_text(encoding="utf-8", errors="replace")) for path in files
-            ]
+            transcripts: list[tuple[Path, str]] = []
+            for path in files:
+                try:
+                    transcripts.append(
+                        (path, path.read_text(encoding="utf-8", errors="replace"))
+                    )
+                except OSError as error:
+                    print(f"Skipping {path}: {error}")
             metas_by_id: dict[str, TranscriptMeta] = {}
             transcript_metas: list[tuple[Path, str, TranscriptMeta]] = []
             for path, text in transcripts:

@@ -47,7 +47,7 @@ Rules are capped at 5 rules, 60 lines, and 2,500 characters per repo.
 
 ## Synthesis
 
-Synthesis is LLM-first. `trace2rules synthesize` sends the gated findings for each repo to an OpenAI-compatible chat model and asks for structured rules.
+Synthesis is LLM-first. `trace2rules synthesize` sends redacted gated findings for each repo to an OpenAI-compatible chat model and asks for structured rules. Common API keys, bearer tokens, URL credentials, query tokens, password assignments, and private keys are redacted before external calls; redaction is best-effort, not a guarantee.
 
 Provider selection:
 
@@ -90,7 +90,7 @@ uv sync
 
 ## Quick start: your own sessions
 
-Analyze the sessions already on your machine. This example uses OMP; point `--source` at Claude Code, Codex, or Pi instead if that is what you use.
+Analyze the sessions already on your machine.
 
 ```bash
 uv tool install trace2rules
@@ -98,6 +98,10 @@ trace2rules ingest --source ~ --limit 50
 trace2rules mine
 trace2rules synthesize
 ```
+
+Or hand the workflow to your coding agent:
+
+> Read the `trace2rules` README, install it with `uv tool install trace2rules` if it is missing, then ingest my local agent sessions. Use `trace2rules report` to surface recurring friction with evidence and synthesize repo-specific `AGENTS.md` rules from that JSON.
 
 `--source` is repeatable. `--source ~` scans all standard local stores: `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, and `~/.omp/agent/sessions`. The example imports 50 sessions per source; use `--limit 0` for all.
 
@@ -171,6 +175,7 @@ Use `--repo owner/name` to override the repository label for local sessions.
 | `ingest` | Load sessions and tool events into DuckDB |
 | `mine` | Show friction clusters, hotspots, recovery loops, and context blasts |
 | `report` | Emit all findings and patterns as evidence-rich JSON for an agent |
+| `doctor` | Check install, Node, credentials, source stores, and database schema |
 | `label` | Optional: classify targets with a decision model (`intent`, `object_type`, confidence) |
 | `patterns` | Mine structural multi-step friction; labels refine when available |
 | `exact` | Show exact recurring sequences with evidence |
@@ -240,7 +245,7 @@ trace2rules patterns --min-confidence 0.4
 
 Cloudflare models authenticate through `wrangler auth token --json` and `wrangler whoami --json`; the first account is used. Gemini and OpenAI use their standard keys. Labeling defaults to 270 requests/minute with 6 workers and retries 429/5xx responses.
 
-`label` sends the tool name, action type, normalized target, and a raw command example to the selected provider. Do not run it on private sessions without review.
+`label` sends the tool name, action type, redacted normalized target, and a redacted raw command example to the selected provider. The local DuckDB and `report` output remain unredacted. Do not run external labeling or synthesis on private sessions without reviewing the redaction and provider policy.
 
 ## Configuration
 

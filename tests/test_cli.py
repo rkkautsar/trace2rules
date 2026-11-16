@@ -319,3 +319,38 @@ def test_report_emits_machine_readable_evidence(tmp_path: Path) -> None:
     assert payload["labels"] == 0
     assert payload["repos"] == [{"repo": "acme/repo", "sessions": 1}]
     assert isinstance(payload["findings"], list)
+
+
+def test_doctor_reports_environment(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("trace2rules.labels._wrangler_ready", lambda: False)
+    result = runner.invoke(
+        app,
+        ["doctor", "--db", str(tmp_path / "pending.duckdb")],
+    )
+    assert result.exit_code == 0
+    assert "Python" in result.output
+    assert "database directory" in result.output
+
+
+def test_ingest_continues_after_a_bad_source(monkeypatch) -> None:
+    import trace2rules.sources.agent_trajectory as agent_source
+
+    def fake_ingest(source, db_path, *, limit=None, repo=None):
+        if str(source) == "/bad":
+            raise FileNotFoundError("missing source")
+        return [IngestStats(str(source), 1, 1, 1)]
+
+    monkeypatch.setattr(agent_source, "ingest_agent_sessions", fake_ingest)
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--source",
+            "/bad",
+            "--source",
+            "/good",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Failed /bad" in result.output
+    assert "/good" in result.output

@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+import shutil
+import subprocess
+import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated
 
@@ -64,48 +69,48 @@ def _ingest_command(
 ) -> None:
     fmt = format.strip().lower()
     sources = source or []
+    failed_sources: list[tuple[str, Exception]] = []
     if repos and fmt != "swe-rebench":
         raise typer.BadParameter("--repos is only valid with --format swe-rebench.")
     if fmt == "swe-rebench":
         prefixes = repos or DEFAULT_REPOS
         selected_sources = sources or [SOURCE]
         stats = []
-        try:
-            for selected_source in selected_sources:
-                if selected_source.startswith(("hf://", "http://", "https://")):
-                    console.print("[dim]Scanning remote parquet; first run downloads metadata/data...[/dim]")
+        for selected_source in selected_sources:
+            if selected_source.startswith(("hf://", "http://", "https://")):
+                console.print("[dim]Scanning remote parquet; first run downloads metadata/data...[/dim]")
+            try:
                 stats.extend(
                     ingest_traces(
                         prefixes, limit=limit, db_path=db, source=selected_source
                     )
                 )
-        except (duckdb.Error, OSError, RuntimeError) as error:
-            console.print(f"[red]{escape(str(error))}[/red]")
-            raise typer.Exit(1) from None
+            except (duckdb.Error, OSError, RuntimeError) as error:
+                failed_sources.append((selected_source, error))
     elif fmt == "swe-chat":
         from .sources.swe_chat import ingest_swe_chat
 
         selected_sources = sources or ["data/swe-chat"]
-        try:
-            stats = [
-                ingest_swe_chat(
-                    selected_source,
-                    db,
-                    limit=limit or None,
-                    repo=repo,
+        stats = []
+        for selected_source in selected_sources:
+            try:
+                stats.append(
+                    ingest_swe_chat(
+                        selected_source,
+                        db,
+                        limit=limit or None,
+                        repo=repo,
+                    )
                 )
-                for selected_source in selected_sources
-            ]
-        except (FileNotFoundError, ValueError, RuntimeError) as error:
-            console.print(f"[red]{escape(str(error))}[/red]")
-            raise typer.Exit(1) from None
+            except (FileNotFoundError, ValueError, RuntimeError) as error:
+                failed_sources.append((selected_source, error))
     elif fmt in {"agent-trajectory", "agent"}:
         from .sources.agent_trajectory import ingest_agent_sessions
 
         selected_sources = sources or [str(Path.home())]
         stats = []
-        try:
-            for selected_source in selected_sources:
+        for selected_source in selected_sources:
+            try:
                 stats.extend(
                     ingest_agent_sessions(
                         selected_source,
@@ -114,9 +119,8 @@ def _ingest_command(
                         repo=repo,
                     )
                 )
-        except (FileNotFoundError, ValueError, RuntimeError) as error:
-            console.print(f"[red]{escape(str(error))}[/red]")
-            raise typer.Exit(1) from None
+            except (FileNotFoundError, ValueError, RuntimeError) as error:
+                failed_sources.append((selected_source, error))
     else:
         raise typer.BadParameter(
             "Unknown format. Use swe-rebench, swe-chat, or agent-trajectory."
@@ -136,6 +140,12 @@ def _ingest_command(
     for stat in stats:
         if stat.matched == 0:
             console.print(f"[yellow]No sessions found for {stat.prefix!r}.[/yellow]")
+    for failed_source, error in failed_sources:
+        console.print(
+            f"[red]Failed {escape(str(failed_source))}: {escape(str(error))}[/red]"
+        )
+    if failed_sources and not stats:
+        raise typer.Exit(1)
     if label:
         from .labels import detect_model
 
@@ -366,6 +376,127 @@ def _report_command(
 
 
 app.command("report")(_report_command)
+
+
+def _doctor_command(
+    db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
+) -> None:
+    checks: list[tuple[str, str, str]] = []
+
+    py_ok = sys.version_info >= (3, 12)
+    checks.append(("Python", "ok" if py_ok else "fail", platform.python_version()))
+
+    try:
+        package_version = version("trace2rules")
+        checks.append(("trace2rules", "ok", package_version))
+    except PackageNotFoundError:
+        checks.append(("trace2rules", "warn", "not installed as a package"))
+
+    node = shutil.which("node")
+    if not node:
+        checks.append(("Node.js", "warn", "not found; non-OpenCode local sources need it"))
+    else:
+        try:
+            node_version = subprocess.run(
+                [node, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            ).stdout.strip()
+        except OSError:
+            node_version = "unavailable"
+        checks.append(("Node.js", "ok", node_version or node))
+
+    try:
+        from .labels import _wrangler_ready, detect_model
+
+        wrangler_ready = _wrangler_ready()
+        checks.append(
+            (
+                "wrangler",
+                "ok" if wrangler_ready else "warn",
+                "authenticated" if wrangler_ready else "not authenticated",
+            )
+        )
+        decision_model = detect_model()
+        checks.append(
+            (
+                "decision backend",
+                "ok" if decision_model else "warn",
+                decision_model or "none detected",
+            )
+        )
+    except Exception as error:  # noqa: BLE001 - doctor must not fail on probes
+        checks.append(("decision backend", "warn", str(error)))
+
+    for key in ("TRACE2RULES_LLM_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"):
+        checks.append(
+            (key, "ok" if os.getenv(key) else "warn", "set" if os.getenv(key) else "unset")
+        )
+
+    from .sources.agent_trajectory import _source_roots
+
+    try:
+        roots = _source_roots(Path.home())
+        detail = ", ".join(f"{name}:{path}" for name, path in roots) or "none found"
+        checks.append(
+            ("local sources", "ok" if roots else "warn", detail)
+        )
+    except OSError as error:
+        checks.append(("local sources", "warn", str(error)))
+
+    parent = Path(db).parent
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+        writable = os.access(parent, os.W_OK)
+    except OSError:
+        writable = False
+    checks.append(
+        ("database directory", "ok" if writable else "fail", str(parent))
+    )
+    if Path(db).exists():
+        try:
+            con = duckdb.connect(str(db), read_only=True)
+            try:
+                tables = {
+                    row[0]
+                    for row in con.execute(
+                        "SELECT table_name FROM information_schema.tables"
+                    ).fetchall()
+                }
+                columns = {
+                    row[1]
+                    for row in con.execute("PRAGMA table_info('tool_events')").fetchall()
+                }
+                if "tool_events" not in tables:
+                    status, detail = "fail", "missing tool_events"
+                elif "segment_idx" not in columns:
+                    status, detail = "warn", "schema needs re-ingest/migration"
+                else:
+                    status, detail = "ok", "schema ready"
+                checks.append(("database", status, detail))
+            finally:
+                con.close()
+        except Exception as error:  # noqa: BLE001 - report lock/permission issues
+            checks.append(("database", "warn", str(error)))
+    else:
+        checks.append(("database", "warn", f"not created yet: {db}"))
+
+    table = Table(title="trace2rules doctor", header_style="bold")
+    table.add_column("Check")
+    table.add_column("Status")
+    table.add_column("Detail", overflow="fold")
+    for check, status, detail in checks:
+        style = {"ok": "green", "warn": "yellow", "fail": "red"}.get(status, "")
+        table.add_row(check, f"[{style}]{status}[/{style}]", escape(detail))
+    console.print(table)
+
+    if not py_ok or not writable:
+        raise typer.Exit(1)
+
+
+app.command("doctor")(_doctor_command)
 
 
 def _label_command(

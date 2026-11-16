@@ -14,6 +14,7 @@ from pathlib import Path
 import duckdb
 
 from .db import DB_PATH, connect
+from .redact import redact_text
 
 DEFAULT_MODEL = "clef-flash"
 DEFAULT_RPM = 270
@@ -355,8 +356,8 @@ def _state(row: tuple[str, str, str, str]) -> dict:
     return {
         "tool": tool_name,
         "action_type": action_type,
-        "normalized_target": target[:500],
-        "raw_example": (raw_example or "").replace("\x00", " ")[:500],
+        "normalized_target": redact_text(target[:500]),
+        "raw_example": redact_text((raw_example or "").replace("\x00", " ")[:500]),
     }
 
 

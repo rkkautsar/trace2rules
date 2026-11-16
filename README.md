@@ -4,7 +4,7 @@ Mine coding-agent sessions into evidence-backed `AGENTS.md` rules.
 
 `trace2rules` is a local-first CLI. It ingests agent trajectories, detects recurring friction (setup failures, repeated exceptions, oversized output, rediscovery hotspots), and proposes a small number of repository-specific rules with the evidence attached.
 
-Status: alpha. The output is a proposal, not an automatically applied `AGENTS.md`.
+Status: beta. The output is a proposal, not an automatically applied `AGENTS.md`.
 
 ## Example finding
 
@@ -13,6 +13,7 @@ On the demo corpus, [PDM](https://github.com/pdm-project/pdm), a Python package 
 `synthesize` turns that into:
 
 ```bash
+trace2rules ingest --repos pdm-project__pdm --limit 200
 trace2rules synthesize --repo pdm-project/pdm --out -
 ```
 
@@ -72,7 +73,7 @@ uv sync --extra local
 pip install -e '.[local]'
 ```
 
-`agent-trajectory` shells out to a bundled Node runtime. Install Node.js 20 or newer before using `--format agent-trajectory`.
+`agent-trajectory` calls its bundled JS bridge through the system Node runtime. Install Node.js 20 or newer before using `--format agent-trajectory`.
 
 ## Quick start
 
@@ -93,7 +94,7 @@ LLM synthesis is the default. `--offline` is the no-key/deterministic path.
 Request access on the [dataset page](https://huggingface.co/datasets/SALT-NLP/SWE-chat), then download the two tables:
 
 ```bash
-hf download SALT-NLP/SWE-chat \
+uvx --from huggingface_hub hf download SALT-NLP/SWE-chat \
   --repo-type dataset \
   --include "sessions.parquet" \
   --include "conversations.parquet" \
@@ -108,7 +109,7 @@ uv run trace2rules mine
 uv run trace2rules synthesize
 ```
 
-`--limit 0` imports the full corpus. The default limit is 200 sessions.
+`--limit 0` imports the full corpus. The default limit is 200 sessions. For `swe-rebench`, `--limit 0` also means all matching sessions.
 
 ### Local agent sessions
 
@@ -194,7 +195,7 @@ This is currently separate from synthesis: CLEF labels feed `patterns`, not `syn
 | `TRACE2RULES_LLM_API_KEY` | Key for a custom OpenAI-compatible endpoint; not a trace2rules key |
 | `TRACE2RULES_BASE_URL` | OpenAI-compatible base URL (including LiteLLM) |
 | `TRACE2RULES_MODEL` | Synthesis model, e.g. `gemini-4-hydrogen` |
-| `HF_TOKEN` | Gated Hugging Face dataset access |
+| `HF_TOKEN` | Used by `hf download` for gated datasets; not read by trace2rules |
 
 `TRACE2RULES_BASE_URL` also works with an OpenAI-compatible LiteLLM proxy.
 

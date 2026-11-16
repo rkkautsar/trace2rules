@@ -36,6 +36,19 @@ CREATE TABLE IF NOT EXISTS tool_events (
     approx_out_tokens INTEGER NOT NULL,
     obs_excerpt       VARCHAR NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS target_labels (
+    tool_name         VARCHAR NOT NULL,
+    action_type       VARCHAR NOT NULL,
+    target            VARCHAR NOT NULL,
+    intent            VARCHAR NOT NULL,
+    intent_confidence DOUBLE NOT NULL,
+    object_type       VARCHAR NOT NULL,
+    object_confidence DOUBLE NOT NULL,
+    model             VARCHAR NOT NULL,
+    labeled_at        TIMESTAMP NOT NULL DEFAULT current_timestamp,
+    PRIMARY KEY (tool_name, action_type, target)
+);
 """
 
 

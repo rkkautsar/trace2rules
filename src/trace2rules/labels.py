@@ -53,21 +53,6 @@ QUESTIONS = {
     },
 }
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS target_labels (
-    tool_name         VARCHAR NOT NULL,
-    action_type       VARCHAR NOT NULL,
-    target            VARCHAR NOT NULL,
-    intent            VARCHAR NOT NULL,
-    intent_confidence DOUBLE NOT NULL,
-    object_type       VARCHAR NOT NULL,
-    object_confidence DOUBLE NOT NULL,
-    model             VARCHAR NOT NULL,
-    labeled_at        TIMESTAMP NOT NULL DEFAULT current_timestamp,
-    PRIMARY KEY (tool_name, action_type, target)
-);
-"""
-
 
 class RateLimiter:
     def __init__(self, rpm: int) -> None:
@@ -85,9 +70,20 @@ class RateLimiter:
 
 
 def _wrangler_json(*args: str) -> dict:
-    output = subprocess.check_output(
-        ["wrangler", *args], text=True, stderr=subprocess.DEVNULL
-    )
+    try:
+        output = subprocess.check_output(
+            ["wrangler", *args], text=True, stderr=subprocess.PIPE
+        )
+    except FileNotFoundError as error:
+        raise RuntimeError(
+            "wrangler not found; install it with `npm install -g wrangler`."
+        ) from error
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip()[:300]
+        raise RuntimeError(
+            "wrangler is not authenticated; run `wrangler login`."
+            + (f" ({detail})" if detail else "")
+        ) from error
     return json.loads(output)
 
 
@@ -177,7 +173,6 @@ def label_targets(
     workers: int = DEFAULT_WORKERS,
 ) -> tuple[int, int]:
     con = connect(db_path)
-    con.execute(SCHEMA)
     rows = _pending(con, limit)
     if not rows:
         con.close()

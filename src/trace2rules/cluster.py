@@ -54,7 +54,7 @@ def friction_windows(
         SELECT session_id, repo, step_idx, tool_name, action_type, verb, object_id,
                outcome, error_signature, approx_out_tokens, target, raw_target
         FROM tool_events
-        WHERE target <> ''
+        WHERE target <> '' AND action_type <> 'other'
         ORDER BY session_id, step_idx
         """
     ).fetchall()
@@ -144,6 +144,7 @@ def exact_sequences(
         """
         SELECT session_id, step_idx, action_type, verb, outcome, approx_out_tokens
         FROM tool_events
+        WHERE action_type <> 'other'
         ORDER BY session_id, step_idx
         """
     ).fetchall():
@@ -162,7 +163,7 @@ def exact_sequences(
         """
         SELECT session_id, repo, action_type, verb, object_id, outcome
         FROM tool_events
-        WHERE target <> ''
+        WHERE target <> '' AND action_type <> 'other'
         """
     ).fetchall():
         token_sessions[repo][f"{action}:{verb}:{object_id}:{outcome}"].add(session_id)

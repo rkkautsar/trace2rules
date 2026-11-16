@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated
 
+import duckdb
 import typer
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
@@ -14,6 +16,8 @@ from .ingest import DEFAULT_REPOS, SOURCE, ingest as ingest_traces
 from .labels import label_targets
 from .patterns import mine_sequences
 from .synthesize import synthesize as synthesize_rules
+
+load_dotenv(Path.cwd() / ".env")
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Mine coding-agent trajectories for AGENTS.md rules.")
 console = Console()
@@ -48,7 +52,16 @@ def _ingest_command(
         raise typer.BadParameter("--repos is only valid with --format swe-rebench.")
     if fmt == "swe-rebench":
         prefixes = repos or DEFAULT_REPOS
-        stats = ingest_traces(prefixes, limit=limit, db_path=db, source=source or SOURCE)
+        selected_source = source or SOURCE
+        if selected_source.startswith(("hf://", "http://", "https://")):
+            console.print("[dim]Scanning remote parquet; first run downloads metadata/data...[/dim]")
+        try:
+            stats = ingest_traces(
+                prefixes, limit=limit, db_path=db, source=selected_source
+            )
+        except (duckdb.Error, OSError, RuntimeError) as error:
+            console.print(f"[red]{escape(str(error))}[/red]")
+            raise typer.Exit(1) from None
     elif fmt == "swe-chat":
         from .sources.swe_chat import ingest_swe_chat
 
@@ -110,11 +123,17 @@ def _print_summary(summary: list[dict]) -> None:
     table.add_column("Tool events", justify="right")
     table.add_column("Tokens", justify="right")
     for row in summary:
-        rate = row["resolved"] / row["sessions"] if row["sessions"] else 0
+        known = row["known_resolution"]
+        resolved = row["resolved"]
+        if known:
+            rate = resolved / known
+            resolved_text = f"{resolved} ({rate:.0%})"
+        else:
+            resolved_text = "n/a"
         table.add_row(
-            row["repo"],
+            escape(row["repo"]),
             str(row["sessions"]),
-            f"{row['resolved']} ({rate:.0%})",
+            resolved_text,
             f"{row['events']:,}",
             f"{row['tokens']:,}",
         )
@@ -132,11 +151,11 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
         table.add_column("Coverage")
         for finding in hotspots:
             table.add_row(
-                finding.repo,
-                finding.title,
+                escape(finding.repo),
+                escape(finding.title),
                 str(finding.sessions),
                 f"{finding.tokens:,}",
-                finding.detail,
+                escape(finding.detail),
             )
         console.print(table)
 
@@ -150,7 +169,13 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
         table.add_column("Wasted tokens", justify="right")
         for finding in recovery:
             failed, _, recovered = finding.title.partition("  ->  ")
-            table.add_row(finding.repo, failed, recovered, str(finding.sessions), f"{finding.tokens:,}")
+            table.add_row(
+                escape(finding.repo),
+                escape(failed),
+                escape(recovered),
+                str(finding.sessions),
+                f"{finding.tokens:,}",
+            )
         console.print(table)
 
     blasts = mined["context"][:limit]
@@ -163,11 +188,11 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
         table.add_column("Profile")
         for finding in blasts:
             table.add_row(
-                finding.repo,
-                finding.title,
+                escape(finding.repo),
+                escape(finding.title),
                 str(finding.sessions),
                 f"{finding.tokens:,}",
-                finding.detail,
+                escape(finding.detail),
             )
         console.print(table)
 
@@ -192,11 +217,11 @@ def _print_clusters(mined: dict, top: int) -> None:
     for rank, finding in enumerate(clusters, start=1):
         table.add_row(
             str(rank),
-            finding.repo,
+            escape(finding.repo),
             str(finding.sessions),
             f"{finding.tokens:,}",
-            finding.sequence,
-            "\n".join(finding.variants[:3]),
+            escape(finding.sequence),
+            escape("\n".join(finding.variants[:3])),
         )
     console.print(table)
 
@@ -234,7 +259,11 @@ def _label_command(
     workers: Annotated[int, typer.Option(help="Concurrent requests.")] = 6,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
-    done, failed = label_targets(db, limit=limit or None, rpm=rpm, workers=workers)
+    try:
+        done, failed = label_targets(db, limit=limit or None, rpm=rpm, workers=workers)
+    except RuntimeError as error:
+        console.print(f"[red]{escape(str(error))}[/red]")
+        raise typer.Exit(1) from None
     console.print(f"Labeled [bold]{done}[/bold], failed [bold]{failed}[/bold].")
 
 
@@ -273,9 +302,9 @@ def _patterns_command(
                 str(rank),
                 str(pattern.sessions),
                 f"{pattern.tokens:,}",
-                ", ".join(pattern.repos),
-                pattern.sequence,
-                pattern.example[:220],
+                escape(", ".join(pattern.repos)),
+                escape(pattern.sequence),
+                escape(pattern.example[:220]),
             )
         console.print(table)
         console.print(f"[dim]{len(patterns)} patterns shown, min support {min_sessions}[/dim]")

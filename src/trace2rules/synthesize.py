@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from .detectors import Finding
@@ -94,11 +95,11 @@ def print_findings(findings: list[Finding], console: Console | None = None) -> N
     for rank, finding in enumerate(findings, start=1):
         table.add_row(
             str(rank),
-            finding.kind,
-            finding.repo,
+            escape(finding.kind),
+            escape(finding.repo),
             str(finding.sessions),
             f"{finding.cost or finding.tokens:,}",
-            _truncate(finding.title, 110),
+            escape(_truncate(finding.title, 110)),
         )
     console.print(table)
 
@@ -186,6 +187,10 @@ def _llm_synthesis(findings: list[Finding], repo: str) -> Synthesis | None:
     return Synthesis.model_validate(json.loads(content))
 
 
+def _is_path_target(title: str) -> bool:
+    return bool(title) and " " not in title and ("/" in title or "." in title)
+
+
 def _offline_synthesis(findings: list[Finding], repo: str) -> Synthesis:
     rules: list[Rule] = []
     seen: set[tuple[str, str]] = set()
@@ -226,6 +231,8 @@ def _offline_synthesis(findings: list[Finding], repo: str) -> Synthesis:
                 int(finding.delta_rework * 1000),
             )
         elif finding.kind == "hotspot":
+            if not _is_path_target(finding.title):
+                continue
             basename = finding.title.rstrip("/").rsplit("/", 1)[-1]
             if "." in basename:
                 markdown = f"Open `{_truncate(finding.title, 70)}` early; it is a read-only reference file."
@@ -273,7 +280,7 @@ def enforce_caps(synthesis: Synthesis, repo: str, sessions: int) -> tuple[Synthe
     synthesis = Synthesis(repo=synthesis.repo, rules=synthesis.rules[:MAX_RULES])
     while True:
         text = render(synthesis, repo, sessions)
-        if len(text) <= MAX_CHARS and text.count("\n") <= MAX_LINES:
+        if len(text) <= MAX_CHARS and len(text.splitlines()) <= MAX_LINES:
             return synthesis, text
         if not synthesis.rules:
             return synthesis, text[:MAX_CHARS]
@@ -316,20 +323,28 @@ def synthesize(
         print_findings(findings, console)
 
         synthesis: Synthesis | None = None
+        llm_failed = False
         if not offline:
             try:
                 synthesis = _llm_synthesis(findings, repo_name)
             except Exception as error:  # noqa: BLE001 - degrade to deterministic output
-                console.print(f"[yellow]LLM synthesis unavailable: {error}[/yellow]")
+                llm_failed = True
+                console.print(f"[yellow]LLM synthesis unavailable: {escape(str(error))}[/yellow]")
         if synthesis is None:
             synthesis = _offline_synthesis(findings, repo_name)
-            console.print(
-                f"[yellow]Deterministic rules for {repo_name} (no LLM credentials).[/yellow]"
-            )
+            if offline:
+                reason = "--offline"
+            elif llm_failed:
+                reason = "LLM call failed; using deterministic rules"
+            else:
+                reason = "no LLM credentials"
+            console.print(f"[yellow]Deterministic rules for {escape(repo_name)} ({reason}).[/yellow]")
 
         synthesis, text = enforce_caps(synthesis, repo_name, row["sessions"])
         if not synthesis.rules:
-            console.print(f"[yellow]No rules for {repo_name}; skipped.[/yellow]")
+            if repo and out_path is not None and str(out_path) != "-":
+                Path(out_path).unlink(missing_ok=True)
+            console.print(f"[yellow]No rules for {escape(repo_name)}; skipped.[/yellow]")
             continue
         if repo and out_path is not None:
             if str(out_path) == "-":

@@ -3,7 +3,8 @@ name = "trace2rules"
 version = "0.1.0"
 description = "Mine coding-agent trajectories into evidence-backed AGENTS.md rules"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Rakha Kanz Kautsar", email = "rkkautsar@gmail.com" }
 ]
@@ -30,6 +31,10 @@ dependencies = [
 local = [
     "agent-trajectory>=0.4.4",
 ]
+
+[project.urls]
+Repository = "https://github.com/rkkautsar/trace2rules"
+Issues = "https://github.com/rkkautsar/trace2rules/issues"
 
 [project.scripts]
 trace2rules = "trace2rules.cli:app"

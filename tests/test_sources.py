@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import json
+import shutil
 from pathlib import Path
 
 import duckdb
+import pytest
 
+from trace2rules.detectors import Finding
 from trace2rules.ingest import write_sessions
 from trace2rules.models import Session, ToolCall
-from trace2rules.sources.agent_trajectory import _records_to_session
+from trace2rules.sources.agent_trajectory import (
+    _detect_source,
+    _records_to_session,
+    ingest_agent_sessions,
+)
 from trace2rules.sources.common import classify_tool_call
 from trace2rules.sources.swe_chat import ingest_swe_chat
+from trace2rules.synthesize import _offline_synthesis
 
 
 def _write_swe_chat(root: Path) -> None:
@@ -155,3 +164,142 @@ def test_agent_records_pair_calls_and_results() -> None:
     assert len(session.calls) == 1
     assert session.calls[0].observation == "Exit code: 1"
     assert session.calls[0].is_error is True
+
+
+def test_same_stem_sessions_get_unique_ids(tmp_path: Path) -> None:
+    records = [{"role": "meta", "cwd": "/home/user/project"}]
+    first = _records_to_session(
+        tmp_path / "project-a" / "Task.jsonl", "claude-code", records, None
+    )
+    second = _records_to_session(
+        tmp_path / "project-b" / "Task.jsonl", "claude-code", records, None
+    )
+    assert first.session_id != second.session_id
+
+    db = tmp_path / "trace.duckdb"
+    write_sessions(db, [first, second])
+    con = duckdb.connect(str(db), read_only=True)
+    try:
+        assert con.execute("SELECT count(*) FROM sessions").fetchone() == (2,)
+    finally:
+        con.close()
+
+
+def test_opencode_json_export_is_detected(tmp_path: Path) -> None:
+    export = tmp_path / "session.json"
+    export.write_text("{}")
+    assert _detect_source(export) == "opencode"
+
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    (export_dir / "one.json").write_text("{}")
+    assert _detect_source(export_dir) == "opencode"
+
+
+def test_unknown_tools_are_other_actions() -> None:
+    action, target, verb, object_id = classify_tool_call(
+        "mcp__Claude_Browser__navigate", {}, '{"url": "https://example.com"}'
+    )
+    assert action == "other"
+    assert target
+    assert verb == "mcp__claude_browser__navigate"
+    assert object_id
+
+
+def test_offline_synthesis_skips_command_hotspots() -> None:
+    synthesis = _offline_synthesis(
+        [
+            Finding(
+                kind="hotspot",
+                repo="acme/repo",
+                title="git diff",
+                sessions=5,
+                tokens=100,
+            ),
+            Finding(
+                kind="hotspot",
+                repo="acme/repo",
+                title="src/app.py",
+                sessions=5,
+                tokens=100,
+            ),
+        ],
+        "acme/repo",
+    )
+    assert len(synthesis.rules) == 1
+    assert "git diff" not in synthesis.rules[0].rule_markdown
+    assert "src/app.py" in synthesis.rules[0].rule_markdown
+
+
+def test_opencode_export_ingests(tmp_path: Path) -> None:
+    pytest.importorskip("trajectory")
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for agent-trajectory")
+    export = tmp_path / "session.json"
+    export.write_text(
+        json.dumps(
+            {
+                "info": {
+                    "id": "ses_test",
+                    "directory": "/repo",
+                    "time": {"created": 1_700_000_000_000},
+                },
+                "messages": [
+                    {
+                        "info": {
+                            "id": "msg_1",
+                            "role": "user",
+                            "sessionID": "ses_test",
+                            "time": {"created": 1_700_000_000_001},
+                        },
+                        "parts": [
+                            {
+                                "type": "text",
+                                "text": "check the repo",
+                                "id": "part_1",
+                                "sessionID": "ses_test",
+                                "messageID": "msg_1",
+                            }
+                        ],
+                    },
+                    {
+                        "info": {
+                            "id": "msg_2",
+                            "role": "assistant",
+                            "sessionID": "ses_test",
+                            "time": {"created": 1_700_000_000_002},
+                        },
+                        "parts": [
+                            {
+                                "type": "tool",
+                                "tool": "bash",
+                                "callID": "call_1",
+                                "state": {
+                                    "status": "completed",
+                                    "input": {"command": "pwd"},
+                                    "output": "/repo",
+                                },
+                                "id": "part_2",
+                                "sessionID": "ses_test",
+                                "messageID": "msg_2",
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
+    )
+    db = tmp_path / "trace.duckdb"
+    stats = ingest_agent_sessions(export, db, limit=1)
+    assert stats[0].sessions == 1
+    con = duckdb.connect(str(db), read_only=True)
+    try:
+        assert con.execute("SELECT agent, source FROM sessions").fetchone() == (
+            "opencode",
+            "agent-trajectory",
+        )
+        assert con.execute(
+            "SELECT action_type, target FROM tool_events"
+        ).fetchone() == ("exec", "pwd")
+    finally:
+        con.close()

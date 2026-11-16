@@ -421,13 +421,14 @@ def _stream_rows(source: str, prefix: str, limit: int):
             except duckdb.Error:
                 reader.execute("INSTALL httpfs")
                 reader.execute("LOAD httpfs")
+        limit_sql = f"LIMIT {int(limit)}" if limit else ""
         query = f"""
             SELECT trajectory_id, instance_id, repo, resolved, trajectory
             FROM read_parquet(?)
-            WHERE instance_id LIKE ?
-            LIMIT {int(limit)}
+            WHERE starts_with(instance_id, ?)
+            {limit_sql}
         """
-        cursor = reader.execute(query, [source, f"{prefix}%"])
+        cursor = reader.execute(query, [source, prefix])
         while True:
             batch = cursor.fetchmany(16)
             if not batch:

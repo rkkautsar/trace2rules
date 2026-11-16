@@ -96,4 +96,4 @@ def classify_tool_call(tool_name: str, args: dict[str, Any], raw_target: str) ->
         return "search", target, name, target or name
 
     target = _parameterize(raw_target, "")
-    return "exec", target, name, _object_id("exec", name, [], raw_target, target)
+    return "other", target, name, target or name

@@ -34,6 +34,7 @@ def session_summary(con: duckdb.DuckDBPyConnection) -> list[dict]:
         SELECT s.repo,
                count(*) AS sessions,
                sum(CASE WHEN s.resolved THEN 1 ELSE 0 END) AS resolved,
+               count(*) FILTER (WHERE s.source NOT IN ('swe-chat', 'agent-trajectory')) AS known_resolution,
                (SELECT count(*) FROM tool_events e WHERE e.repo = s.repo) AS events,
                (SELECT sum(approx_out_tokens) FROM tool_events e WHERE e.repo = s.repo) AS tokens
         FROM sessions s
@@ -46,8 +47,9 @@ def session_summary(con: duckdb.DuckDBPyConnection) -> list[dict]:
             "repo": r[0],
             "sessions": r[1],
             "resolved": r[2],
-            "events": r[3] or 0,
-            "tokens": r[4] or 0,
+            "known_resolution": r[3],
+            "events": r[4] or 0,
+            "tokens": r[5] or 0,
         }
         for r in rows
     ]

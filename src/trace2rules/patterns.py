@@ -33,6 +33,7 @@ def mine_sequences(
          AND e.action_type = l.action_type
          AND e.target = l.target
         WHERE e.tool_name NOT IN ('think', 'finish', 'task_tracker')
+          AND e.action_type <> 'other'
           AND l.intent_confidence >= ?
           AND l.object_confidence >= ?
         ORDER BY e.session_id, e.step_idx

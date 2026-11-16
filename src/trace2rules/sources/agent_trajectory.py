@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from ..models import Session, ToolCall
@@ -15,6 +16,10 @@ SOURCE_DIRS = {
 
 
 def _detect_source(path: Path) -> str | None:
+    if path.is_file() and path.suffix == ".json":
+        return "opencode"
+    if path.is_dir() and any(path.glob("*.json")):
+        return "opencode"
     parts = path.parts
     for source, markers in SOURCE_DIRS.items():
         for marker in markers:
@@ -65,15 +70,21 @@ def _repo_from_cwd(cwd: str | None) -> str:
     return Path(cwd).name
 
 
+def _session_id(path: Path) -> str:
+    digest = hashlib.sha1(str(path.resolve()).encode()).hexdigest()[:12]
+    return f"{path.stem}-{digest}"
+
+
 def _records_to_session(
     path: Path, source: str, records: list[dict], repo_override: str | None
 ) -> Session:
     meta = next((record for record in records if record.get("role") == "meta"), {})
     repo = repo_override or _repo_from_cwd(meta.get("cwd")) or "unknown"
+    session_id = _session_id(path)
     session = Session(
-        session_id=path.stem,
+        session_id=session_id,
         repo=repo,
-        instance_id=path.stem,
+        instance_id=session_id,
         source="agent-trajectory",
         agent=source,
     )

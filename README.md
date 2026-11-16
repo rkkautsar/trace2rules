@@ -142,7 +142,7 @@ Use `--repo owner/name` to override the repository label for local sessions.
 |---|---|
 | `ingest` | Load sessions and tool events into DuckDB |
 | `mine` | Show friction clusters, hotspots, recovery loops, and context blasts |
-| `label` | Classify targets with Cloudflare CLEF (`intent`, `object_type`, confidence) |
+| `label` | Classify targets with Cloudflare clef (`intent`, `object_type`, confidence) |
 | `patterns` | Mine intent-labeled multi-step friction sequences |
 | `exact` | Show exact recurring sequences with evidence |
 | `synthesize` | Write per-repo `.proposed.md` files |
@@ -163,9 +163,9 @@ trace2rules synthesize --out-dir ./proposals
 
 Synthesis is LLM-first. `--offline` skips the LLM and uses deterministic rules.
 
-### Intent labels with CLEF
+### Intent labels with clef
 
-`trace2rules label` asks Cloudflare Workers AI’s `@cf/cloudflare/clef-flash` to classify each distinct normalized target:
+`trace2rules label` asks Cloudflare Workers AI’s [`@cf/cloudflare/clef-flash`](https://developers.cloudflare.com/workers-ai/models/clef-flash/), a decision model that returns typed choices with confidence, to classify each distinct normalized target:
 
 - `intent`: explore, read, search, edit, run_tests, run_script, install, env_check, git, other
 - `object_type`: file, directory, test_scope, package, module, config, unknown
@@ -183,7 +183,7 @@ trace2rules patterns --min-confidence 0.4
 
 Auth is resolved through `wrangler auth token --json` and `wrangler whoami --json`; the first Cloudflare account is used. Labeling defaults to 270 requests/minute with 6 workers and retries 429/5xx responses.
 
-This is currently separate from synthesis: CLEF labels feed `patterns`, not `synthesize`. Intent-aware synthesis is not wired yet. `label` sends a raw command example to Cloudflare, so do not run it on private sessions without review.
+This is currently separate from synthesis: clef labels feed `patterns`, not `synthesize`. Intent-aware synthesis is not wired yet. `label` sends a raw command example to Cloudflare, so do not run it on private sessions without review.
 
 ## Configuration
 
@@ -223,7 +223,7 @@ Generated verifier scripts and low-support task-specific sequences are filtered 
 - SWE-chat has no `resolved` field; `session_success` (0–100) is stored separately as `success_score`.
 - SWE-chat tool results are truncated to 10 KB and do not carry an explicit error flag; outcomes are inferred from text and exit codes.
 - Local-session formats change frequently. `agent-trajectory` is the compatibility layer; pin its version.
-- CLEF labels currently feed `patterns`, not `synthesize`; intent-aware synthesis is not wired yet.
+- clef labels currently feed `patterns`, not `synthesize`; intent-aware synthesis is not wired yet.
 - Full SWE-chat import and synthesis were not part of the release smoke test.
 
 ## Development

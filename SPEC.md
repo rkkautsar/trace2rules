@@ -63,7 +63,7 @@ model, labeled_at
 - Hotspots: read-only files or paths touched across many sessions.
 - Context blasts: commands or reads averaging large output.
 - Exact sequences: 3-step windows with support, lift, and paired-rework evidence.
-- Intent labels: optional CLEF classification of `(intent, object_type)` used by `patterns` to mine semantic friction sequences.
+- Intent labels: optional clef classification of `(intent, object_type)` used by `patterns` to mine semantic friction sequences.
 
 Generated verifier scripts and low-support task-specific sequences are filtered before synthesis.
 

@@ -300,7 +300,9 @@ def context_blasts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
                count(DISTINCT session_id) AS sessions,
                count(*) AS calls,
                avg(approx_out_tokens) AS avg_tokens,
-               sum(approx_out_tokens) AS total_tokens
+               sum(approx_out_tokens) AS total_tokens,
+               arg_max(session_id, approx_out_tokens) AS example_session,
+               arg_max(step_idx, approx_out_tokens) AS example_step
         FROM tool_events
         WHERE action_type IN ('exec', 'read', 'search')
           AND target <> ''
@@ -320,20 +322,24 @@ def context_blasts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
     """
     if limit is not None:
         query += f" LIMIT {int(limit)}"
-    return [
-        Finding(
-            kind="context",
-            repo=repo,
-            title=target,
-            sessions=sessions,
-            tokens=int(total or 0),
-            detail=f"{action_type} via {tool_name}: avg {avg:.0f} tokens over {calls} calls",
-            side=_context_advice(target, action_type)[0],
-            recommendation=_context_advice(target, action_type)[1],
+    findings: list[Finding] = []
+    for repo, target, tool_name, action_type, sessions, calls, avg, total, example_session, example_step in con.execute(query).fetchall():
+        if _DOC_TARGET_RE.search(target) or _BOUNDED_RE.search(target):
+            continue
+        findings.append(
+            Finding(
+                kind="context",
+                repo=repo,
+                title=target,
+                sessions=sessions,
+                tokens=int(total or 0),
+                detail=f"{action_type} via {tool_name}: avg {avg:.0f} tokens over {calls} calls",
+                side=_context_advice(target, action_type)[0],
+                recommendation=_context_advice(target, action_type)[1],
+                window=_representative_window(con, example_session, example_step),
+            )
         )
-        for repo, target, tool_name, action_type, sessions, calls, avg, total in con.execute(query).fetchall()
-        if not _DOC_TARGET_RE.search(target) and not _BOUNDED_RE.search(target)
-    ]
+    return findings
 
 
 def orientation(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:

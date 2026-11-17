@@ -370,7 +370,11 @@ def _is_doc_target(title: str) -> bool:
 def _source_refs(finding: Finding) -> list[str]:
     refs: list[str] = []
     for event in finding.window:
-        if event.get("outcome") not in ("err", "timeout") and not event.get("recovered"):
+        if (
+            finding.kind != "context"
+            and event.get("outcome") not in ("err", "timeout")
+            and not event.get("recovered")
+        ):
             continue
         ref = event.get("session_ref")
         if ref and ref not in refs:
@@ -512,6 +516,7 @@ def _offline_synthesis(
                 finding.recommendation,
                 finding.detail,
                 finding.tokens // max(finding.sessions, 1),
+                sources=_source_refs(finding),
             )
 
     return Synthesis(repo=repo, rules=rules)

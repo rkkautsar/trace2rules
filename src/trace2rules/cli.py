@@ -406,7 +406,7 @@ def _report_command(
         mined = mine_friction(con, top=top)
         findings = [
             finding
-            for key in ("hotspots", "recovery", "context", "orientation")
+            for key in ("hotspots", "recovery", "context", "orientation", "selector_miss", "workaround", "stuck_loop", "noop_retry")
             for finding in mined[key]
         ]
         exact = []

@@ -294,6 +294,131 @@ def recovery_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
     ]
 
 
+def selector_misses(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = """
+        SELECT repo, count(*) AS events, count(DISTINCT session_id) AS sessions,
+               sum(approx_out_tokens) AS tokens, any_value(raw_target) AS exemplar
+        FROM tool_events
+        WHERE is_error AND action_type = 'exec'
+          AND regexp_matches(coalesce(error_message, '') || ' ' || coalesce(obs_cause, ''),
+                             '(?i)deselected|no tests ran|collected 0 items')
+        GROUP BY 1
+        ORDER BY sessions DESC, tokens DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="selector_miss",
+            repo=repo,
+            title=exemplar or "test selector",
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{events} selector misses in {sessions} sessions",
+            side="agent",
+            recommendation="When `-k` reports 0 selected/deselected, run `pytest --collect-only -q <path>` and use the printed node ID; `-k` matches test node names, not files.",
+        )
+        for repo, events, sessions, tokens, exemplar in con.execute(query).fetchall()
+    ]
+
+
+def workaround_scripts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = """
+        SELECT repo, count(*) AS sessions, sum(edits) AS edits, sum(runs) AS runs,
+               sum(tokens) AS tokens, sum(failures) AS failures
+        FROM (
+            SELECT session_id, repo,
+                   count(*) FILTER (WHERE action_type = 'edit' AND regexp_matches(object_id,
+                       '(?i)^(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)')) AS edits,
+                   count(*) FILTER (WHERE action_type = 'exec' AND regexp_matches(object_id,
+                       '(?i)^(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)')) AS runs,
+                   sum(approx_out_tokens) FILTER (WHERE action_type = 'exec' AND regexp_matches(object_id,
+                       '(?i)^(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)')) AS tokens,
+                   count(*) FILTER (WHERE outcome = 'err' AND regexp_matches(object_id,
+                       '(?i)^(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)')) AS failures
+            FROM tool_events
+            GROUP BY 1, 2
+        ) s
+        WHERE edits > 0
+        GROUP BY 1
+        ORDER BY sessions DESC, tokens DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="workaround_script",
+            repo=repo,
+            title="root-level throwaway reproducer scripts",
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{edits} edits, {runs} runs, {failures} failures",
+            side="agent",
+            recommendation="Write at most one scratch reproducer, run it once, then delete it; use the repository's narrowest existing test selector.",
+        )
+        for repo, sessions, edits, runs, tokens, failures in con.execute(query).fetchall()
+    ]
+
+
+def stuck_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = """
+        SELECT repo, object_id, count(*) AS edits, count(DISTINCT session_id) AS sessions,
+               sum(approx_out_tokens) AS tokens, any_value(error_family) AS family
+        FROM tool_events
+        WHERE action_type = 'edit' AND object_id <> ''
+        GROUP BY 1, 2
+        HAVING count(*) >= 3 AND count(DISTINCT session_id) >= 2
+        ORDER BY edits DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="stuck_loop",
+            repo=repo,
+            title=object_id,
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{edits} edits across {sessions} sessions; recurring family {family or 'unknown'}",
+            side="agent",
+            recommendation="After two edits leave the same failure family unchanged, stop editing and read the traceback site or failing test before another patch.",
+        )
+        for repo, object_id, edits, sessions, tokens, family in con.execute(query).fetchall()
+    ]
+
+
+def noop_retries(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = """
+        WITH x AS (
+            SELECT *,
+                   lead(raw_target) OVER (PARTITION BY session_id ORDER BY step_idx) AS next_target,
+                   lead(action_type) OVER (PARTITION BY session_id ORDER BY step_idx) AS next_action
+            FROM tool_events
+        )
+        SELECT repo, count(*) AS occurrences, count(DISTINCT session_id) AS sessions,
+               any_value(raw_target) AS exemplar
+        FROM x
+        WHERE is_error AND next_action = 'exec' AND next_target = raw_target
+        GROUP BY 1
+        ORDER BY sessions DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="noop_retry",
+            repo=repo,
+            title=exemplar or "repeated failing command",
+            sessions=sessions,
+            tokens=occurrences,
+            detail=f"{occurrences} unchanged retries",
+            side="agent",
+            recommendation="A failing command repeated unchanged will fail again; change the selector/input or inspect state before rerunning.",
+        )
+        for repo, occurrences, sessions, exemplar in con.execute(query).fetchall()
+    ]
+
+
 def context_blasts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     query = """
         SELECT repo, target, tool_name, action_type,
@@ -419,4 +544,8 @@ def all_findings(con: duckdb.DuckDBPyConnection, limit: int = 25) -> list[Findin
     findings.extend(context_blasts(con, limit=limit))
     findings.extend(orientation(con, limit=limit))
     findings.extend(global_patterns(con, limit=limit))
+    findings.extend(selector_misses(con, limit=limit))
+    findings.extend(workaround_scripts(con, limit=limit))
+    findings.extend(stuck_loops(con, limit=limit))
+    findings.extend(noop_retries(con, limit=limit))
     return findings

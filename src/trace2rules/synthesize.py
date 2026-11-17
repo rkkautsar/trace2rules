@@ -83,7 +83,14 @@ def select_findings(
     limit: int = 20,
 ) -> list[Finding]:
     findings: list[Finding] = []
-    for key, cap in (("recovery", 12), ("context", 4)):
+    for key, cap in (
+        ("recovery", 4),
+        ("selector_miss", 2),
+        ("workaround", 2),
+        ("stuck_loop", 2),
+        ("context", 3),
+        ("noop_retry", 1),
+    ):
         candidates = [
             finding
             for finding in mined.get(key, [])
@@ -499,6 +506,15 @@ def _offline_synthesis(
                 finding.title,
                 markdown,
                 f"Read-only in {finding.sessions} sessions; {finding.tokens:,} tokens spent.",
+                finding.tokens // max(finding.sessions, 1),
+            )
+
+        elif finding.kind in {"selector_miss", "workaround_script", "stuck_loop", "noop_retry"}:
+            add(
+                "convention",
+                f"{finding.kind}:{finding.title}",
+                finding.recommendation,
+                finding.detail,
                 finding.tokens // max(finding.sessions, 1),
             )
 

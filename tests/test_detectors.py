@@ -62,3 +62,14 @@ def test_runner_advice_is_language_neutral() -> None:
     ):
         _, advice = _context_advice(target, "exec")
         assert "pytest" not in advice.lower()
+
+
+def test_path_and_runner_heuristics_cover_multiple_languages() -> None:
+    from trace2rules.ingest import _error_site, _is_path_token
+
+    for path in ("src/main.rs", "cmd/app/main.go", "src/app.ts", "src/App.java", "src/main.c", "lib/x.rb"):
+        assert _is_path_token(path), path
+    assert _error_site('File "src/main.go", line 12').endswith("src/main.go:12")
+    for target in ("cargo test", "go test ./...", "npm test"):
+        advice = _context_advice(target, "exec")[1]
+        assert "pytest" not in advice.lower()

@@ -54,7 +54,9 @@ def _usable_exact(finding: Finding) -> bool:
         return True
     if _generated_verifier(finding.sequence):
         return False
-    high_coverage_setup = finding.sessions >= 10 and finding.setup_tax > 0
+    high_coverage_setup = (
+        finding.sessions >= 10 and finding.setup_tax > 0 and finding.delta_rework >= 0
+    )
     paired_rework = finding.paired_instances >= 2 and finding.delta_rework >= 1
     return high_coverage_setup or paired_rework
 
@@ -80,11 +82,13 @@ def select_findings(
     limit: int = 20,
 ) -> list[Finding]:
     findings: list[Finding] = []
-    for key, cap in (("recovery", 8), ("orientation", 2), ("context", 2)):
+    for key, cap in (("recovery", 12), ("context", 4)):
         candidates = [
             finding
             for finding in mined.get(key, [])
-            if finding.repo == repo and finding.sessions >= 3
+            if finding.repo == repo
+            and finding.sessions >= 3
+            and (finding.recommendation or finding.kind != "context")
         ]
         candidates.sort(key=lambda finding: (finding.sessions, finding.tokens), reverse=True)
         findings.extend(candidates[:cap])
@@ -103,7 +107,7 @@ def select_findings(
             continue
         selected_tokens.append(tokens)
         findings.append(finding)
-        if len(findings) >= 14:
+        if len(findings) >= 18:
             break
     return findings[:limit]
 
@@ -491,6 +495,19 @@ def _offline_synthesis(
     return Synthesis(repo=repo, rules=rules[:max_rules])
 
 
+PLACEHOLDER_RE = re.compile(r"<(?:id|n|path|workspace)>|\{\{")
+
+
+def _filter_junk_rules(synthesis: Synthesis) -> Synthesis:
+    rules = [
+        rule
+        for rule in synthesis.rules
+        if not PLACEHOLDER_RE.search(rule.rule_markdown)
+        and not PLACEHOLDER_RE.search(rule.evidence_summary)
+    ]
+    return Synthesis(repo=synthesis.repo, rules=rules)
+
+
 def render(synthesis: Synthesis, repo: str, sessions: int) -> str:
     lines = []
     for rule in synthesis.rules:
@@ -583,6 +600,7 @@ def synthesize(
                 reason = "no LLM credentials"
             console.print(f"[yellow]Deterministic rules for {escape(repo_name)} ({reason}).[/yellow]")
 
+        synthesis = _filter_junk_rules(synthesis)
         synthesis, text = enforce_caps(
             synthesis, repo_name, row["sessions"], max_rules=max_rules
         )

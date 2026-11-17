@@ -335,7 +335,6 @@ def _prompt(
             "cause": finding.cause,
             "cause_support_sessions": finding.cause_support_sessions,
             "side": finding.side,
-            "recommendation": finding.recommendation,
             "window": list(finding.window),
         }
         for index, finding in enumerate(findings)

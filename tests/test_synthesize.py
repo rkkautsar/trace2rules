@@ -143,3 +143,21 @@ def test_rule_with_unknown_source_is_dropped() -> None:
     )
     validated = _validate_sources(synthesis, [finding])
     assert [rule.rule_markdown for rule in validated.rules] == ["Do b."]
+
+
+def test_prompt_omits_detector_recommendations() -> None:
+    from trace2rules.detectors import Finding
+    from trace2rules.synthesize import _prompt
+
+    finding = Finding(
+        kind="context",
+        repo="acme/repo",
+        title="make unit",
+        sessions=10,
+        tokens=100,
+        side="repo",
+        recommendation="ADD A TEST-ONE TARGET",
+        detail="exec via execute_bash",
+    )
+    prompt = _prompt([finding], "acme/repo", [])
+    assert "ADD A TEST-ONE TARGET" not in prompt

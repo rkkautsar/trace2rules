@@ -29,5 +29,6 @@ class Session:
     resolved: bool = False
     calls: list[ToolCall] = field(default_factory=list)
     source: str = ""
+    source_ref: str = ""
     agent: str = ""
     success_score: float | None = None

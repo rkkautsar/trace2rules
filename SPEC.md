@@ -14,14 +14,14 @@ source adapter
   -> exact sequence mining + lift / paired rework
   -> gated findings
   -> LLM synthesis (deterministic fallback)
-  -> AGENTS.<owner>__<repo>.proposed.md
+  -> stdout
 ```
 
 ## Sources
 
 | Format | Adapter | Notes |
 |---|---|---|
-| `swe-rebench` | `ingest.py` | OpenHands-style parquet, streamed from Hugging Face |
+| `swe-rebench` | `ingest.py` | OpenHands-style parquet, cached locally from Hugging Face |
 | `swe-chat` | `sources/swe_chat.py` | Optional example corpus; normalized `sessions.parquet` + `conversations.parquet` |
 | `agent-trajectory` | `sources/agent_trajectory.py`, `sources/opencode.py` | Claude Code, Codex, Pi, OMP, and OpenCode SQLite/JSON |
 

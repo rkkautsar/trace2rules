@@ -6,7 +6,6 @@ import re
 import sys
 from collections import defaultdict
 from dataclasses import replace
-from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -23,7 +22,8 @@ MAX_CHARS = 2500
 EXACT_LENGTHS = (3, 4, 5)
 
 GENERATED_VERIFIER_RE = re.compile(
-    r"final_|validation_test|test_fix_verification|test_reproduce_issue|comprehensive_test"
+    r"final_|validation_test|test_fix_verification|test_reproduce_issue|comprehensive_test|"
+    r"(?:reproduce|repro|scratch|debug|verif)[\w.-]*\.py"
 )
 
 
@@ -80,6 +80,14 @@ def select_findings(
     limit: int = 20,
 ) -> list[Finding]:
     findings: list[Finding] = []
+    for key, cap in (("recovery", 8), ("orientation", 2), ("context", 2)):
+        candidates = [
+            finding
+            for finding in mined.get(key, [])
+            if finding.repo == repo and finding.sessions >= 3
+        ]
+        candidates.sort(key=lambda finding: (finding.sessions, finding.tokens), reverse=True)
+        findings.extend(candidates[:cap])
     exact_repo = [finding for finding in exact if finding.repo == repo]
     selected_tokens: list[tuple[str, ...]] = []
     for finding in sorted(
@@ -95,12 +103,8 @@ def select_findings(
             continue
         selected_tokens.append(tokens)
         findings.append(finding)
-        if len(findings) >= 10:
+        if len(findings) >= 14:
             break
-    for key in ("recovery", "hotspots", "context", "clusters"):
-        findings.extend(
-            [finding for finding in mined[key] if finding.repo == repo][:2]
-        )
     return findings[:limit]
 
 
@@ -276,13 +280,20 @@ def _prompt(
             "rework": finding.rework,
             "paired_instances": finding.paired_instances,
             "delta_rework": round(finding.delta_rework, 2),
+            "title": finding.title,
+            "failure_family": finding.failure_family,
             "detail": finding.detail,
             "sequence": finding.sequence,
             "variants": list(finding.variants),
             "intent": finding.intent,
             "object_type": finding.object_type,
+            "cause": finding.cause,
+            "cause_support_sessions": finding.cause_support_sessions,
+            "side": finding.side,
+            "recommendation": finding.recommendation,
+            "window": list(finding.window),
         }
-        for finding in findings
+        for index, finding in enumerate(findings)
         ]
     )
     return f"""Repo: {repo}
@@ -294,14 +305,16 @@ Semantic target labels observed for this repo (clef/decision-model annotations, 
 {json.dumps(redact_value(labels), indent=2)}
 
 Write AGENTS.md rules for this repository. Requirements:
-- Emit 1-{max_rules} declarative rules, not task-specific issue descriptions.
+- Emit 0-{max_rules} declarative rules. Do not fill the quota: fewer rules are better, and zero is valid when the evidence does not support a rule. Do not emit task-specific issue descriptions.
 - Categories: test_command, architecture_map, context_hygiene, convention.
 - rule_markdown: 1-2 imperative sentences, concrete command or file names.
 - evidence_summary: sessions affected and approximate setup/rework token cost.
 - No generic platitudes ("be careful", "read the docs").
 - Ignore task-specific verifier scripts, one-off filenames, and normal edit -> test-fail loops.
-- For `recovery` findings, turn the failed -> successful transition into a convention rule.
-- If any finding has `paired_instances >= 2` and `delta_rework >= 1`, include one `convention` rule: read the exception signature; if the same signature repeats after an edit, fix the product code or test scope instead of editing the harness.
+- For `recovery` findings, use the representative window from failure through success to explain the failed -> successful transition; cite the support count. Do not infer intent not shown by the tool calls.
+- A window is one illustrative occurrence, not proof of intent. Never encode an identifier that appears in fewer than two sessions.
+- For `orientation` or `side=repo`, write a repository-side recommendation, not an agent rule.
+- Do not mechanically recommend `| head`; distinguish quiet flags, targeted test selection, and repo entrypoints.
 - Total output must stay under {max_rules} rules, {max(MAX_LINES, max_rules * 10)} lines, and {max(MAX_CHARS, max_rules * 500):,} characters.
 
 Return JSON only, shaped exactly as:
@@ -353,24 +366,11 @@ def _offline_synthesis(
 ) -> Synthesis:
     rules: list[Rule] = []
     seen: set[tuple[str, str]] = set()
-    counts: dict[str, int] = {}
-    limits = {
-        "test_command": 1,
-        "convention": 2,
-        "architecture_map": 2,
-        "context_hygiene": 1,
-    }
-
     def add(category: str, subject: str, markdown: str, evidence: str, tokens: int) -> None:
         key = (category, subject)
-        if (
-            key in seen
-            or len(rules) >= max_rules
-            or counts.get(category, 0) >= limits.get(category, max_rules)
-        ):
+        if key in seen or len(rules) >= max_rules:
             return
         seen.add(key)
-        counts[category] = counts.get(category, 0) + 1
         rules.append(
             Rule(
                 category=category,
@@ -385,11 +385,11 @@ def _offline_synthesis(
             return 0
         if finding.kind == "recovery":
             return 1
-        if finding.kind == "cluster":
+        if finding.kind == "orientation":
             return 2
-        if finding.kind == "hotspot":
-            return 3
         if finding.kind == "context":
+            return 3
+        if finding.kind == "hotspot":
             return 4
         return 5
 
@@ -410,18 +410,8 @@ def _offline_synthesis(
                 finding.setup_tax // max(finding.sessions, 1),
             )
 
-        elif (
-            finding.kind == "exact"
-            and finding.paired_instances >= 2
-            and finding.delta_rework >= 1
-        ):
-            add(
-                "convention",
-                "exception-signature",
-                "After a command fails, read the exception signature. If the same signature repeats after an edit, change the product code or test scope instead of editing the harness.",
-                f"Paired delta {finding.delta_rework:+.1f} rework in {finding.paired_instances} instances; {finding.cost:,} cost.",
-                int(finding.delta_rework * 1000),
-            )
+        elif finding.kind == "orientation":
+            continue
 
         elif finding.kind == "recovery":
             recovery = finding.title.split("->", 1)[-1].strip()
@@ -431,6 +421,16 @@ def _offline_synthesis(
                     "editable-install",
                     "Run `pip install -e .` before import, CLI, or pytest probes; treat pre-install failures as setup failures, not code failures.",
                     f"{finding.detail}; {finding.tokens:,} tokens.",
+                    finding.tokens // max(finding.sessions, 1),
+                )
+            elif finding.cause and finding.sessions >= 2:
+                cause = finding.cause.splitlines()[0].strip()
+                cause = cause[:180]
+                add(
+                    "convention",
+                    f"recovery:{cause[:60]}",
+                    f"When `{cause}` recurs after an edit, inspect the failing call and fix the product path or test input; do not only rerun or edit the reproducer.",
+                    f"{finding.sessions} sessions; {finding.detail}.",
                     finding.tokens // max(finding.sessions, 1),
                 )
 
@@ -477,26 +477,14 @@ def _offline_synthesis(
                 continue
             if _is_doc_target(finding.title):
                 continue
-            if re.search(r"(?i)\b(pip|uv|poetry)\b.*\binstall\b", finding.title):
+            if not finding.recommendation:
                 continue
-            avg = re.search(r"avg (\d+) tokens", finding.detail)
-            size = f"{int(avg.group(1)):,}" if avg else "large"
-            if " " in finding.title:
-                markdown = (
-                    f"Bound `{_truncate(finding.title, 70)}` output with `-q`, "
-                    "`| head`/`| tail`, or a narrower selector; it averages "
-                    f"{size} tokens."
-                )
-            else:
-                markdown = (
-                    f"Inspect `{_truncate(finding.title, 70)}` by targeted line "
-                    f"range instead of full-file reads; it averages {size} tokens."
-                )
+            category = "context_hygiene" if finding.side != "repo" else "architecture_map"
             add(
-                "context_hygiene",
+                category,
                 finding.title,
-                markdown,
-                f"Average {size} output tokens in {finding.sessions} sessions.",
+                finding.recommendation,
+                finding.detail,
                 finding.tokens // max(finding.sessions, 1),
             )
 
@@ -504,12 +492,7 @@ def _offline_synthesis(
 
 
 def render(synthesis: Synthesis, repo: str, sessions: int) -> str:
-    lines = [
-        "# AGENTS.md",
-        "",
-        f"Generated by trace2rules from {sessions} sessions in {repo}.",
-        "",
-    ]
+    lines = []
     for rule in synthesis.rules:
         lines.append(f"## {rule.category}")
         lines.append(f"- **Rule:** {rule.rule_markdown}")
@@ -533,20 +516,14 @@ def enforce_caps(
         synthesis = Synthesis(repo=synthesis.repo, rules=synthesis.rules[:-1])
 
 
-def _slug(repo: str) -> str:
-    return repo.replace("/", "__")
-
-
 def synthesize(
     con,
-    out_path: str | Path | None = None,
-    out_dir: str | Path | None = None,
     repo: str | None = None,
     top: int = 25,
     offline: bool = False,
     max_rules: int = MAX_RULES,
     console: Console | None = None,
-) -> list[tuple[Path, Synthesis]]:
+) -> list[Synthesis]:
     from .cluster import exact_sequences, mine
 
     console = console or Console()
@@ -570,10 +547,7 @@ def synthesize(
                 )
             )
         mined = mine(con, top=None)
-    out_dir_path = Path(out_dir) if out_dir else None
-    if out_dir_path is not None:
-        out_dir_path.mkdir(parents=True, exist_ok=True)
-    results: list[tuple[Path, Synthesis]] = []
+    results: list[Synthesis] = []
 
     for row in repo_rows:
         repo_name = row["repo"]
@@ -583,8 +557,6 @@ def synthesize(
         labels = label_summary(con, repo_name)
         print_findings(findings, console)
         if not findings:
-            if repo and out_path is not None and str(out_path) != "-":
-                Path(out_path).unlink(missing_ok=True)
             console.print(f"[yellow]No rules for {escape(repo_name)}; skipped.[/yellow]")
             continue
 
@@ -615,29 +587,12 @@ def synthesize(
             synthesis, repo_name, row["sessions"], max_rules=max_rules
         )
         if not synthesis.rules:
-            if repo and out_path is not None and str(out_path) != "-":
-                Path(out_path).unlink(missing_ok=True)
             console.print(f"[yellow]No rules for {escape(repo_name)}; skipped.[/yellow]")
             continue
-        if repo and out_path is not None:
-            if str(out_path) == "-":
-                sys.stdout.write(text)
-                if not text.endswith("\n"):
-                    sys.stdout.write("\n")
-                results.append((Path("-"), synthesis))
-                continue
-            path = Path(out_path)
-        elif out_dir_path is not None:
-            path = out_dir_path / f"AGENTS.{_slug(repo_name)}.proposed.md"
-        else:
-            sys.stdout.write(text)
-            if not text.endswith("\n"):
-                sys.stdout.write("\n")
-            results.append((Path("-"), synthesis))
-            continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
-        results.append((path, synthesis))
+        sys.stdout.write(text)
+        if not text.endswith("\n"):
+            sys.stdout.write("\n")
+        results.append(synthesis)
 
     return results
 

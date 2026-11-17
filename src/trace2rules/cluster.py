@@ -8,7 +8,7 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_distances
 
-from .detectors import Finding, context_blasts, hotspots, recovery_loops
+from .detectors import Finding, context_blasts, hotspots, orientation, recovery_loops
 
 
 @dataclass
@@ -344,5 +344,6 @@ def mine(
         "hotspots": hotspots(con, limit=top),
         "recovery": recovery_loops(con, limit=top),
         "context": context_blasts(con, limit=top),
-        "clusters": cluster_friction(con, top=top),
+        "orientation": orientation(con, limit=top),
+        "clusters": [],
     }

@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Annotated
 
 import duckdb
+import sys
+
 import typer
 from dotenv import load_dotenv
 from rich.console import Console
@@ -50,6 +52,13 @@ def _ingest_command(
         typer.Option("--repo", help="Override repo label for local/SWE-chat sessions."),
     ] = None,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
+    refresh_cache: Annotated[
+        bool,
+        typer.Option(
+            "--refresh-cache",
+            help="Re-download the remote parquet instead of using the cached copy.",
+        ),
+    ] = False,
     label: Annotated[
         bool,
         typer.Option(
@@ -75,17 +84,32 @@ def _ingest_command(
         prefixes = repos or DEFAULT_REPOS
         selected_sources = sources or [SOURCE]
         stats = []
-        for selected_source in selected_sources:
-            if selected_source.startswith(("hf://", "http://", "https://")):
-                console.print("[dim]Scanning remote parquet; first run downloads metadata/data...[/dim]")
-            try:
-                stats.extend(
-                    ingest_traces(
-                        prefixes, limit=limit, db_path=db, source=selected_source
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=Console(stderr=True),
+            transient=False,
+            disable=not sys.stderr.isatty(),
+        )
+        with progress:
+            for selected_source in selected_sources:
+                if selected_source.startswith(("hf://", "http://", "https://")):
+                    console.print("[dim]Scanning remote parquet; first run downloads metadata/data...[/dim]")
+                try:
+                    stats.extend(
+                        ingest_traces(
+                            prefixes,
+                            limit=limit,
+                            db_path=db,
+                            source=selected_source,
+                            progress=progress,
+                            refresh_cache=refresh_cache,
+                        )
                     )
-                )
-            except (duckdb.Error, OSError, RuntimeError) as error:
-                failed_sources.append((selected_source, error))
+                except (duckdb.Error, OSError, RuntimeError) as error:
+                    failed_sources.append((selected_source, error))
     elif fmt == "swe-chat":
         from .sources.swe_chat import ingest_swe_chat
 
@@ -116,6 +140,7 @@ def _ingest_command(
             TimeElapsedColumn(),
             console=Console(stderr=True),
             transient=False,
+            disable=not sys.stderr.isatty(),
         )
         with progress:
             for selected_source in selected_sources:
@@ -223,12 +248,31 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
             )
         console.print(table)
 
+    orientation_findings = mined.get("orientation", [])[:limit]
+    if orientation_findings:
+        table = Table(title="Orientation cost (repo-side)", header_style="bold", expand=True)
+        table.add_column("Repo")
+        table.add_column("Target")
+        table.add_column("Sessions", justify="right")
+        table.add_column("Tokens", justify="right")
+        table.add_column("Advice")
+        for finding in orientation_findings:
+            table.add_row(
+                escape(finding.repo),
+                escape(finding.title),
+                str(finding.sessions),
+                f"{finding.tokens:,}",
+                escape(finding.recommendation),
+            )
+        console.print(table)
+
     recovery = mined["recovery"][:limit]
     if recovery:
         table = Table(title="Command fail -> recovery loops", header_style="bold", expand=True)
         table.add_column("Repo")
         table.add_column("Failed command")
         table.add_column("Recovery command")
+        table.add_column("Cause")
         table.add_column("Sessions", justify="right")
         table.add_column("Wasted tokens", justify="right")
         for finding in recovery:
@@ -237,6 +281,7 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
                 escape(finding.repo),
                 escape(failed),
                 escape(recovered),
+                escape(finding.cause or finding.detail),
                 str(finding.sessions),
                 f"{finding.tokens:,}",
             )
@@ -250,6 +295,7 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
         table.add_column("Sessions", justify="right")
         table.add_column("Total tokens", justify="right")
         table.add_column("Profile")
+        table.add_column("Recommendation")
         for finding in blasts:
             table.add_row(
                 escape(finding.repo),
@@ -257,6 +303,7 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
                 str(finding.sessions),
                 f"{finding.tokens:,}",
                 escape(finding.detail),
+                escape(finding.recommendation),
             )
         console.print(table)
 
@@ -306,10 +353,9 @@ def _mine_command(
         _print_summary(session_summary(con))
         mined = mine_friction(con, top=top)
         _print_detector_tables(mined)
-        _print_clusters(mined, top)
         console.print(
             f"[dim]{len(mined['hotspots'])} hotspots, {len(mined['recovery'])} recovery loops, "
-            f"{len(mined['context'])} context blasts, {len(mined['clusters'])} clusters[/dim]"
+            f"{len(mined['context'])} context blasts, {len(mined.get('orientation', []))} orientation[/dim]"
         )
     finally:
         con.close()
@@ -345,7 +391,7 @@ def _report_command(
         mined = mine_friction(con, top=top)
         findings = [
             finding
-            for key in ("hotspots", "recovery", "context", "clusters")
+            for key in ("hotspots", "recovery", "context", "orientation")
             for finding in mined[key]
         ]
         exact = []
@@ -444,7 +490,13 @@ def _doctor_command(
     except Exception as error:  # noqa: BLE001 - doctor must not fail on probes
         checks.append(("decision backend", "warn", str(error)))
 
-    for key in ("TRACE2RULES_LLM_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"):
+    for key in (
+        "TRACE2RULES_LLM_API_KEY",
+        "TRACE2RULES_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENAI_API_KEY",
+    ):
         checks.append(
             (key, "ok" if os.getenv(key) else "warn", "set" if os.getenv(key) else "unset")
         )
@@ -646,11 +698,6 @@ app.command("exact")(_exact_command)
 
 
 def _synthesize_command(
-    out: Annotated[Path | None, typer.Option("--out", "-o", help="Output path for a single --repo; use '-' for stdout.")] = None,
-    out_dir: Annotated[
-        Path | None,
-        typer.Option("--out-dir", help="Directory for per-repo AGENTS files."),
-    ] = None,
     repo: Annotated[str | None, typer.Option("--repo", help="Synthesize only this repo.")] = None,
     top: Annotated[int, typer.Option(help="Findings to pass to synthesis.")] = 25,
     max_rules: Annotated[
@@ -660,14 +707,7 @@ def _synthesize_command(
     offline: Annotated[bool, typer.Option("--offline", help="Skip the LLM and use deterministic rules.")] = False,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
-    if out is not None and repo is None:
-        raise typer.BadParameter("--out requires --repo; use --out-dir for multiple repos.")
-    stdout_mode = out is None and out_dir is None
-    cmd_console = (
-        Console(stderr=True)
-        if stdout_mode or (out is not None and str(out) == "-")
-        else console
-    )
+    cmd_console = Console(stderr=True)
     con = connect(db)
     try:
         session_count = con.execute("SELECT count(*) FROM sessions").fetchone()[0]
@@ -679,8 +719,6 @@ def _synthesize_command(
 
             results = synthesize_rules(
                 con,
-                out_path=out,
-                out_dir=out_dir,
                 repo=repo,
                 top=top,
                 max_rules=max_rules,
@@ -690,9 +728,9 @@ def _synthesize_command(
         except ValueError as error:
             cmd_console.print(f"[red]{escape(str(error))}[/red]")
             raise typer.Exit(1) from None
-        for path, synthesis in results:
+        for synthesis in results:
             cmd_console.print(
-                f"Wrote [bold]{path}[/bold] with {len(synthesis.rules)} rules for {synthesis.repo}."
+                f"[dim]{len(synthesis.rules)} rules for {synthesis.repo}.[/dim]"
             )
     finally:
         con.close()

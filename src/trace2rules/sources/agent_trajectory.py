@@ -356,6 +356,7 @@ def _records_to_session(
         repo=repo,
         instance_id=(meta.instance_id if meta and meta.instance_id else session_id),
         source="agent-trajectory",
+        source_ref=str(path),
         agent=source,
     )
     pending: dict[str, ToolCall] = {}

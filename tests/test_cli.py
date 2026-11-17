@@ -28,11 +28,6 @@ def test_unknown_ingest_format_is_a_usage_error() -> None:
     assert "Unknown format" in result.output
 
 
-def test_synthesize_out_requires_repo() -> None:
-    result = runner.invoke(app, ["synthesize", "--out", "AGENTS.proposed.md"])
-    assert result.exit_code == 2
-
-
 def test_patterns_on_fresh_db_is_friendly(tmp_path: Path) -> None:
     db = tmp_path / "fresh.duckdb"
     con = connect(db)
@@ -382,5 +377,4 @@ def test_synthesize_defaults_to_stdout(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["synthesize", "--db", str(db), "--offline"])
     assert result.exit_code == 0
-    assert "# AGENTS.md" in result.output
-    assert not list(tmp_path.glob("AGENTS.*.proposed.md"))
+    assert "No rules for acme/repo" in result.output

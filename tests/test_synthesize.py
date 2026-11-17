@@ -104,8 +104,7 @@ def test_repo_without_findings_is_skipped(tmp_path, monkeypatch) -> None:
         raise AssertionError("LLM should not run without findings")
 
     monkeypatch.setattr("trace2rules.synthesize._llm_synthesis", fake_llm)
-    results = synthesize(con, out_dir=tmp_path)
+    results = synthesize(con)
     con.close()
     assert results == []
     assert called is False
-    assert not list(tmp_path.glob("AGENTS.*.proposed.md"))

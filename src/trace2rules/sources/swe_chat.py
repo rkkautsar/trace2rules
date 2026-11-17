@@ -80,6 +80,7 @@ def ingest_swe_chat(
                         instance_id=session_id,
                         agent=agent or "",
                         source="swe-chat",
+                        source_ref=f"{sessions_path}#{session_id}",
                         success_score=float(success) if success not in (None, "") else None,
                     )
                     calls[session_id] = []

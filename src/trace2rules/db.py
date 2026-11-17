@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     resolved         BOOLEAN NOT NULL,
     total_turns      INTEGER NOT NULL,
     source           VARCHAR DEFAULT '',
+    source_ref       VARCHAR DEFAULT '',
     agent            VARCHAR DEFAULT '',
     success_score    DOUBLE
 );
@@ -35,7 +36,10 @@ CREATE TABLE IF NOT EXISTS tool_events (
     error_signature   VARCHAR NOT NULL,
     is_error          BOOLEAN NOT NULL,
     approx_out_tokens INTEGER NOT NULL,
-    obs_excerpt       VARCHAR NOT NULL
+    obs_excerpt       VARCHAR NOT NULL,
+    obs_cause         VARCHAR DEFAULT '',
+    error_detail      VARCHAR DEFAULT '',
+    error_site        VARCHAR DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS target_labels (
@@ -68,6 +72,7 @@ def connect(path: str | Path = DB_PATH) -> duckdb.DuckDBPyConnection:
     for ddl in (
         "ALTER TABLE sessions ADD COLUMN source VARCHAR DEFAULT ''",
         "ALTER TABLE sessions ADD COLUMN agent VARCHAR DEFAULT ''",
+        "ALTER TABLE sessions ADD COLUMN source_ref VARCHAR DEFAULT ''",
         "ALTER TABLE sessions ADD COLUMN success_score DOUBLE",
         "ALTER TABLE tool_events ADD COLUMN verb VARCHAR DEFAULT ''",
         "ALTER TABLE tool_events ADD COLUMN object_id VARCHAR DEFAULT ''",
@@ -76,6 +81,9 @@ def connect(path: str | Path = DB_PATH) -> duckdb.DuckDBPyConnection:
         "ALTER TABLE tool_events ADD COLUMN error_signature VARCHAR DEFAULT ''",
         "ALTER TABLE tool_events ADD COLUMN obs_excerpt VARCHAR DEFAULT ''",
         "ALTER TABLE tool_events ADD COLUMN segment_idx INTEGER DEFAULT 0",
+        "ALTER TABLE tool_events ADD COLUMN obs_cause VARCHAR DEFAULT ''",
+        "ALTER TABLE tool_events ADD COLUMN error_detail VARCHAR DEFAULT ''",
+        "ALTER TABLE tool_events ADD COLUMN error_site VARCHAR DEFAULT ''",
     ):
         try:
             con.execute(ddl)

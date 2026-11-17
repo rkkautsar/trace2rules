@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shlex
+from functools import lru_cache
+import urllib.request
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 import duckdb
+from rich.progress import Progress
 
 from .db import DB_PATH, connect
 from .models import Session, ToolCall
@@ -27,6 +31,13 @@ TOOL_ERROR_RE = re.compile(
     re.IGNORECASE,
 )
 TIMEOUT_RE = re.compile(r"timed out|Timeout", re.IGNORECASE)
+CAUSE_LINE_RE = re.compile(
+    r"(?i)(^|\b)(FAILED|ERROR|Traceback|usage:|no tests ran|deselected|"
+    r"[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception))(?::|\b)"
+)
+SITE_FILE_RE = re.compile(r'(?:File "([^"]+)", line (\d+)|([\w./-]+\.(?:py|ts|js)):(\d+))')
+SITE_TEST_RE = re.compile(r"FAILED\s+([^\s]+::\S+)")
+CONTROL_TARGETS = {"C-c", "C-C", "^C", "ctrl-c", "\x03"}
 
 ENV_PREFIX_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=\S*\s+")
 CD_PREFIX_RE = re.compile(r"^cd\s+[^&;]+\s*(?:&&|;)\s*")
@@ -83,6 +94,15 @@ def normalize_path(path: str, instance_id: str = "") -> str:
     return path or "."
 
 
+def _shell_split(command: str) -> list[str]:
+    if '"' not in command and "'" not in command and "\\" not in command:
+        return command.split()
+    try:
+        return shlex.split(command, posix=True)
+    except ValueError:
+        return command.split()
+
+
 def _strip_shell_prefix(command: str) -> str:
     command = command.strip()
     while True:
@@ -94,12 +114,10 @@ def _strip_shell_prefix(command: str) -> str:
             return command
 
 
+@lru_cache(maxsize=100_000)
 def _first_verb(command: str) -> tuple[str, list[str]]:
     command = _strip_shell_prefix(command)
-    try:
-        tokens = shlex.split(command, posix=True)
-    except ValueError:
-        tokens = command.split()
+    tokens = _shell_split(command)
     if not tokens:
         return "", []
     if tokens[0] == "git" and len(tokens) > 1:
@@ -206,6 +224,58 @@ def _extract_exit_code(observation: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _is_control_target(raw_target: str) -> bool:
+    value = (raw_target or "").strip()
+    return not value or value in CONTROL_TARGETS or value.startswith("\x03")
+
+
+def _observation_cause(observation: str) -> str:
+    if not observation:
+        return ""
+    lines = observation.splitlines()
+    for index, line in enumerate(lines):
+        if CAUSE_LINE_RE.search(line):
+            if line.lstrip().startswith("Traceback"):
+                for detail in lines[index + 1 : index + 8]:
+                    if CAUSE_LINE_RE.search(detail):
+                        return "\n".join([detail, *lines[index + 1 : index + 3]])[:400]
+            return "\n".join(lines[index : index + 3])[:400]
+    return observation[-400:]
+
+
+def _error_detail(observation: str) -> str:
+    if not observation:
+        return ""
+    for line in observation.splitlines():
+        if re.search(r"(?:^|\b)(?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception))(?::|\b)", line):
+            detail = line.strip()
+            attribute = re.search(
+                r"(?:has no attribute|no attribute) (['\"])([^'\"]+)\1", detail
+            )
+            if attribute:
+                detail = f"AttributeError: <object> has no attribute '{attribute.group(2)}'"
+            else:
+                detail = re.sub(r"'[^']*'", "'<id>'", detail)
+                detail = re.sub(r'"[^"]*"', '"<id>"', detail)
+            detail = re.sub(r"\b\d+\b", "<n>", detail)
+            return detail[:240]
+    return ""
+
+
+def _error_site(observation: str) -> str:
+    if not observation:
+        return ""
+    match = SITE_TEST_RE.search(observation)
+    if match:
+        return match.group(1)[:200]
+    match = SITE_FILE_RE.search(observation)
+    if match:
+        path = match.group(1) or match.group(3)
+        line = match.group(2) or match.group(4)
+        return f"{path}:{line}"[:200]
+    return ""
+
+
 def _error_signature(
     observation: str,
     exit_code: int | None,
@@ -220,6 +290,14 @@ def _error_signature(
         return "editor:verbatim"
     if "invalid `path`" in lowered or "invalid path" in lowered:
         return "editor:invalid_path"
+    if "error" not in lowered and "exception" not in lowered:
+        if exit_code not in (None, 0):
+            return f"exit:{exit_code}"
+        if text_error:
+            return "text_error"
+        if tool_error:
+            return "tool_error"
+        return ""
     matches = re.findall(
         r"(?:^|\n)\s*(?:E\s+)?([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception))(?::|\s)",
         observation,
@@ -243,6 +321,8 @@ def _event_outcome(
     timeout: bool,
     tool_error: bool,
 ) -> str:
+    if action == "search" and exit_code == 1:
+        return "empty"
     if exit_code is not None:
         return "ok" if exit_code == 0 else "err"
     if timeout:
@@ -307,10 +387,7 @@ def _parameterize(command: str, instance_id: str) -> str:
     command = _strip_shell_prefix(" ".join((command or "").split()))
     if not command:
         return ""
-    try:
-        tokens = shlex.split(command, posix=True)
-    except ValueError:
-        tokens = command.split()
+    tokens = _shell_split(command)
 
     out: list[str] = []
     i = 0
@@ -378,6 +455,8 @@ def _parse_row(row: tuple) -> tuple[dict, list[dict]]:
         for tool_call in msg.get("tool_calls") or []:
             fn = tool_call["function"]
             raw_target, _ = _tool_call_parts(fn["name"], fn.get("arguments", ""))
+            if _is_control_target(raw_target):
+                continue
             observation = _observation_for_call(tool_call.get("id", ""), obs_by_id, messages, index)
             exit_code = _extract_exit_code(observation)
             text_error = bool(TEXT_ERROR_RE.search(observation))
@@ -399,6 +478,9 @@ def _parse_row(row: tuple) -> tuple[dict, list[dict]]:
                     "error_signature": _error_signature(
                         observation, exit_code, timeout, text_error, tool_error
                     ),
+                    "obs_cause": _observation_cause(observation),
+                    "error_detail": _error_detail(observation),
+                    "error_site": _error_site(observation),
                 }
             )
             step += 1
@@ -412,7 +494,86 @@ def _parse_row(row: tuple) -> tuple[dict, list[dict]]:
     return session, calls
 
 
-def _stream_rows(source: str, prefix: str, limit: int):
+def _remote_url(source: str) -> str | None:
+    if source.startswith("hf://datasets/"):
+        rest = source[len("hf://datasets/") :]
+        parts = rest.split("/")
+        if len(parts) < 3:
+            return None
+        dataset = "/".join(parts[:2])
+        path = "/".join(parts[2:])
+        return f"https://huggingface.co/datasets/{dataset}/resolve/main/{path}"
+    if source.startswith(("http://", "https://")):
+        return source
+    return None
+
+
+def _valid_parquet(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(4)
+            handle.seek(-4, os.SEEK_END)
+            tail = handle.read(4)
+    except (OSError, ValueError):
+        return False
+    return head == b"PAR1" and tail == b"PAR1"
+
+
+def _cached_source(
+    source: str, progress: Progress | None = None, refresh: bool = False
+) -> str:
+    url = _remote_url(source)
+    if url is None:
+        return source
+    cache_root = Path(
+        os.getenv("TRACE2RULES_CACHE_DIR", Path.home() / ".cache" / "trace2rules")
+    )
+    cache_root.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_root / f"{hashlib.sha1(url.encode()).hexdigest()[:16]}.parquet"
+    if not refresh and cache_path.exists() and _valid_parquet(cache_path):
+        return str(cache_path)
+    if cache_path.exists():
+        cache_path.unlink()
+    part = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.part")
+    task_id = None
+    try:
+        with urllib.request.urlopen(url, timeout=120) as response:
+            total = int(response.headers.get("Content-Length") or 0)
+            if progress:
+                task_id = progress.add_task(
+                    "Downloading parquet", total=total or None
+                )
+            with part.open("wb") as target:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    target.write(chunk)
+                    if progress and task_id is not None:
+                        progress.update(task_id, advance=len(chunk))
+        if total and part.stat().st_size != total:
+            raise RuntimeError(
+                f"incomplete parquet download: {part.stat().st_size} of {total} bytes"
+            )
+        if not _valid_parquet(part):
+            raise RuntimeError("downloaded file is not a parquet file")
+        part.replace(cache_path)
+        return str(cache_path)
+    except Exception:
+        part.unlink(missing_ok=True)
+        raise
+    finally:
+        if progress and task_id is not None:
+            progress.remove_task(task_id)
+
+
+def _stream_rows(
+    source: str,
+    prefix: str,
+    limit: int,
+    progress: Progress | None = None,
+    refresh: bool = False,
+):
     reader = duckdb.connect(
         config={
             "memory_limit": "4500MB",
@@ -421,12 +582,7 @@ def _stream_rows(source: str, prefix: str, limit: int):
         }
     )
     try:
-        if source.startswith(("hf://", "http://", "https://")):
-            try:
-                reader.execute("LOAD httpfs")
-            except duckdb.Error:
-                reader.execute("INSTALL httpfs")
-                reader.execute("LOAD httpfs")
+        local_source = _cached_source(source, progress, refresh=refresh)
         limit_sql = f"LIMIT {int(limit)}" if limit else ""
         query = f"""
             SELECT trajectory_id, instance_id, repo, resolved, trajectory
@@ -434,7 +590,7 @@ def _stream_rows(source: str, prefix: str, limit: int):
             WHERE starts_with(instance_id, ?)
             {limit_sql}
         """
-        cursor = reader.execute(query, [source, prefix])
+        cursor = reader.execute(query, [local_source, prefix])
         while True:
             batch = cursor.fetchmany(16)
             if not batch:
@@ -444,115 +600,129 @@ def _stream_rows(source: str, prefix: str, limit: int):
         reader.close()
 
 
+def _events_for_calls(calls: list[dict], cache: dict[tuple[str, str], tuple[str, str, str, str]]) -> list[tuple]:
+    events: list[tuple] = []
+    for call in calls:
+        key = (call["tool_name"], call["raw_target"])
+        classification = cache.get(key)
+        if classification is None:
+            classification = _classify(call["tool_name"], call["raw_target"], "")
+            cache[key] = classification
+        action_type, target, verb, object_id = classification
+        observation = call["obs"] or ""
+        outcome = _event_outcome(
+            action_type,
+            observation,
+            call["exit_code"],
+            call["text_error"],
+            call["timeout"],
+            call["tool_error"],
+        )
+        error_signature = call["error_signature"]
+        if outcome == "err" and not error_signature:
+            error_signature = "err:unknown"
+        events.append(
+            (
+                call["event_id"],
+                call["session_id"],
+                call["repo"],
+                call["step_idx"],
+                call["tool_name"],
+                action_type,
+                verb,
+                object_id,
+                target,
+                call["raw_target"],
+                outcome,
+                call["exit_code"],
+                error_signature,
+                outcome == "err",
+                (len(observation) + 3) // 4,
+                observation[:400],
+                call["obs_cause"],
+                call["error_detail"],
+                call["error_site"],
+            )
+        )
+    return events
+
+
 def ingest(
     repos: list[str] | None = None,
     limit: int = 200,
     db_path: str | Path = DB_PATH,
     source: str = SOURCE,
+    progress: Progress | None = None,
+    refresh_cache: bool = False,
 ) -> list[IngestStats]:
     repos = repos or DEFAULT_REPOS
     con = connect(db_path)
     con.execute("CREATE OR REPLACE TEMP TABLE new_sessions (session_id VARCHAR, repo VARCHAR, instance_id VARCHAR, resolved BOOLEAN, total_turns INTEGER)")
-    con.execute(
-        "CREATE OR REPLACE TEMP TABLE raw_calls (event_id VARCHAR, session_id VARCHAR, repo VARCHAR, step_idx INTEGER, tool_name VARCHAR, raw_target VARCHAR, obs_content VARCHAR, exit_code INTEGER, text_error BOOLEAN, timeout BOOLEAN, tool_error BOOLEAN, error_signature VARCHAR)"
-    )
     stats: list[IngestStats] = []
+    classify_cache: dict[tuple[str, str], tuple[str, str, str, str]] = {}
+    con.execute("BEGIN TRANSACTION")
     try:
         for prefix in repos:
             matched = 0
-            rows_for_prefix: list[dict] = []
+            events_for_prefix: list[tuple] = []
             new_sessions_batch: list[dict] = []
-            for row in _stream_rows(source, prefix, limit):
+            task_id = (
+                progress.add_task(f"{prefix}", total=limit or None)
+                if progress
+                else None
+            )
+            for row in _stream_rows(
+                source, prefix, limit, progress=progress, refresh=refresh_cache
+            ):
                 matched += 1
+                if progress and task_id is not None and matched % 25 == 0:
+                    progress.update(
+                        task_id,
+                        completed=matched,
+                        description=f"{prefix}  {matched:,} rows",
+                    )
                 session, calls = _parse_row(row)
                 new_sessions_batch.append(session)
-                rows_for_prefix.extend(calls)
-                if len(rows_for_prefix) >= 2_000:
-                    _flush_calls(con, rows_for_prefix)
-                    rows_for_prefix.clear()
+                events_for_prefix.extend(_events_for_calls(calls, classify_cache))
                 if len(new_sessions_batch) >= 64:
                     _flush_sessions(con, new_sessions_batch)
                     new_sessions_batch.clear()
-            _flush_calls(con, rows_for_prefix)
             _flush_sessions(con, new_sessions_batch)
             con.execute("DELETE FROM tool_events WHERE session_id IN (SELECT session_id FROM new_sessions)")
             con.execute("DELETE FROM sessions WHERE session_id IN (SELECT session_id FROM new_sessions)")
             con.execute(
-                "INSERT INTO sessions (session_id, repo, instance_id, resolved, total_turns) "
-                "SELECT session_id, repo, instance_id, resolved, total_turns FROM new_sessions"
+                "INSERT INTO sessions (session_id, repo, instance_id, resolved, total_turns, source_ref) "
+                "SELECT session_id, repo, instance_id, resolved, total_turns, source_ref FROM new_sessions"
             )
-            _build_target_map(con)
-            rows = con.execute(
-                """
-                SELECT r.event_id, r.session_id, r.repo, r.step_idx, r.tool_name,
-                       m.action_type, m.verb, m.object_id, m.target, r.raw_target,
-                       r.exit_code, r.text_error, r.timeout, r.tool_error,
-                       r.error_signature, r.obs_content
-                FROM raw_calls r JOIN target_map m USING (tool_name, raw_target)
-                """
-            ).fetchall()
-            events = []
-            for row in rows:
-                (
-                    event_id,
-                    session_id,
-                    event_repo,
-                    step_idx,
-                    tool_name,
-                    action_type,
-                    verb,
-                    object_id,
-                    target,
-                    raw_target,
-                    exit_code,
-                    text_error,
-                    timeout,
-                    tool_error,
-                    error_signature,
-                    observation,
-                ) = row
-                observation = observation or ""
-                outcome = _event_outcome(
-                    action_type, observation, exit_code, text_error, timeout, tool_error
+            if events_for_prefix:
+                _insert_rows(
+                    con,
+                    "tool_events",
+                    events_for_prefix,
+                    columns=[
+                        "event_id", "session_id", "repo", "step_idx", "tool_name",
+                        "action_type", "verb", "object_id", "target", "raw_target",
+                        "outcome", "exit_code", "error_signature", "is_error",
+                        "approx_out_tokens", "obs_excerpt", "obs_cause",
+                        "error_detail", "error_site",
+                    ],
                 )
-                if outcome == "err" and not error_signature:
-                    error_signature = "err:unknown"
-                events.append(
-                    (
-                        event_id,
-                        session_id,
-                        event_repo,
-                        step_idx,
-                        tool_name,
-                        action_type,
-                        verb,
-                        object_id,
-                        target,
-                        raw_target,
-                        outcome,
-                        exit_code,
-                        error_signature,
-                        outcome == "err",
-                        (len(observation) + 3) // 4,
-                        observation[:400],
-                    )
-                )
-            con.executemany(
-                """
-                INSERT INTO tool_events (
-                    event_id, session_id, repo, step_idx, tool_name, action_type,
-                    verb, object_id, target, raw_target, outcome, exit_code,
-                    error_signature, is_error, approx_out_tokens, obs_excerpt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                events,
-            )
             session_count = con.execute("SELECT count(*) FROM new_sessions").fetchone()[0]
-            event_count = con.execute("SELECT count(*) FROM raw_calls").fetchone()[0]
+            event_count = len(events_for_prefix)
+            if progress and task_id is not None:
+                progress.update(
+                    task_id,
+                    completed=matched,
+                    total=matched or None,
+                    description=f"{prefix}  {matched:,} rows",
+                )
             stats.append(IngestStats(prefix, matched, session_count, event_count))
-            con.execute("DELETE FROM raw_calls")
             con.execute("DELETE FROM new_sessions")
+        con.execute("COMMIT")
         return stats
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
     finally:
         con.close()
 
@@ -581,8 +751,8 @@ def write_sessions(
                 """
                 INSERT INTO sessions (
                     session_id, repo, instance_id, resolved, total_turns,
-                    source, agent, success_score
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    source, source_ref, agent, success_score
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -592,6 +762,7 @@ def write_sessions(
                         session.resolved,
                         len(session.calls),
                         session.source,
+                        session.source_ref,
                         session.agent,
                         session.success_score,
                     )
@@ -681,52 +852,28 @@ def write_sessions(
     finally:
         con.close()
 
+def _insert_rows(
+    con: duckdb.DuckDBPyConnection,
+    table: str,
+    rows: list[tuple],
+    columns: list[str] | None = None,
+) -> None:
+    if not rows:
+        return
+    appender = con.appender(table, columns=columns)
+    for row in rows:
+        appender.append_row(*row)
+    appender.flush()
+
+
 def _flush_sessions(con: duckdb.DuckDBPyConnection, sessions: list[dict]) -> None:
     if not sessions:
         return
-    con.executemany(
-        "INSERT INTO new_sessions VALUES (?, ?, ?, ?, ?)",
+    _insert_rows(
+        con,
+        "new_sessions",
         [
-            (s["session_id"], s["repo"], s["instance_id"], s["resolved"], s["total_turns"])
+            (s["session_id"], s["repo"], s["instance_id"], s["resolved"], s["total_turns"], s.get("source_ref", ""))
             for s in sessions
         ],
     )
-
-
-def _flush_calls(con: duckdb.DuckDBPyConnection, calls: list[dict]) -> None:
-    if not calls:
-        return
-    con.executemany(
-        "INSERT INTO raw_calls VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            (
-                c["event_id"],
-                c["session_id"],
-                c["repo"],
-                c["step_idx"],
-                c["tool_name"],
-                c["raw_target"],
-                c["obs"],
-                c["exit_code"],
-                c["text_error"],
-                c["timeout"],
-                c["tool_error"],
-                c["error_signature"],
-            )
-            for c in calls
-        ],
-    )
-
-
-def _build_target_map(con: duckdb.DuckDBPyConnection) -> None:
-    con.execute(
-        "CREATE OR REPLACE TEMP TABLE target_map (tool_name VARCHAR, raw_target VARCHAR, target VARCHAR, action_type VARCHAR, verb VARCHAR, object_id VARCHAR)"
-    )
-    pairs = con.execute("SELECT DISTINCT tool_name, raw_target FROM raw_calls").fetchall()
-    if not pairs:
-        return
-    rows = []
-    for tool_name, raw_target in pairs:
-        action, target, verb, object_id = _classify(tool_name, raw_target, "")
-        rows.append((tool_name, raw_target, target, action, verb, object_id))
-    con.executemany("INSERT INTO target_map VALUES (?, ?, ?, ?, ?, ?)", rows)

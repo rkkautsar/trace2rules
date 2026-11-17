@@ -258,6 +258,7 @@ def _error_detail(observation: str) -> str:
             else:
                 detail = re.sub(r"'[^']*'", "'<id>'", detail)
                 detail = re.sub(r'"[^"]*"', '"<id>"', detail)
+            detail = re.sub(r"/(?:workspace|testbed|repo|app)/[^\s)]+", "<workspace>", detail)
             detail = re.sub(r"\b\d+\b", "<n>", detail)
             return detail[:240]
     return ""

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import duckdb
 
 _DOC_TARGET_RE = re.compile(
-    r"(?i)(^|/)(readme|docs?|changelog|contributing|license)(\.|/|$)"
+    r"(?i)(^|/)(readme|docs?|changelog|contributing|license)([.]|/|$)"
 )
 
 
@@ -191,6 +191,10 @@ def hotspots(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[F
               AND target NOT LIKE '%;'
               AND target NOT LIKE 'skill:%'
               AND target NOT LIKE 'xd:%'
+              AND NOT regexp_matches(
+                  target,
+                  '(?i)(^|/)(readme|docs?|changelog|contributing|license)([.]|/|$)'
+              )
             GROUP BY repo, target, session_id
         ),
         agg AS (
@@ -222,7 +226,6 @@ def hotspots(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[F
             edit_sessions=sessions - read_only,
         )
         for repo, target, sessions, read_only, repo_sessions, wasted in con.execute(query).fetchall()
-        if not _DOC_TARGET_RE.search(target)
     ]
 
 
@@ -304,6 +307,10 @@ def context_blasts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
           AND target NOT LIKE '%;'
           AND target NOT LIKE 'skill:%'
           AND target NOT LIKE 'xd:%'
+          AND NOT regexp_matches(
+              target,
+              '(?i)(^|/)(readme|docs?|changelog|contributing|license)([.]|/|$)'
+          )
         GROUP BY 1, 2, 3, 4
         HAVING avg(approx_out_tokens) >= 1500 AND count(DISTINCT session_id) >= 2
            AND count(*) >= 2
@@ -359,21 +366,24 @@ def global_patterns(
     con: duckdb.DuckDBPyConnection, limit: int | None = None
 ) -> list[Finding]:
     query = """
-        SELECT coalesce(nullif(e.error_detail, ''), nullif(e.obs_cause, ''), e.error_signature) AS family,
+        SELECT e.error_signature AS family,
                count(DISTINCT s.repo) AS repos,
                count(DISTINCT s.instance_id) AS instances,
                count(DISTINCT e.session_id) AS sessions,
                sum(e.approx_out_tokens) AS tokens,
-               string_agg(DISTINCT s.repo, ', ') AS repo_names
+               string_agg(DISTINCT s.repo, ', ') AS repo_names,
+               e.verb AS command_family,
+               arg_min(coalesce(nullif(e.error_detail, ''), e.obs_cause, e.error_signature), e.step_idx) AS example
         FROM tool_events e
         JOIN sessions s USING (session_id)
         WHERE e.is_error AND e.action_type = 'exec'
           AND s.repo NOT IN ('', 'unknown')
-          AND coalesce(nullif(e.error_detail, ''), nullif(e.obs_cause, ''), e.error_signature) <> ''
-        GROUP BY 1
+          AND e.error_signature NOT LIKE 'exit:%'
+          AND e.error_signature NOT IN ('text_error', 'timeout', 'err:unknown')
+        GROUP BY 1, 1 + 0, e.verb
         HAVING count(DISTINCT s.repo) >= 2
            AND count(DISTINCT s.instance_id) >= 3
-           AND count(DISTINCT session_id) >= 4
+           AND count(DISTINCT e.session_id) >= 4
         ORDER BY repos DESC, instances DESC, tokens DESC
     """
     if limit is not None:
@@ -382,15 +392,16 @@ def global_patterns(
         Finding(
             kind="global_failure",
             repo="*",
-            title=family,
+            title=f"{command_family}:{family}",
             sessions=sessions,
             tokens=int(tokens or 0),
             detail=f"{instances} instances across {repos} repos",
+            cause=(example or "")[:240],
             side="agent",
             failure_family=family,
             variants=tuple((repo_names or "").split(", ")),
         )
-        for family, repos, instances, sessions, tokens, repo_names in con.execute(query).fetchall()
+        for family, repos, instances, sessions, tokens, repo_names, command_family, example in con.execute(query).fetchall()
     ]
 
 

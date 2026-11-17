@@ -385,8 +385,11 @@ def _report_command(
         str | None,
         typer.Option("--repo", help="Limit findings to one repository label."),
     ] = None,
+    prompt: Annotated[bool, typer.Option("--prompt", help="Emit the evidence prompt for an external agent.")] = False,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
+    if prompt and not repo:
+        raise typer.BadParameter("--prompt requires --repo.")
     con = connect(db)
     try:
         session_count, instance_count = con.execute(
@@ -401,7 +404,7 @@ def _report_command(
         ).fetchall()
 
         from .cluster import exact_sequences, mine as mine_friction
-        from .synthesize import EXACT_LENGTHS
+        from .synthesize import EXACT_LENGTHS, _prompt, annotate_findings, label_summary, select_findings
 
         mined = mine_friction(con, top=top)
         findings = [
@@ -426,6 +429,20 @@ def _report_command(
             findings = [finding for finding in findings if finding.repo == repo]
             repo_rows = [row for row in repo_rows if row[0] == repo]
             exact = [finding for finding in exact if finding.repo == repo]
+        if prompt:
+            assert repo is not None
+            selected_findings = annotate_findings(
+                con, select_findings(exact, mined, repo)
+            )
+            sys.stdout.write(
+                _prompt(
+                    selected_findings,
+                    repo,
+                    label_summary(con, repo),
+                    max_rules=5,
+                )
+            )
+            return
         patterns = [
             pattern
             for pattern in mine_sequences(con, top=top)

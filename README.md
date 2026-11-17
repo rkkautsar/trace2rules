@@ -198,9 +198,10 @@ The built-in synthesizer is optional. An agent can consume the evidence directly
 ```bash
 trace2rules ingest
 trace2rules report > /tmp/trace2rules-report.json
+trace2rules report --repo owner/name --prompt > /tmp/trace2rules-prompt.txt
 ```
 
-`report` emits JSON with repo/session/instance counts, findings, labels, exact sequences, and label-driven patterns. Each finding carries `sessions`, `tokens`, `evidence`, and detector-specific fields such as `lift`, `rework`, `setup_tax`, `cost`, and `paired_instances`.
+`report` emits JSON with repo/session/instance counts, findings, labels, exact sequences, and label-driven patterns. For the main agent workflow, `report --repo owner/name --prompt` emits the filtered evidence prompt directly; feed that prompt to a fresh agent and let it write the rules. The prompt includes findings, support, windows, and source references, and excludes orientation/hotspot noise. Each finding carries `sessions`, `tokens`, `evidence`, and detector-specific fields such as `lift`, `rework`, `setup_tax`, `cost`, and `paired_instances`.
 
 The calling agent can then write `AGENTS.md` rules from that evidence without invoking `trace2rules synthesize` or configuring an LLM key.
 

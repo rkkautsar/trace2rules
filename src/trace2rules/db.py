@@ -39,7 +39,11 @@ CREATE TABLE IF NOT EXISTS tool_events (
     obs_excerpt       VARCHAR NOT NULL,
     obs_cause         VARCHAR DEFAULT '',
     error_detail      VARCHAR DEFAULT '',
-    error_site        VARCHAR DEFAULT ''
+    error_site        VARCHAR DEFAULT '',
+    error_message     VARCHAR DEFAULT '',
+    error_family      VARCHAR DEFAULT '',
+    error_origin      VARCHAR DEFAULT '',
+    event_hash        VARCHAR DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS target_labels (
@@ -84,6 +88,10 @@ def connect(path: str | Path = DB_PATH) -> duckdb.DuckDBPyConnection:
         "ALTER TABLE tool_events ADD COLUMN obs_cause VARCHAR DEFAULT ''",
         "ALTER TABLE tool_events ADD COLUMN error_detail VARCHAR DEFAULT ''",
         "ALTER TABLE tool_events ADD COLUMN error_site VARCHAR DEFAULT ''",
+        "ALTER TABLE tool_events ADD COLUMN error_message VARCHAR DEFAULT ''",
+        "ALTER TABLE tool_events ADD COLUMN error_family VARCHAR DEFAULT ''",
+        "ALTER TABLE tool_events ADD COLUMN error_origin VARCHAR DEFAULT ''",
+        "ALTER TABLE tool_events ADD COLUMN event_hash VARCHAR DEFAULT ''",
     ):
         try:
             con.execute(ddl)

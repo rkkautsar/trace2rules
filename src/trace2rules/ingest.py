@@ -276,6 +276,23 @@ def _error_detail(observation: str) -> str:
     return ""
 
 
+def _error_origin(observation: str) -> str:
+    lowered = observation.lower()
+    if "modulenotfounderror" in lowered or "importerror" in lowered:
+        return "env"
+    if "assertionerror" in lowered or "failed" in lowered:
+        return "repo"
+    if "permission denied" in lowered or "no such file" in lowered:
+        return "env"
+    return "unknown"
+
+
+def _event_hash(raw_target: str, observation: str) -> str:
+    return hashlib.sha1(
+        f"{raw_target}\x1f{observation}".encode("utf-8", "replace")
+    ).hexdigest()[:16]
+
+
 def _error_site(observation: str) -> str:
     if not observation:
         return ""
@@ -497,6 +514,11 @@ def _parse_row(row: tuple) -> tuple[dict, list[dict]]:
                     "obs_cause": _observation_cause(observation),
                     "error_detail": _error_detail(observation),
                     "error_site": _error_site(observation),
+                    "error_message": observation[:1200],
+                    "error_family": _error_detail(observation)
+                    or _error_signature(observation, exit_code, timeout, text_error, tool_error),
+                    "error_origin": _error_origin(observation),
+                    "event_hash": _event_hash(raw_target, observation),
                 }
             )
             step += 1
@@ -659,6 +681,10 @@ def _events_for_calls(calls: list[dict], cache: dict[tuple[str, str], tuple[str,
                 call["obs_cause"],
                 call["error_detail"],
                 call["error_site"],
+                call["error_message"],
+                call["error_family"],
+                call["error_origin"],
+                call["event_hash"],
             )
         )
     return events
@@ -722,7 +748,8 @@ def ingest(
                         "action_type", "verb", "object_id", "target", "raw_target",
                         "outcome", "exit_code", "error_signature", "is_error",
                         "approx_out_tokens", "obs_excerpt", "obs_cause",
-                        "error_detail", "error_site",
+                        "error_detail", "error_site", "error_message",
+                        "error_family", "error_origin", "event_hash",
                     ],
                 )
             session_count = con.execute("SELECT count(*) FROM new_sessions").fetchone()[0]
@@ -845,6 +872,10 @@ def write_sessions(
                         _observation_cause(observation),
                         _error_detail(observation),
                         _error_site(observation),
+                        observation[:1200],
+                        _error_detail(observation) or error_signature,
+                        _error_origin(observation),
+                        _event_hash(call.raw_target, observation),
                     )
                 )
 
@@ -856,8 +887,9 @@ def write_sessions(
                     tool_name, action_type,
                     verb, object_id, target, raw_target, outcome, exit_code,
                     error_signature, is_error, approx_out_tokens, obs_excerpt,
-                    obs_cause, error_detail, error_site
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    obs_cause, error_detail, error_site, error_message,
+                    error_family, error_origin, event_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 events,
             )

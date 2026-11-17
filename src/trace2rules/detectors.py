@@ -147,7 +147,7 @@ def _representative_window(
 ) -> tuple[dict, ...]:
     if not session_id:
         return ()
-    end = max(failure_step, recovery_step or failure_step + 2)
+    end = max(failure_step, recovery_step or failure_step + 3)
     segment = con.execute(
         "SELECT segment_idx FROM tool_events WHERE session_id = ? AND step_idx = ?",
         [session_id, failure_step],
@@ -158,14 +158,15 @@ def _representative_window(
         SELECT e.step_idx, e.action_type, e.verb, e.object_id, e.outcome, e.exit_code,
                e.approx_out_tokens, coalesce(nullif(e.obs_cause, ''), e.obs_excerpt),
                e.segment_idx, s.source_ref,
-               CASE WHEN e.outcome = 'err' THEN e.error_message ELSE '' END
+               CASE WHEN e.outcome = 'err' THEN e.error_message ELSE '' END,
+               e.raw_target, e.target
         FROM tool_events e
         JOIN sessions s USING (session_id)
         WHERE e.session_id = ? AND e.step_idx BETWEEN ? AND ? AND e.segment_idx = ?
         ORDER BY step_idx
-        LIMIT 10
+        LIMIT 12
         """,
-        [session_id, max(0, failure_step - 3), end, segment_idx],
+        [session_id, max(0, failure_step - 5), end, segment_idx],
     ).fetchall()
     return tuple(
         {
@@ -175,6 +176,8 @@ def _representative_window(
             "action": action,
             "verb": verb,
             "object": object_id,
+            "target": target,
+            "command": (raw_target or "")[:300],
             "outcome": outcome,
             "exit_code": exit_code,
             "tokens": int(tokens or 0),
@@ -182,7 +185,7 @@ def _representative_window(
             "excerpt": (excerpt or "")[:300],
             "error_message": (error_message or "")[:600],
         }
-        for step, action, verb, object_id, outcome, exit_code, tokens, excerpt, _segment, session_ref, error_message in rows
+        for step, action, verb, object_id, outcome, exit_code, tokens, excerpt, _segment, session_ref, error_message, raw_target, target in rows
     )
 
 

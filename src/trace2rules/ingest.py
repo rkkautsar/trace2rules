@@ -18,6 +18,12 @@ from .db import DB_PATH, connect
 from .models import Session, ToolCall
 
 SOURCE = "hf://datasets/nebius/SWE-rebench-openhands-trajectories/trajectories.parquet"
+_OPEN_SWE_BASE = (
+    "https://huggingface.co/datasets/nvidia/Open-SWE-Traces/resolve/main/"
+    "data/openhands/qwen38_flash_next/swe-rebench-v2/"
+)
+OPEN_SWE_SOURCE = _OPEN_SWE_BASE + "train-*.parquet"
+OPEN_SWE_FILES = [_OPEN_SWE_BASE + f"train-0000{i}-of-00006.parquet" for i in range(6)]
 DEFAULT_REPOS = ["django__django", "pytest-dev__pytest"]
 
 EXIT_RE = re.compile(
@@ -503,7 +509,9 @@ def _parse_row(row: tuple) -> tuple[dict, list[dict]]:
     trajectory_id, instance_id, repo, resolved, trajectory = row
     messages = list(trajectory or [])
     obs_by_id = {
-        m["tool_call_id"]: (m["content"] or "") for m in messages if m["role"] == "tool"
+        m["tool_call_id"]: (m["content"] or "")
+        for m in messages
+        if m["role"] == "tool" and m.get("tool_call_id")
     }
     calls: list[dict] = []
     step = 0
@@ -634,6 +642,7 @@ def _stream_rows(
     limit: int,
     progress: Progress | None = None,
     refresh: bool = False,
+    source_format: str = "swe-rebench",
 ):
     reader = duckdb.connect(
         config={
@@ -643,14 +652,38 @@ def _stream_rows(
         }
     )
     try:
-        local_source = _cached_source(source, progress, refresh=refresh)
+        local_source = (
+            OPEN_SWE_FILES
+            if source_format == "open-swe" and source == OPEN_SWE_SOURCE
+            else source
+            if source_format == "open-swe"
+            else _cached_source(source, progress, refresh=refresh)
+        )
+        if source.startswith(("http://", "https://")) and source_format == "open-swe":
+            try:
+                reader.execute("SET allow_asterisks_in_http_paths = true")
+            except duckdb.Error:
+                pass
+            try:
+                reader.execute("LOAD httpfs")
+            except duckdb.Error:
+                reader.execute("INSTALL httpfs")
+                reader.execute("LOAD httpfs")
         limit_sql = f"LIMIT {int(limit)}" if limit else ""
-        query = f"""
-            SELECT trajectory_id, instance_id, repo, resolved, trajectory
-            FROM read_parquet(?)
-            WHERE starts_with(instance_id, ?)
-            {limit_sql}
-        """
+        if source_format == "open-swe":
+            query = f"""
+                SELECT trajectory_id, instance_id, repo, resolved, messages AS trajectory
+                FROM read_parquet(?)
+                WHERE repo = ?
+                {limit_sql}
+            """
+        else:
+            query = f"""
+                SELECT trajectory_id, instance_id, repo, resolved, trajectory
+                FROM read_parquet(?)
+                WHERE starts_with(instance_id, ?)
+                {limit_sql}
+            """
         cursor = reader.execute(query, [local_source, prefix])
         while True:
             batch = cursor.fetchmany(16)
@@ -720,6 +753,7 @@ def ingest(
     source: str = SOURCE,
     progress: Progress | None = None,
     refresh_cache: bool = False,
+    source_format: str = "swe-rebench",
 ) -> list[IngestStats]:
     repos = repos or DEFAULT_REPOS
     con = connect(db_path)
@@ -738,7 +772,12 @@ def ingest(
                 else None
             )
             for row in _stream_rows(
-                source, prefix, limit, progress=progress, refresh=refresh_cache
+                source,
+                prefix,
+                limit,
+                progress=progress,
+                refresh=refresh_cache,
+                source_format=source_format,
             ):
                 matched += 1
                 if progress and task_id is not None and matched % 25 == 0:

@@ -43,7 +43,7 @@ def _ingest_command(
         typer.Option(
             "--format",
             "-f",
-            help="agent-trajectory (default), swe-rebench, or swe-chat.",
+            help="agent-trajectory (default), swe-rebench, open-swe, or swe-chat.",
         ),
     ] = "agent-trajectory",
     limit: Annotated[int, typer.Option(help="Max sessions (per source where applicable).")] = 200,
@@ -78,11 +78,13 @@ def _ingest_command(
     fmt = format.strip().lower()
     sources = source or []
     failed_sources: list[tuple[str, Exception]] = []
-    if repos and fmt != "swe-rebench":
-        raise typer.BadParameter("--repos is only valid with --format swe-rebench.")
-    if fmt == "swe-rebench":
+    if repos and fmt not in {"swe-rebench", "open-swe"}:
+        raise typer.BadParameter("--repos is only valid with --format swe-rebench or open-swe.")
+    if fmt in {"swe-rebench", "open-swe"}:
         prefixes = repos or DEFAULT_REPOS
-        selected_sources = sources or [SOURCE]
+        from .ingest import OPEN_SWE_SOURCE
+
+        selected_sources = sources or ([OPEN_SWE_SOURCE] if fmt == "open-swe" else [SOURCE])
         stats = []
         progress = Progress(
             SpinnerColumn(),
@@ -106,6 +108,7 @@ def _ingest_command(
                             source=selected_source,
                             progress=progress,
                             refresh_cache=refresh_cache,
+                            source_format=fmt,
                         )
                     )
                 except (duckdb.Error, OSError, RuntimeError) as error:
@@ -158,11 +161,11 @@ def _ingest_command(
                     failed_sources.append((selected_source, error))
     else:
         raise typer.BadParameter(
-            "Unknown format. Use swe-rebench, swe-chat, or agent-trajectory."
+            "Unknown format. Use swe-rebench, open-swe, swe-chat, or agent-trajectory."
         )
 
-    if repos and fmt != "swe-rebench":
-        raise typer.BadParameter("--repos is only valid with --format swe-rebench.")
+    if repos and fmt not in {"swe-rebench", "open-swe"}:
+        raise typer.BadParameter("--repos is only valid with --format swe-rebench or open-swe.")
 
     table = Table(title="Ingest summary", header_style="bold")
     table.add_column("Requested source")

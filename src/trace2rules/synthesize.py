@@ -611,6 +611,7 @@ def synthesize(
     offline: bool = False,
     max_rules: int = MAX_RULES,
     console: Console | None = None,
+    emit: bool = True,
 ) -> list[Synthesis]:
     from .cluster import exact_sequences, mine
 
@@ -679,9 +680,10 @@ def synthesize(
         if not synthesis.rules:
             console.print(f"[yellow]No rules for {escape(repo_name)}; skipped.[/yellow]")
             continue
-        sys.stdout.write(text)
-        if not text.endswith("\n"):
-            sys.stdout.write("\n")
+        if emit:
+            sys.stdout.write(text)
+            if not text.endswith("\n"):
+                sys.stdout.write("\n")
         results.append(synthesis)
 
     return results

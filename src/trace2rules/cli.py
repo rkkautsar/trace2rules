@@ -755,6 +755,50 @@ def _synthesize_command(
         con.close()
 
 
+def _eval_command(
+    repo: Annotated[str | None, typer.Option("--repo", help="Evaluate one repo.")] = None,
+    max_rules: Annotated[int, typer.Option("--max-rules", min=1, max=20)] = 5,
+    offline: Annotated[bool, typer.Option("--offline/--llm", help="Use deterministic rules.")] = True,
+    json_output: Annotated[bool, typer.Option("--json", help="Emit JSON.")] = False,
+    db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
+) -> None:
+    from .evaluate import evaluate_synthesis
+    from .synthesize import synthesize as synthesize_rules
+
+    con = connect(db)
+    try:
+        results = synthesize_rules(
+            con,
+            repo=repo,
+            max_rules=max_rules,
+            offline=offline,
+            console=Console(stderr=True),
+            emit=False,
+        )
+    finally:
+        con.close()
+    metrics = [evaluate_synthesis(synthesis) for synthesis in results]
+    if json_output:
+        console.print_json(data={"metrics": metrics})
+        return
+    table = Table(title="Synthesis quality")
+    table.add_column("Repo")
+    table.add_column("Rules", justify="right")
+    table.add_column("Placeholders", justify="right")
+    table.add_column("Redundancy", justify="right")
+    table.add_column("Citations", justify="right")
+    for row in metrics:
+        table.add_row(
+            escape(str(row["repo"])),
+            str(row["rules"]),
+            f"{row['placeholder_rate']:.0%}",
+            f"{row['template_redundancy']:.0%}",
+            f"{row['citation_rate']:.0%}",
+        )
+    console.print(table)
+
+
+app.command("eval")(_eval_command)
 app.command("synthesize")(_synthesize_command)
 
 

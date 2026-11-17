@@ -10,8 +10,9 @@ from trace2rules.ingest import (
 
 
 def test_search_exit_one_is_empty_not_error() -> None:
-    assert _event_outcome("search", "", 1, False, False, False) == "empty"
-    assert _event_outcome("search", "", 2, False, False, False) == "err"
+    assert _event_outcome("search", "", 1, False, False, False, "grep") == "empty"
+    assert _event_outcome("search", "", 1, False, False, False, "find") == "err"
+    assert _event_outcome("search", "", 2, False, False, False, "grep") == "err"
 
 
 def test_control_targets_are_dropped() -> None:
@@ -67,4 +68,4 @@ def test_canonical_writer_persists_source_and_cause(tmp_path) -> None:
     assert row[0] == "/tmp/session.jsonl"
     assert "ValueError" in row[1]
     assert "ValueError" in row[2]
-    assert row[3].endswith("src/a.py:4")
+    assert row[3].endswith("a.py:4")

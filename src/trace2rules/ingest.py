@@ -45,6 +45,7 @@ EXPORT_PREFIX_RE = re.compile(r"^export\s+[^&;]+\s*(?:&&|;)\s*")
 EDIT_VERBS = {"apply_patch", "patch"}
 READ_VERBS = {"cat", "head", "tail", "less", "more", "wc", "nl", "ls", "tree", "stat", "file", "du", "sed", "awk"}
 SEARCH_VERBS = {"grep", "rg", "ag", "ack", "fd", "find"}
+GREP_VERBS = {"grep", "rg", "ag", "ack", "git grep"}
 EDITOR_READ_COMMANDS = {"view", "show"}
 FLAG_WITH_VALUE = {"-e", "-A", "-B", "-C", "-m", "-g", "-t", "--include", "--exclude", "--glob", "--type", "-name", "-path", "-type"}
 
@@ -272,6 +273,7 @@ def _error_site(observation: str) -> str:
     if match:
         path = match.group(1) or match.group(3)
         line = match.group(2) or match.group(4)
+        path = normalize_path(path, "")
         return f"{path}:{line}"[:200]
     return ""
 
@@ -320,8 +322,9 @@ def _event_outcome(
     text_error: bool,
     timeout: bool,
     tool_error: bool,
+    verb: str = "",
 ) -> str:
-    if action == "search" and exit_code == 1:
+    if action == "search" and exit_code == 1 and verb in GREP_VERBS:
         return "empty"
     if exit_code is not None:
         return "ok" if exit_code == 0 else "err"
@@ -617,6 +620,7 @@ def _events_for_calls(calls: list[dict], cache: dict[tuple[str, str], tuple[str,
             call["text_error"],
             call["timeout"],
             call["tool_error"],
+            call.get("verb", ""),
         )
         error_signature = call["error_signature"]
         if outcome == "err" and not error_signature:
@@ -798,7 +802,7 @@ def write_sessions(
                     observation, exit_code, timeout, text_error, tool_error
                 )
                 outcome = _event_outcome(
-                    action, observation, exit_code, text_error, timeout, tool_error
+                    action, observation, exit_code, text_error, timeout, tool_error, verb
                 )
                 if call.is_error is True:
                     outcome = "err"

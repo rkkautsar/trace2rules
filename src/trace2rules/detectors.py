@@ -141,20 +141,29 @@ def _representative_window(
     if not session_id:
         return ()
     end = max(failure_step, recovery_step or failure_step + 2)
+    segment = con.execute(
+        "SELECT segment_idx FROM tool_events WHERE session_id = ? AND step_idx = ?",
+        [session_id, failure_step],
+    ).fetchone()
+    segment_idx = segment[0] if segment else 0
     rows = con.execute(
         """
-        SELECT step_idx, action_type, verb, object_id, outcome, exit_code,
-               approx_out_tokens, coalesce(nullif(obs_cause, ''), obs_excerpt)
-        FROM tool_events
-        WHERE session_id = ? AND step_idx BETWEEN ? AND ?
+        SELECT e.step_idx, e.action_type, e.verb, e.object_id, e.outcome, e.exit_code,
+               e.approx_out_tokens, coalesce(nullif(e.obs_cause, ''), e.obs_excerpt),
+               e.segment_idx, s.source_ref
+        FROM tool_events e
+        JOIN sessions s USING (session_id)
+        WHERE e.session_id = ? AND e.step_idx BETWEEN ? AND ? AND e.segment_idx = ?
         ORDER BY step_idx
         LIMIT 10
         """,
-        [session_id, max(0, failure_step - 3), end],
+        [session_id, max(0, failure_step - 3), end, segment_idx],
     ).fetchall()
     return tuple(
         {
             "step": int(step),
+            "session_id": session_id,
+            "session_ref": session_ref,
             "action": action,
             "verb": verb,
             "object": object_id,
@@ -164,7 +173,7 @@ def _representative_window(
             "recovered": recovery_step is not None and int(step) == int(recovery_step),
             "excerpt": (excerpt or "")[:300],
         }
-        for step, action, verb, object_id, outcome, exit_code, tokens, excerpt in rows
+        for step, action, verb, object_id, outcome, exit_code, tokens, excerpt, _segment, session_ref in rows
     )
 
 
@@ -230,7 +239,7 @@ def recovery_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
                arg_min(b.step_idx, b.step_idx - a.step_idx) AS example_recovery_step,
                regexp_replace(
                    coalesce(nullif(a.error_detail, ''), nullif(a.obs_cause, ''), a.error_signature),
-                   '/workspace/[^ ]+', '<workspace>', 'g'
+                   '(?:/workspace|/testbed|/repo|/app)/[^ ]+', '<workspace>', 'g'
                ) AS failure_family
         FROM tool_events a
         JOIN tool_events b
@@ -240,6 +249,7 @@ def recovery_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
         WHERE a.is_error AND NOT b.is_error
           AND a.action_type = 'exec' AND b.action_type = 'exec'
           AND a.target <> '' AND b.target <> ''
+          AND a.segment_idx = b.segment_idx
           AND coalesce(b.exit_code, 0) = 0
           AND NOT regexp_matches(
               coalesce(b.obs_cause, '') || coalesce(b.obs_excerpt, ''),

@@ -370,6 +370,8 @@ def _is_doc_target(title: str) -> bool:
 def _source_refs(finding: Finding) -> list[str]:
     refs: list[str] = []
     for event in finding.window:
+        if event.get("outcome") not in ("err", "timeout") and not event.get("recovered"):
+            continue
         ref = event.get("session_ref")
         if ref and ref not in refs:
             refs.append(f"{ref} (step {event.get('step')})")
@@ -390,7 +392,7 @@ def _offline_synthesis(
         sources: list[str] | None = None,
     ) -> None:
         key = (category, subject)
-        if key in seen or len(rules) >= max_rules:
+        if key in seen:
             return
         seen.add(key)
         rules.append(
@@ -512,7 +514,7 @@ def _offline_synthesis(
                 finding.tokens // max(finding.sessions, 1),
             )
 
-    return Synthesis(repo=repo, rules=rules[:max_rules])
+    return Synthesis(repo=repo, rules=rules)
 
 
 PLACEHOLDER_RE = re.compile(r"<(?:id|n|path|workspace)>|\{\{")

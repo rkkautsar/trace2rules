@@ -150,7 +150,8 @@ def _representative_window(
         """
         SELECT e.step_idx, e.action_type, e.verb, e.object_id, e.outcome, e.exit_code,
                e.approx_out_tokens, coalesce(nullif(e.obs_cause, ''), e.obs_excerpt),
-               e.segment_idx, s.source_ref, e.error_message
+               e.segment_idx, s.source_ref,
+               CASE WHEN e.outcome = 'err' THEN e.error_message ELSE '' END
         FROM tool_events e
         JOIN sessions s USING (session_id)
         WHERE e.session_id = ? AND e.step_idx BETWEEN ? AND ? AND e.segment_idx = ?

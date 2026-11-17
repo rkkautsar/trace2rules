@@ -248,6 +248,8 @@ def _error_detail(observation: str) -> str:
     if not observation:
         return ""
     for line in observation.splitlines():
+        if line.lstrip().startswith(("raise ", "raise(", "raise\t")):
+            continue
         if re.search(r"(?:^|\b)(?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception))(?::|\b)", line):
             detail = line.strip()
             attribute = re.search(

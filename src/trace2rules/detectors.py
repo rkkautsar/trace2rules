@@ -294,6 +294,18 @@ def recovery_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
     ]
 
 
+def _repo_window(
+    con: duckdb.DuckDBPyConnection, repo: str, where: str, params: tuple = ()
+) -> tuple[dict, ...]:
+    row = con.execute(
+        f"""SELECT session_id, step_idx FROM tool_events
+            WHERE repo = ? AND {where}
+            ORDER BY approx_out_tokens DESC LIMIT 1""",
+        [repo, *params],
+    ).fetchone()
+    return _representative_window(con, row[0], row[1]) if row else ()
+
+
 def selector_misses(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     query = """
         SELECT repo, count(*) AS events, count(DISTINCT session_id) AS sessions,
@@ -317,6 +329,11 @@ def selector_misses(con: duckdb.DuckDBPyConnection, limit: int | None = None) ->
             detail=f"{events} selector misses in {sessions} sessions",
             side="agent",
             recommendation="When `-k` reports 0 selected/deselected, run `pytest --collect-only -q <path>` and use the printed node ID; `-k` matches test node names, not files.",
+            window=_repo_window(
+                con,
+                repo,
+                "is_error AND action_type = 'exec' AND regexp_matches(coalesce(error_message, '') || ' ' || coalesce(obs_cause, ''), '(?i)deselected|no tests ran|collected 0 items')",
+            ),
         )
         for repo, events, sessions, tokens, exemplar in con.execute(query).fetchall()
     ]
@@ -355,6 +372,11 @@ def workaround_scripts(con: duckdb.DuckDBPyConnection, limit: int | None = None)
             detail=f"{edits} edits, {runs} runs, {failures} failures",
             side="agent",
             recommendation="Write at most one scratch reproducer, run it once, then delete it; use the repository's narrowest existing test selector.",
+            window=_repo_window(
+                con,
+                repo,
+                "action_type = 'exec' AND regexp_matches(object_id, '(?i)^(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)')",
+            ),
         )
         for repo, sessions, edits, runs, tokens, failures in con.execute(query).fetchall()
     ]
@@ -382,6 +404,7 @@ def stuck_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> lis
             detail=f"{edits} edits across {sessions} sessions; recurring family {family or 'unknown'}",
             side="agent",
             recommendation="After two edits leave the same failure family unchanged, stop editing and read the traceback site or failing test before another patch.",
+            window=_repo_window(con, repo, "action_type = 'edit' AND object_id = ?", (object_id,)),
         )
         for repo, object_id, edits, sessions, tokens, family in con.execute(query).fetchall()
     ]
@@ -414,6 +437,7 @@ def noop_retries(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> li
             detail=f"{occurrences} unchanged retries",
             side="agent",
             recommendation="A failing command repeated unchanged will fail again; change the selector/input or inspect state before rerunning.",
+            window=_repo_window(con, repo, "is_error AND raw_target = ?", (exemplar or "",)),
         )
         for repo, occurrences, sessions, exemplar in con.execute(query).fetchall()
     ]
@@ -451,6 +475,7 @@ def premature_completion(con: duckdb.DuckDBPyConnection, limit: int | None = Non
             detail=f"{resolved} resolved of {sessions}; no successful exec after last edit",
             side="agent",
             recommendation="After the final edit, run the narrowest relevant test or lint command and confirm it passes before finishing.",
+            window=_repo_window(con, repo, "action_type = 'edit'"),
         )
         for repo, sessions, resolved, edit_steps in con.execute(query).fetchall()
     ]
@@ -486,6 +511,7 @@ def low_validation(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
             detail=f"{resolved} resolved of {sessions}; no test/lint exec after first edit",
             side="agent",
             recommendation="After changing code, run the narrowest test/lint command that exercises the change.",
+            window=_repo_window(con, repo, "action_type = 'edit'"),
         )
         for repo, sessions, resolved in con.execute(query).fetchall()
     ]

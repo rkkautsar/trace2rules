@@ -410,8 +410,9 @@ def _is_doc_target(title: str) -> bool:
 def _source_refs(finding: Finding) -> list[str]:
     refs: list[str] = []
     for event in finding.window:
+        behavior = finding.kind not in {"recovery", "context"}
         if (
-            finding.kind != "context"
+            not behavior
             and event.get("outcome") not in ("err", "timeout")
             and not event.get("recovered")
         ):
@@ -540,6 +541,7 @@ def _offline_synthesis(
                 markdown,
                 f"Read-only in {finding.sessions} sessions; {finding.tokens:,} tokens spent.",
                 finding.tokens // max(finding.sessions, 1),
+                sources=_source_refs(finding),
             )
 
         elif finding.kind in {
@@ -557,6 +559,7 @@ def _offline_synthesis(
                 finding.recommendation,
                 finding.detail,
                 finding.tokens // max(finding.sessions, 1),
+                sources=_source_refs(finding),
             )
 
         elif finding.kind == "context":

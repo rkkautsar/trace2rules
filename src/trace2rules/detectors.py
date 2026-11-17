@@ -565,7 +565,7 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
     """Evidence blocks that are too specific to be generic findings."""
     pairs = con.execute(
         """
-        SELECT a.session_id, a.raw_target, b.raw_target, s.source_ref
+        SELECT a.session_id, a.step_idx, b.step_idx, a.raw_target, b.raw_target, s.source_ref
         FROM tool_events a
         JOIN sessions s ON s.session_id = a.session_id
         JOIN tool_events b
@@ -587,7 +587,25 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
     ).fetchall()
     env_re = r'''(?:^|&&|;|\|\|)\s*([A-Z][A-Z0-9_]*=(?:"[^"]*"|'[^']*'|\S+))'''
     bootstrap_map: dict[tuple[str, ...], dict] = {}
-    for session_id, failed, succeeded, source_ref in pairs:
+    nearest: dict[tuple[str, str], tuple[int, int, str, str]] = {}
+    for session_id, failed_step, succeeded_step, failed, succeeded, source_ref in pairs:
+        key = (session_id, succeeded)
+        previous = nearest.get(key)
+        priority = 1 if re.search(r"(?i)(test|build|check|run|compile)", failed) else 0
+        previous_priority = (
+            1 if previous and re.search(r"(?i)(test|build|check|run|compile)", previous[2]) else 0
+        )
+        if (
+            previous is None
+            or (priority, int(failed_step)) > (previous_priority, previous[0])
+        ):
+            nearest[key] = (
+                int(failed_step),
+                int(succeeded_step),
+                failed,
+                source_ref,
+            )
+    for (session_id, succeeded), (failed_step, succeeded_step, failed, source_ref) in nearest.items():
         failed_env = set(re.findall(env_re, failed))
         succeeded_env = set(re.findall(env_re, succeeded))
         delta = tuple(sorted(succeeded_env - failed_env))
@@ -604,7 +622,7 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
             },
         )
         item["sessions"].add(session_id)
-        item["steps"].append(1)
+        item["steps"].append(max(1, succeeded_step - failed_step))
     bootstrap = [
         (list(delta), item["failed"], item["succeeded"], len(item["sessions"]), item["source"], sum(item["steps"]) / len(item["steps"]))
         for delta, item in sorted(
@@ -662,7 +680,13 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
             for delta, failed, succeeded, sessions, source_ref, steps in bootstrap
         ],
         "validation": [
-            {"command": command, "calls": calls, "sessions": sessions, "tokens": tokens, "source": source}
+            {
+                "command": command.splitlines()[0][:300],
+                "calls": calls,
+                "sessions": sessions,
+                "tokens": tokens,
+                "source": source,
+            }
             for command, calls, sessions, tokens, source in validation
         ],
         "reads": [

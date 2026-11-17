@@ -31,7 +31,10 @@ EXIT_RE = re.compile(
     re.IGNORECASE,
 )
 EXIT_FALLBACK_RE = re.compile(r"(?:Exit code|exit code):\s*(-?\d+)")
-TEXT_ERROR_RE = re.compile(r"Traceback|Error:|ModuleNotFoundError|No such file or directory")
+TEXT_ERROR_RE = re.compile(
+    r"(?i)(Traceback|Error:|ModuleNotFoundError|No such file or directory|"
+    r"\b(fatal|failed to download|could not compile|can't find crate|error:)\b)"
+)
 TOOL_ERROR_RE = re.compile(
     r"Invalid\s+`?path`?|File not found|No such file or directory|does not exist|Permission denied",
     re.IGNORECASE,
@@ -47,7 +50,9 @@ SITE_FILE_RE = re.compile(
 SITE_TEST_RE = re.compile(r"FAILED\s+([^\s]+::\S+)")
 CONTROL_TARGETS = {"C-c", "C-C", "^C", "ctrl-c", "\x03"}
 
-ENV_PREFIX_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=\S*\s+")
+ENV_PREFIX_RE = re.compile(
+    r"""^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s+"""
+)
 CD_PREFIX_RE = re.compile(r"^cd\s+[^&;]+\s*(?:&&|;)\s*")
 EXPORT_PREFIX_RE = re.compile(r"^export\s+[^&;]+\s*(?:&&|;)\s*")
 EDIT_VERBS = {"apply_patch", "patch"}

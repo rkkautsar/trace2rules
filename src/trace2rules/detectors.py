@@ -269,6 +269,7 @@ def recovery_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
           )
           AND (
               (a.object_id <> '' AND a.object_id = b.object_id)
+              OR (a.object_id = '' AND b.object_id = '' AND a.verb = b.verb)
               OR EXISTS (
                   SELECT 1 FROM tool_events e
                   WHERE e.session_id = a.session_id
@@ -391,10 +392,10 @@ def workaround_scripts(con: duckdb.DuckDBPyConnection, limit: int | None = None)
 
 def stuck_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     query = """
-        SELECT repo, object_id, count(*) AS edits, count(DISTINCT session_id) AS sessions,
+        SELECT repo, target, count(*) AS edits, count(DISTINCT session_id) AS sessions,
                sum(approx_out_tokens) AS tokens, any_value(error_family) AS family
         FROM tool_events
-        WHERE action_type = 'edit' AND object_id <> ''
+        WHERE action_type = 'edit' AND target <> '' AND target NOT LIKE '<%'
         GROUP BY 1, 2
         HAVING count(*) >= 3 AND count(DISTINCT session_id) >= 2
         ORDER BY edits DESC
@@ -558,6 +559,117 @@ def site_edit_mismatch(con: duckdb.DuckDBPyConnection, limit: int | None = None)
         for repo, count in sorted(counts.items(), key=lambda item: item[1], reverse=True)
     ]
     return findings[:limit] if limit is not None else findings
+
+
+def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
+    """Evidence blocks that are too specific to be generic findings."""
+    pairs = con.execute(
+        """
+        SELECT a.session_id, a.raw_target, b.raw_target
+        FROM tool_events a JOIN tool_events b
+          ON b.session_id = a.session_id
+         AND b.step_idx > a.step_idx AND b.step_idx - a.step_idx <= 10
+         AND b.action_type = 'exec' AND NOT b.is_error
+        WHERE a.repo = ? AND a.action_type = 'exec' AND a.is_error
+          AND a.raw_target <> b.raw_target
+          AND regexp_matches(
+              b.raw_target,
+              '(?i)(cargo|go (test|build)|npm|pnpm|yarn|pytest|unittest|mvn|gradle|dotnet|make|tsc|eslint|ruff)'
+          )
+          AND regexp_matches(
+              coalesce(a.error_message, '') || ' ' || coalesce(a.obs_cause, ''),
+              '(?i)(failed to download|syncing channel|could not compile|command not found|no such file|not found)'
+          )
+        """,
+        [repo],
+    ).fetchall()
+    env_re = r'''(?:^|&&|;|\|\|)\s*([A-Z][A-Z0-9_]*=(?:"[^"]*"|'[^']*'|\S+))'''
+    bootstrap_map: dict[tuple[str, ...], dict] = {}
+    for session_id, failed, succeeded in pairs:
+        failed_env = set(re.findall(env_re, failed))
+        succeeded_env = set(re.findall(env_re, succeeded))
+        delta = tuple(sorted(succeeded_env - failed_env))
+        if not delta:
+            continue
+        item = bootstrap_map.setdefault(
+            delta,
+            {
+                "failed": failed,
+                "succeeded": succeeded,
+                "sessions": set(),
+                "steps": [],
+            },
+        )
+        item["sessions"].add(session_id)
+        item["steps"].append(1)
+    bootstrap = [
+        (list(delta), item["failed"], item["succeeded"], len(item["sessions"]), sum(item["steps"]) / len(item["steps"]))
+        for delta, item in sorted(
+            bootstrap_map.items(), key=lambda pair: len(pair[1]["sessions"]), reverse=True
+        )[:5]
+    ]
+    validation = con.execute(
+        """
+        WITH first_edit AS (
+            SELECT session_id, min(step_idx) AS step
+            FROM tool_events WHERE repo = ? AND action_type = 'edit' GROUP BY 1
+        )
+        SELECT e.raw_target, count(*) AS calls, count(DISTINCT e.session_id) AS sessions,
+               sum(e.approx_out_tokens) AS tokens
+        FROM tool_events e JOIN first_edit f USING (session_id)
+        WHERE e.repo = ? AND e.action_type = 'exec' AND e.outcome = 'ok'
+          AND e.step_idx > f.step
+          AND regexp_matches(e.raw_target, '(?i)(cargo test|go test|pytest|unittest|npm test|yarn test|pnpm test|mvn test|gradle test|dotnet test|rspec|phpunit|mix test|swift test)')
+        GROUP BY 1 ORDER BY sessions DESC, tokens DESC LIMIT 5
+        """,
+        [repo, repo],
+    ).fetchall()
+    reads = con.execute(
+        """
+        SELECT target, count(DISTINCT session_id) AS sessions, count(*) AS calls,
+               sum(approx_out_tokens) AS tokens
+        FROM tool_events
+        WHERE repo = ? AND action_type = 'read' AND target NOT LIKE '<%'
+        GROUP BY 1 HAVING count(*) >= 3
+        ORDER BY tokens DESC LIMIT 5
+        """,
+        [repo],
+    ).fetchall()
+    outcomes = con.execute(
+        """
+        SELECT count(*), count(*) FILTER (WHERE s.resolved),
+               count(DISTINCT e.session_id) FILTER (WHERE e.action_type = 'edit')
+        FROM sessions s LEFT JOIN tool_events e USING (session_id)
+        WHERE s.repo = ?
+        """,
+        [repo],
+    ).fetchone()
+    return {
+        "bootstrap": [
+            {
+                "delta": delta,
+                "failed": failed,
+                "succeeded": succeeded,
+                "sessions": sessions,
+                "mean_steps": round(float(steps or 0), 1),
+            }
+            for delta, failed, succeeded, sessions, steps in bootstrap
+        ],
+        "validation": [
+            {"command": command, "calls": calls, "sessions": sessions, "tokens": tokens}
+            for command, calls, sessions, tokens in validation
+        ],
+        "reads": [
+            {"target": target, "sessions": sessions, "calls": calls, "tokens": tokens}
+            for target, sessions, calls, tokens in reads
+        ],
+        "outcomes": {
+            "sessions": outcomes[0],
+            "resolved": outcomes[1],
+            "with_edit": outcomes[2],
+            "resolved_known": outcomes[1] > 0,
+        },
+    }
 
 
 def context_blasts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:

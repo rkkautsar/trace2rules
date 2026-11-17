@@ -314,6 +314,7 @@ def _prompt(
     repo: str,
     labels: list[dict],
     max_rules: int = MAX_RULES,
+    context: dict | None = None,
 ) -> str:
     payload = redact_value(
         [
@@ -347,6 +348,9 @@ Findings from mined agent trajectories for this repo only (JSON):
 
 Semantic target labels observed for this repo (clef/decision-model annotations, JSON):
 {json.dumps(redact_value(labels), indent=2)}
+
+Command/bootstrap evidence (JSON):
+{json.dumps(redact_value(context or {}), indent=2)}
 
 Write AGENTS.md rules for this repository. Requirements:
 - Emit 0-{max_rules} declarative rules. Do not fill the quota: fewer rules are better, and zero is valid when the evidence does not support a rule. Do not emit task-specific issue descriptions.

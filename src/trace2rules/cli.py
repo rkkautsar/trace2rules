@@ -409,7 +409,7 @@ def _report_command(
         from .cluster import exact_sequences, mine as mine_friction
         from .synthesize import EXACT_LENGTHS, _prompt, annotate_findings, label_summary, select_findings
 
-        mined = mine_friction(con, top=top)
+        mined = mine_friction(con, top=None if repo else top)
         findings = [
             finding
             for key in ("hotspots", "recovery", "context", "orientation", "selector_miss", "workaround", "stuck_loop", "noop_retry", "premature_completion", "low_validation", "site_edit_mismatch")
@@ -434,6 +434,8 @@ def _report_command(
             exact = [finding for finding in exact if finding.repo == repo]
         if prompt:
             assert repo is not None
+            from .detectors import prompt_context
+
             selected_findings = annotate_findings(
                 con, select_findings(exact, mined, repo)
             )
@@ -443,6 +445,7 @@ def _report_command(
                     repo,
                     label_summary(con, repo),
                     max_rules=5,
+                    context=prompt_context(con, repo),
                 )
             )
             return

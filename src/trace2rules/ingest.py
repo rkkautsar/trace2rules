@@ -506,7 +506,8 @@ def _observation_for_call(call_id: str, obs_by_id: dict[str, str], rows: list[di
 
 
 def _parse_row(row: tuple) -> tuple[dict, list[dict]]:
-    trajectory_id, instance_id, repo, resolved, trajectory = row
+    trajectory_id, instance_id, repo, resolved, trajectory = row[:5]
+    source_file = row[5] if len(row) > 5 else ""
     messages = list(trajectory or [])
     obs_by_id = {
         m["tool_call_id"]: (m["content"] or "")
@@ -556,6 +557,7 @@ def _parse_row(row: tuple) -> tuple[dict, list[dict]]:
     session = {
         "session_id": trajectory_id,
         "repo": repo,
+        "source_ref": f"{source_file}#trajectory_id={trajectory_id}" if source_file else "",
         "instance_id": instance_id,
         "resolved": bool(resolved),
         "total_turns": step,
@@ -672,8 +674,8 @@ def _stream_rows(
         limit_sql = f"LIMIT {int(limit)}" if limit else ""
         if source_format == "open-swe":
             query = f"""
-                SELECT trajectory_id, instance_id, repo, resolved, messages AS trajectory
-                FROM read_parquet(?)
+                SELECT trajectory_id, instance_id, repo, resolved, messages AS trajectory, filename
+                FROM read_parquet(?, filename = true)
                 WHERE repo = ?
                 {limit_sql}
             """
@@ -787,7 +789,8 @@ def ingest(
                         description=f"{prefix}  {matched:,} rows",
                     )
                 session, calls = _parse_row(row)
-                session["source_ref"] = f"{source}#trajectory_id={session['session_id']}"
+                if not session.get("source_ref"):
+                    session["source_ref"] = f"{source}#trajectory_id={session['session_id']}"
                 new_sessions_batch.append(session)
                 events_for_prefix.extend(_events_for_calls(calls, classify_cache))
                 if len(new_sessions_batch) >= 64:

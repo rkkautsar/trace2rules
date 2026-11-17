@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
@@ -76,33 +77,62 @@ def _is_subsequence(inner: tuple[str, ...], outer: tuple[str, ...]) -> bool:
     return any(outer[index : index + len(inner)] == inner for index in range(len(outer) - len(inner) + 1))
 
 
+def _candidate_score(finding: Finding) -> float:
+    weights = {
+        "selector_miss": 1.6,
+        "workaround_script": 1.7,
+        "stuck_loop": 1.4,
+        "premature_completion": 1.8,
+        "low_validation": 1.6,
+        "noop_retry": 1.2,
+        "recovery": 1.0,
+        "context": 0.7,
+        "site_edit_mismatch": 1.1,
+    }
+    support = max(finding.sessions, 1)
+    impact = max(finding.tokens, finding.cost, 1)
+    return support * math.log1p(impact) * weights.get(finding.kind, 0.8)
+
+
 def select_findings(
     exact: list[Finding],
     mined: dict[str, list[Finding]],
     repo: str,
     limit: int = 20,
 ) -> list[Finding]:
-    findings: list[Finding] = []
-    for key, cap in (
-        ("recovery", 4),
-        ("selector_miss", 2),
-        ("workaround", 2),
-        ("stuck_loop", 2),
-        ("context", 3),
-        ("noop_retry", 1),
-        ("premature_completion", 1),
-        ("low_validation", 1),
-        ("site_edit_mismatch", 1),
+    candidates: list[Finding] = []
+    for key in (
+        "recovery",
+        "selector_miss",
+        "workaround",
+        "stuck_loop",
+        "context",
+        "noop_retry",
+        "premature_completion",
+        "low_validation",
+        "site_edit_mismatch",
     ):
-        candidates = [
+        candidates.extend(
             finding
             for finding in mined.get(key, [])
             if finding.repo == repo
             and finding.sessions >= 3
             and (finding.recommendation or finding.kind != "context")
-        ]
-        candidates.sort(key=lambda finding: (finding.sessions, finding.tokens), reverse=True)
-        findings.extend(candidates[:cap])
+        )
+    candidates.sort(key=_candidate_score, reverse=True)
+    selected: list[Finding] = []
+    per_kind: dict[str, int] = {}
+    seen_titles: set[tuple[str, str]] = set()
+    for finding in candidates:
+        key = (finding.kind, finding.title)
+        if key in seen_titles or per_kind.get(finding.kind, 0) >= 2:
+            continue
+        seen_titles.add(key)
+        per_kind[finding.kind] = per_kind.get(finding.kind, 0) + 1
+        selected.append(finding)
+        if len(selected) >= limit:
+            break
+
     exact_repo = [finding for finding in exact if finding.repo == repo]
     selected_tokens: list[tuple[str, ...]] = []
     for finding in sorted(
@@ -117,10 +147,10 @@ def select_findings(
         ):
             continue
         selected_tokens.append(tokens)
-        findings.append(finding)
-        if len(findings) >= 18:
+        selected.append(finding)
+        if len(selected) >= limit:
             break
-    return findings[:limit]
+    return selected[:limit]
 
 
 def annotate_findings(con, findings: list[Finding]) -> list[Finding]:
@@ -432,7 +462,7 @@ def _offline_synthesis(
             return 4
         return 5
 
-    for finding in sorted(findings, key=priority):
+    for finding in findings:
         if finding.sessions < 3:
             continue
         if finding.intent and finding.intent_confidence < 0.4:

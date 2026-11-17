@@ -760,9 +760,10 @@ def _eval_command(
     max_rules: Annotated[int, typer.Option("--max-rules", min=1, max=20)] = 5,
     offline: Annotated[bool, typer.Option("--offline/--llm", help="Use deterministic rules.")] = True,
     json_output: Annotated[bool, typer.Option("--json", help="Emit JSON.")] = False,
+    golden: Annotated[Path | None, typer.Option("--golden", help="Golden rule set JSON.")] = None,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
-    from .evaluate import evaluate_synthesis
+    from .evaluate import evaluate_synthesis, load_golden
     from .synthesize import synthesize as synthesize_rules
 
     con = connect(db)
@@ -777,7 +778,8 @@ def _eval_command(
         )
     finally:
         con.close()
-    metrics = [evaluate_synthesis(synthesis) for synthesis in results]
+    specs = load_golden(golden) if golden else None
+    metrics = [evaluate_synthesis(synthesis, specs) for synthesis in results]
     if json_output:
         console.print_json(data={"metrics": metrics})
         return
@@ -787,6 +789,7 @@ def _eval_command(
     table.add_column("Placeholders", justify="right")
     table.add_column("Redundancy", justify="right")
     table.add_column("Citations", justify="right")
+    table.add_column("Precision@5", justify="right")
     for row in metrics:
         table.add_row(
             escape(str(row["repo"])),
@@ -794,6 +797,7 @@ def _eval_command(
             f"{row['placeholder_rate']:.0%}",
             f"{row['template_redundancy']:.0%}",
             f"{row['citation_rate']:.0%}",
+            f"{row.get('precision_at_5', 0):.0%}",
         )
     console.print(table)
 

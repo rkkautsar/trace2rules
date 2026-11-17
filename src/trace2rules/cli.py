@@ -353,6 +353,21 @@ def _mine_command(
         _print_summary(session_summary(con))
         mined = mine_friction(con, top=top)
         _print_detector_tables(mined)
+        global_findings = mined.get("global", [])[:10]
+        if global_findings:
+            table = Table(title="Cross-repo failure families", header_style="bold", expand=True)
+            table.add_column("Failure")
+            table.add_column("Repos", justify="right")
+            table.add_column("Sessions", justify="right")
+            table.add_column("Tokens", justify="right")
+            for finding in global_findings:
+                table.add_row(
+                    escape(finding.title[:100]),
+                    str(len(finding.variants)),
+                    str(finding.sessions),
+                    f"{finding.tokens:,}",
+                )
+            console.print(table)
         console.print(
             f"[dim]{len(mined['hotspots'])} hotspots, {len(mined['recovery'])} recovery loops, "
             f"{len(mined['context'])} context blasts, {len(mined.get('orientation', []))} orientation[/dim]"
@@ -417,7 +432,7 @@ def _report_command(
             if not repo or repo in pattern.repos
         ]
         payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "db": str(db),
             "sessions": session_count,
@@ -427,6 +442,10 @@ def _report_command(
             "findings": [
                 {**asdict(finding), "evidence": finding.evidence}
                 for finding in findings
+            ],
+            "global_patterns": [
+                {**asdict(finding), "evidence": finding.evidence}
+                for finding in mined.get("global", [])
             ],
             "patterns": [asdict(pattern) for pattern in patterns],
         }

@@ -8,7 +8,7 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_distances
 
-from .detectors import Finding, context_blasts, hotspots, orientation, recovery_loops
+from .detectors import Finding, context_blasts, global_patterns, hotspots, orientation, recovery_loops
 
 
 @dataclass
@@ -345,5 +345,6 @@ def mine(
         "recovery": recovery_loops(con, limit=top),
         "context": context_blasts(con, limit=top),
         "orientation": orientation(con, limit=top),
+        "global": global_patterns(con, limit=top),
         "clusters": [],
     }

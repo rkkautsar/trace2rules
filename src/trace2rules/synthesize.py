@@ -90,6 +90,9 @@ def select_findings(
         ("stuck_loop", 2),
         ("context", 3),
         ("noop_retry", 1),
+        ("premature_completion", 1),
+        ("low_validation", 1),
+        ("site_edit_mismatch", 1),
     ):
         candidates = [
             finding
@@ -509,7 +512,15 @@ def _offline_synthesis(
                 finding.tokens // max(finding.sessions, 1),
             )
 
-        elif finding.kind in {"selector_miss", "workaround_script", "stuck_loop", "noop_retry"}:
+        elif finding.kind in {
+            "selector_miss",
+            "workaround_script",
+            "stuck_loop",
+            "noop_retry",
+            "premature_completion",
+            "low_validation",
+            "site_edit_mismatch",
+        }:
             add(
                 "convention",
                 f"{finding.kind}:{finding.title}",

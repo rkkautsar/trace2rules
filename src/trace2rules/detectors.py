@@ -419,6 +419,114 @@ def noop_retries(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> li
     ]
 
 
+def premature_completion(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = """
+        WITH last_edit AS (
+            SELECT session_id, max(step_idx) AS step
+            FROM tool_events WHERE action_type = 'edit' GROUP BY 1
+        )
+        SELECT s.repo, count(*) AS sessions,
+               count(*) FILTER (WHERE s.resolved) AS resolved,
+               sum(l.step) AS edit_steps
+        FROM sessions s
+        JOIN last_edit l USING (session_id)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM tool_events e
+            WHERE e.session_id = s.session_id
+              AND e.step_idx > l.step
+              AND e.action_type = 'exec'
+              AND e.outcome = 'ok'
+        )
+        GROUP BY 1 ORDER BY sessions DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="premature_completion",
+            repo=repo,
+            title="session ends after an edit without validation",
+            sessions=sessions,
+            tokens=int(edit_steps or 0),
+            detail=f"{resolved} resolved of {sessions}; no successful exec after last edit",
+            side="agent",
+            recommendation="After the final edit, run the narrowest relevant test or lint command and confirm it passes before finishing.",
+        )
+        for repo, sessions, resolved, edit_steps in con.execute(query).fetchall()
+    ]
+
+
+def low_validation(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = """
+        WITH first_edit AS (
+            SELECT session_id, min(step_idx) AS step
+            FROM tool_events WHERE action_type = 'edit' GROUP BY 1
+        )
+        SELECT s.repo, count(*) AS sessions, count(*) FILTER (WHERE s.resolved) AS resolved
+        FROM sessions s
+        JOIN first_edit f USING (session_id)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM tool_events e
+            WHERE e.session_id = s.session_id
+              AND e.step_idx > f.step
+              AND e.action_type = 'exec'
+              AND regexp_matches(e.raw_target, '(?i)(pytest|unittest|test|lint|typecheck|mypy|ruff|tox|vitest|jest|cargo test|go test)')
+        )
+        GROUP BY 1 ORDER BY sessions DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="low_validation",
+            repo=repo,
+            title="edits without a validation command",
+            sessions=sessions,
+            tokens=int(resolved or 0),
+            detail=f"{resolved} resolved of {sessions}; no test/lint exec after first edit",
+            side="agent",
+            recommendation="After changing code, run the narrowest test/lint command that exercises the change.",
+        )
+        for repo, sessions, resolved in con.execute(query).fetchall()
+    ]
+
+
+def site_edit_mismatch(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    rows = con.execute(
+        """
+        SELECT e.repo, e.session_id, e.step_idx, e.error_site,
+               lead(e.action_type) OVER (PARTITION BY e.session_id ORDER BY e.step_idx) AS next_action,
+               lead(e.object_id) OVER (PARTITION BY e.session_id ORDER BY e.step_idx) AS next_object
+        FROM tool_events e
+        WHERE e.error_site <> ''
+        """
+    ).fetchall()
+    counts: dict[str, int] = {}
+    examples: dict[str, str] = {}
+    for repo, session, step, site, next_action, next_object in rows:
+        if next_action != "edit" or not next_object:
+            continue
+        site_file = site.rsplit(":", 1)[0]
+        if site_file.rsplit("/", 1)[-1] == next_object.rsplit("/", 1)[-1]:
+            continue
+        counts[repo] = counts.get(repo, 0) + 1
+        examples.setdefault(repo, f"{site} -> {next_object}")
+    findings = [
+        Finding(
+            kind="site_edit_mismatch",
+            repo=repo,
+            title=examples.get(repo, "traceback site differs from edited file"),
+            sessions=count,
+            tokens=count,
+            detail=f"{count} traceback sites followed by an edit to a different file",
+            side="agent",
+            recommendation="Edit the file named by the traceback or failing assertion; do not patch a different layer or the reproducer.",
+        )
+        for repo, count in sorted(counts.items(), key=lambda item: item[1], reverse=True)
+    ]
+    return findings[:limit] if limit is not None else findings
+
+
 def context_blasts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     query = """
         SELECT repo, target, tool_name, action_type,
@@ -548,4 +656,7 @@ def all_findings(con: duckdb.DuckDBPyConnection, limit: int = 25) -> list[Findin
     findings.extend(workaround_scripts(con, limit=limit))
     findings.extend(stuck_loops(con, limit=limit))
     findings.extend(noop_retries(con, limit=limit))
+    findings.extend(premature_completion(con, limit=limit))
+    findings.extend(low_validation(con, limit=limit))
+    findings.extend(site_edit_mismatch(con, limit=limit))
     return findings

@@ -366,21 +366,20 @@ def global_patterns(
     con: duckdb.DuckDBPyConnection, limit: int | None = None
 ) -> list[Finding]:
     query = """
-        SELECT e.error_signature AS family,
+        SELECT e.verb || ':' || e.error_signature || ':' || coalesce(nullif(e.error_detail, ''), nullif(e.obs_cause, ''), '<unknown>') AS family,
                count(DISTINCT s.repo) AS repos,
                count(DISTINCT s.instance_id) AS instances,
                count(DISTINCT e.session_id) AS sessions,
                sum(e.approx_out_tokens) AS tokens,
                string_agg(DISTINCT s.repo, ', ') AS repo_names,
-               e.verb AS command_family,
-               arg_min(coalesce(nullif(e.error_detail, ''), e.obs_cause, e.error_signature), e.step_idx) AS example
+               arg_min(coalesce(nullif(e.error_detail, ''), nullif(e.obs_cause, ''), e.error_signature), e.step_idx) AS example
         FROM tool_events e
         JOIN sessions s USING (session_id)
         WHERE e.is_error AND e.action_type = 'exec'
           AND s.repo NOT IN ('', 'unknown')
           AND e.error_signature NOT LIKE 'exit:%'
           AND e.error_signature NOT IN ('text_error', 'timeout', 'err:unknown')
-        GROUP BY 1, 1 + 0, e.verb
+        GROUP BY 1
         HAVING count(DISTINCT s.repo) >= 2
            AND count(DISTINCT s.instance_id) >= 3
            AND count(DISTINCT e.session_id) >= 4
@@ -392,7 +391,7 @@ def global_patterns(
         Finding(
             kind="global_failure",
             repo="*",
-            title=f"{command_family}:{family}",
+            title=family,
             sessions=sessions,
             tokens=int(tokens or 0),
             detail=f"{instances} instances across {repos} repos",
@@ -401,7 +400,7 @@ def global_patterns(
             failure_family=family,
             variants=tuple((repo_names or "").split(", ")),
         )
-        for family, repos, instances, sessions, tokens, repo_names, command_family, example in con.execute(query).fetchall()
+        for family, repos, instances, sessions, tokens, repo_names, example in con.execute(query).fetchall()
     ]
 
 

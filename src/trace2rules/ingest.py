@@ -253,8 +253,20 @@ def _error_detail(observation: str) -> str:
             attribute = re.search(
                 r"(?:has no attribute|no attribute) (['\"])([^'\"]+)\1", detail
             )
+            module = re.search(r"No module named (['\"])([^'\"]+)\1", detail)
+            imported = re.search(
+                r"cannot import name (['\"])([^'\"]+)\1 from (['\"])([^'\"]+)\3",
+                detail,
+            )
             if attribute:
                 detail = f"AttributeError: <object> has no attribute '{attribute.group(2)}'"
+            elif module:
+                detail = f"ModuleNotFoundError: No module named '{module.group(2)}'"
+            elif imported:
+                detail = (
+                    "ImportError: cannot import name "
+                    f"'{imported.group(2)}' from '{imported.group(4)}'"
+                )
             else:
                 detail = re.sub(r"'[^']*'", "'<id>'", detail)
                 detail = re.sub(r'"[^"]*"', '"<id>"', detail)
@@ -621,7 +633,7 @@ def _events_for_calls(calls: list[dict], cache: dict[tuple[str, str], tuple[str,
             call["text_error"],
             call["timeout"],
             call["tool_error"],
-            call.get("verb", ""),
+            verb,
         )
         error_signature = call["error_signature"]
         if outcome == "err" and not error_signature:

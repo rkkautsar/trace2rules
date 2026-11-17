@@ -32,6 +32,7 @@ class Rule(BaseModel):
     rule_markdown: str
     evidence_summary: str
     estimated_tokens_saved_per_session: int = Field(ge=0)
+    sources: list[str] = Field(default_factory=list)
 
 
 class Synthesis(BaseModel):
@@ -365,12 +366,28 @@ def _is_doc_target(title: str) -> bool:
     return bool(DOC_TARGET_RE.search(title))
 
 
+def _source_refs(finding: Finding) -> list[str]:
+    refs: list[str] = []
+    for event in finding.window:
+        ref = event.get("session_ref")
+        if ref and ref not in refs:
+            refs.append(f"{ref} (step {event.get('step')})")
+    return refs[:2]
+
+
 def _offline_synthesis(
     findings: list[Finding], repo: str, max_rules: int = MAX_RULES
 ) -> Synthesis:
     rules: list[Rule] = []
     seen: set[tuple[str, str]] = set()
-    def add(category: str, subject: str, markdown: str, evidence: str, tokens: int) -> None:
+    def add(
+        category: str,
+        subject: str,
+        markdown: str,
+        evidence: str,
+        tokens: int,
+        sources: list[str] | None = None,
+    ) -> None:
         key = (category, subject)
         if key in seen or len(rules) >= max_rules:
             return
@@ -381,6 +398,7 @@ def _offline_synthesis(
                 rule_markdown=markdown,
                 evidence_summary=evidence,
                 estimated_tokens_saved_per_session=max(tokens, 0),
+                sources=(sources or [])[:2],
             )
         )
 
@@ -436,6 +454,7 @@ def _offline_synthesis(
                     f"When `{cause}` recurs after an edit, inspect the failing call and fix the product path or test input; do not only rerun or edit the reproducer.",
                     f"{finding.sessions} sessions; {finding.detail}.",
                     finding.tokens // max(finding.sessions, 1),
+                    sources=_source_refs(finding),
                 )
 
         elif finding.kind == "cluster":
@@ -514,6 +533,8 @@ def render(synthesis: Synthesis, repo: str, sessions: int) -> str:
         lines.append(f"## {rule.category}")
         lines.append(f"- **Rule:** {rule.rule_markdown}")
         lines.append(f"  **Evidence:** {rule.evidence_summary}")
+        if rule.sources:
+            lines.append(f"  **Sources:** {'; '.join(rule.sources)}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 

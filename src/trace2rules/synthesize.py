@@ -24,7 +24,7 @@ EXACT_LENGTHS = (3, 4, 5)
 
 GENERATED_VERIFIER_RE = re.compile(
     r"final_|validation_test|test_fix_verification|test_reproduce_issue|comprehensive_test|"
-    r"(?:reproduce|repro|scratch|debug|verif)[\w.-]*\.py"
+    r"(?:reproduce|repro|scratch|debug|verif)[\w.-]*\.(?:py|ts|js|go|rs|java|rb|php|sh|c|cpp)"
 )
 
 
@@ -399,7 +399,8 @@ DOC_TARGET_RE = re.compile(
     r"(?i)(^|/)(readme|docs?|changelog|contributing|license)(\.|/|$)"
 )
 INSTALL_RECOVERY_RE = re.compile(
-    r"(?i)\b(pip|uv|poetry)\b.*\b(install|sync)\b|pip install .* -e"
+    r"(?i)\b(pip|pip3|uv|poetry|pipenv|bundle|composer|npm|yarn|pnpm|cargo|go|dotnet|mix)\b.*"
+    r"\b(install|sync|add|get|ci|restore|deps\.get)\b"
 )
 
 
@@ -475,7 +476,7 @@ def _offline_synthesis(
             add(
                 "test_command",
                 "editable-install",
-                "Run `pip install -e .` before import, CLI, or pytest probes; treat pre-install failures as setup failures, not code failures.",
+                "Install the project and its test extras in development mode before import or test probes; treat pre-install failures as setup failures, not code failures.",
                 f"{finding.sessions} sessions; {finding.setup_tax:,} setup tokens; {finding.tokens:,} window tokens.",
                 finding.setup_tax // max(finding.sessions, 1),
             )
@@ -489,7 +490,7 @@ def _offline_synthesis(
                 add(
                     "test_command",
                     "editable-install",
-                    "Run `pip install -e .` before import, CLI, or pytest probes; treat pre-install failures as setup failures, not code failures.",
+                    "Install the project and its test extras in development mode before import or test probes; treat pre-install failures as setup failures, not code failures.",
                     f"{finding.detail}; {finding.tokens:,} tokens.",
                     finding.tokens // max(finding.sessions, 1),
                 )

@@ -35,7 +35,9 @@ CAUSE_LINE_RE = re.compile(
     r"(?i)(^|\b)(FAILED|ERROR|Traceback|usage:|no tests ran|deselected|"
     r"[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception))(?::|\b)"
 )
-SITE_FILE_RE = re.compile(r'(?:File "([^"]+)", line (\d+)|([\w./-]+\.(?:py|ts|js)):(\d+))')
+SITE_FILE_RE = re.compile(
+    r'(?:File "([^"]+)", line (\d+)|([\w./-]+\.(?:py|pyi|ts|tsx|js|jsx|go|rs|java|kt|kts|c|h|cpp|hpp|cs|rb|php|swift|scala|sh)):(\d+))'
+)
 SITE_TEST_RE = re.compile(r"FAILED\s+([^\s]+::\S+)")
 CONTROL_TARGETS = {"C-c", "C-C", "^C", "ctrl-c", "\x03"}
 
@@ -67,7 +69,13 @@ def _is_path_token(token: str) -> bool:
         return False
     if "/" in token:
         return True
-    return bool(re.search(r"\.(py|pyi|txt|md|rst|toml|cfg|ini|yaml|yml|json)$", token))
+    return bool(
+        re.search(
+            r"\.(py|pyi|txt|md|rst|toml|cfg|ini|yaml|yml|json|ts|tsx|js|jsx|go|rs|"
+            r"java|kt|kts|c|h|cpp|hpp|cs|rb|php|swift|scala|sh|sql|gradle|csproj|sln)$",
+            token,
+        )
+    )
 
 
 def normalize_path(path: str, instance_id: str = "") -> str:
@@ -215,6 +223,9 @@ def _object_id(
     if verb == "export":
         match = re.search(r"\bexport\s+([A-Za-z_][A-Za-z0-9_]*)", raw_command)
         return match.group(1) if match else ""
+    paths = [token for token in tokens if _is_path_token(token)]
+    if paths:
+        return _basename(paths[-1])
     if action == "exec" and target and " " not in target:
         return _basename(target)
     return ""
@@ -280,7 +291,17 @@ def _error_detail(observation: str) -> str:
 
 def _error_origin(observation: str) -> str:
     lowered = observation.lower()
-    if "modulenotfounderror" in lowered or "importerror" in lowered:
+    env_markers = (
+        "modulenotfounderror",
+        "importerror",
+        "cannot find module",
+        "no such module",
+        "module not found",
+        "class not found",
+        "package not found",
+        "could not resolve",
+    )
+    if any(marker in lowered for marker in env_markers):
         return "env"
     if "assertionerror" in lowered or "failed" in lowered:
         return "repo"

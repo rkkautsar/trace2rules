@@ -74,10 +74,12 @@ def session_summary(con: duckdb.DuckDBPyConnection) -> list[dict]:
 
 _TEST_TARGET_RE = re.compile(
     r"(?i)(^|\s)(pytest|py\.test|tox|nox|python3?\s+-m\s+(?:pytest|unittest)|make\s+(?:test|unit|check)|"
-    r"npm\s+test|yarn\s+test|pnpm\s+test|cargo\s+test|go\s+test|mvn\s+test|gradle\s+test)(\s|$)"
+    r"npm\s+test|yarn\s+test|pnpm\s+test|cargo\s+test|go\s+test|mvn\s+test|gradle\s+test|"
+    r"dotnet\s+test|rspec|vitest|jest|phpunit|mix\s+test|swift\s+test|bundle\s+exec\s+rspec)(\s|$)"
 )
 _INSTALL_TARGET_RE = re.compile(
-    r"(?i)(^|\s)(pip|pip3|uv|poetry|npm|yarn|pnpm|cargo|go)\s+(?:install|sync|add|get)"
+    r"(?i)(^|\s)(pip|pip3|uv|poetry|npm|yarn|pnpm|cargo|go|bundle|composer|dotnet|mix)\s+"
+    r"(?:install|sync|add|get|ci|restore|deps\.get)"
 )
 _HELP_TARGET_RE = re.compile(r"(?:^|\s)(?:--help|-h)(?:\s|$)")
 _BOUNDED_RE = re.compile(r"(?:\|\s*(?:head|tail)\b|\s(?:-q|--quiet|-qq|--tb=short)\b)")
@@ -110,14 +112,19 @@ def _context_advice(target: str, action: str) -> tuple[str, str]:
             return "agent", "Run a targeted `cargo test <name>` instead of the full test suite."
         if "go test" in target:
             return "agent", "Run `go test ./path -run TestName` instead of the full package suite."
-        if "npm" in target or "yarn" in target or "pnpm" in target:
+        if "npm" in target or "yarn" in target or "pnpm" in target or "vitest" in target or "jest" in target:
             return "agent", "Run the runner's single-test selector instead of the full test script."
-        if "mvn" in target or "gradle" in target:
+        if "mvn" in target or "gradle" in target or "dotnet" in target:
             return "agent", "Run a single test class/method instead of the full build test task."
-        return (
-            "agent",
-            "Run a targeted test (`pytest path::Test::test -q --tb=short`) instead of the full suite or `-v`.",
-        )
+        if "phpunit" in target:
+            return "agent", "Run `phpunit --filter <test>` instead of the full PHP test suite."
+        if "rspec" in target:
+            return "agent", "Run `rspec <spec_file>:<line>` instead of the full RSpec suite."
+        if "mix test" in target:
+            return "agent", "Run `mix test <file>:<line>` instead of the full test suite."
+        if "swift test" in target:
+            return "agent", "Run `swift test --filter <test>` instead of the full suite."
+        return "agent", "Use the runner's single-test selector instead of a full-suite run."
     if _INSTALL_TARGET_RE.search(target):
         return (
             "repo",
@@ -328,7 +335,7 @@ def selector_misses(con: duckdb.DuckDBPyConnection, limit: int | None = None) ->
             tokens=int(tokens or 0),
             detail=f"{events} selector misses in {sessions} sessions",
             side="agent",
-            recommendation="When `-k` reports 0 selected/deselected, run `pytest --collect-only -q <path>` and use the printed node ID; `-k` matches test node names, not files.",
+            recommendation="When a selector reports 0 selected/deselected, inspect the runner's collection output and use the printed node ID; selectors match test names, not arbitrary file text.",
             window=_repo_window(
                 con,
                 repo,
@@ -495,7 +502,7 @@ def low_validation(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
             WHERE e.session_id = s.session_id
               AND e.step_idx > f.step
               AND e.action_type = 'exec'
-              AND regexp_matches(e.raw_target, '(?i)(pytest|unittest|test|lint|typecheck|mypy|ruff|tox|vitest|jest|cargo test|go test)')
+              AND regexp_matches(e.raw_target, '(?i)(pytest|unittest|test|lint|typecheck|mypy|ruff|tox|vitest|jest|cargo test|go test|dotnet test|rspec|phpunit|mix test|swift test)')
         )
         GROUP BY 1 ORDER BY sessions DESC
     """

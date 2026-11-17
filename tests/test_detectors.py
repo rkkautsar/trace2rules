@@ -44,6 +44,21 @@ def test_orientation_is_repo_side_not_agent_friction() -> None:
 
 
 def test_context_advice_distinguishes_test_output_from_repo_entrypoint() -> None:
-    assert _context_advice("pytest tests/test_parser.py -v", "exec")[1].startswith("Run a targeted test")
+    assert "single-test selector" in _context_advice("pytest tests/test_parser.py -v", "exec")[1]
     assert _context_advice("make unit", "exec")[0] == "repo"
     assert _context_advice("pytest -q tests/test_parser.py", "exec") == ("", "")
+
+
+def test_runner_advice_is_language_neutral() -> None:
+    for target in (
+        "cargo test",
+        "go test ./...",
+        "npm test",
+        "dotnet test",
+        "rspec spec/foo_spec.rb",
+        "phpunit",
+        "mix test",
+        "swift test",
+    ):
+        _, advice = _context_advice(target, "exec")
+        assert "pytest" not in advice.lower()

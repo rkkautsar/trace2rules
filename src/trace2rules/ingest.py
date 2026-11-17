@@ -657,7 +657,7 @@ def ingest(
 ) -> list[IngestStats]:
     repos = repos or DEFAULT_REPOS
     con = connect(db_path)
-    con.execute("CREATE OR REPLACE TEMP TABLE new_sessions (session_id VARCHAR, repo VARCHAR, instance_id VARCHAR, resolved BOOLEAN, total_turns INTEGER)")
+    con.execute("CREATE OR REPLACE TEMP TABLE new_sessions (session_id VARCHAR, repo VARCHAR, instance_id VARCHAR, resolved BOOLEAN, total_turns INTEGER, source_ref VARCHAR)")
     stats: list[IngestStats] = []
     classify_cache: dict[tuple[str, str], tuple[str, str, str, str]] = {}
     con.execute("BEGIN TRANSACTION")
@@ -682,6 +682,7 @@ def ingest(
                         description=f"{prefix}  {matched:,} rows",
                     )
                 session, calls = _parse_row(row)
+                session["source_ref"] = f"{source}#trajectory_id={session['session_id']}"
                 new_sessions_batch.append(session)
                 events_for_prefix.extend(_events_for_calls(calls, classify_cache))
                 if len(new_sessions_batch) >= 64:
@@ -824,6 +825,9 @@ def write_sessions(
                         outcome == "err",
                         (len(observation) + 3) // 4,
                         observation[:400],
+                        _observation_cause(observation),
+                        _error_detail(observation),
+                        _error_site(observation),
                     )
                 )
 
@@ -834,8 +838,9 @@ def write_sessions(
                     event_id, session_id, repo, step_idx, segment_idx,
                     tool_name, action_type,
                     verb, object_id, target, raw_target, outcome, exit_code,
-                    error_signature, is_error, approx_out_tokens, obs_excerpt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    error_signature, is_error, approx_out_tokens, obs_excerpt,
+                    obs_cause, error_detail, error_site
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 events,
             )

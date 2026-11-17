@@ -31,3 +31,40 @@ def test_error_evidence_extracts_cause_and_site() -> None:
     assert "AttributeError" in cause
     assert _error_detail(observation) == "AttributeError: <object> has no attribute 'tokenize'"
     assert _error_site(observation) == "tests/test_parser.py::test_parse"
+
+
+def test_canonical_writer_persists_source_and_cause(tmp_path) -> None:
+    from trace2rules.db import connect
+    from trace2rules.ingest import write_sessions
+    from trace2rules.models import Session, ToolCall
+
+    db = tmp_path / "evidence.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s1",
+                "acme/repo",
+                source="agent-trajectory",
+                source_ref="/tmp/session.jsonl",
+                calls=[
+                    ToolCall(
+                        "Bash",
+                        "python -c 'raise ValueError(\"boom\")'",
+                        observation="Traceback\nValueError: boom\n  File \"/workspace/src/a.py\", line 4",
+                    )
+                ],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        row = con.execute(
+            "SELECT source_ref, obs_cause, error_detail, error_site FROM sessions JOIN tool_events USING (session_id)"
+        ).fetchone()
+    finally:
+        con.close()
+    assert row[0] == "/tmp/session.jsonl"
+    assert "ValueError" in row[1]
+    assert "ValueError" in row[2]
+    assert row[3].endswith("src/a.py:4")

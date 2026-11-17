@@ -87,6 +87,7 @@ def _candidate_score(finding: Finding) -> float:
         "noop_retry": 1.2,
         "recovery": 1.0,
         "context": 0.7,
+        "hotspot": 0.8,
         "site_edit_mismatch": 1.1,
     }
     support = max(finding.sessions, 1)
@@ -102,6 +103,7 @@ def select_findings(
 ) -> list[Finding]:
     candidates: list[Finding] = []
     for key in (
+        "hotspots",
         "recovery",
         "selector_miss",
         "workaround",
@@ -118,6 +120,10 @@ def select_findings(
             if finding.repo == repo
             and finding.sessions >= 3
             and (finding.recommendation or finding.kind != "context")
+            and (
+                finding.kind != "hotspot"
+                or (_is_path_target(finding.title) and finding.sessions >= 5)
+            )
         )
     candidates.sort(key=_candidate_score, reverse=True)
     selected: list[Finding] = []
@@ -239,6 +245,8 @@ def label_summary(con, repo: str, limit: int = 12) -> list[dict]:
          AND e.target = l.target
         WHERE e.repo = ?
         GROUP BY 1, 2
+        HAVING avg(l.intent_confidence) >= 0.4
+           AND avg(l.object_confidence) >= 0.6
         ORDER BY calls DESC
         LIMIT ?
         """,

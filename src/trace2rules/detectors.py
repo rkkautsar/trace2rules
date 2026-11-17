@@ -565,8 +565,10 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
     """Evidence blocks that are too specific to be generic findings."""
     pairs = con.execute(
         """
-        SELECT a.session_id, a.raw_target, b.raw_target
-        FROM tool_events a JOIN tool_events b
+        SELECT a.session_id, a.raw_target, b.raw_target, s.source_ref
+        FROM tool_events a
+        JOIN sessions s ON s.session_id = a.session_id
+        JOIN tool_events b
           ON b.session_id = a.session_id
          AND b.step_idx > a.step_idx AND b.step_idx - a.step_idx <= 10
          AND b.action_type = 'exec' AND NOT b.is_error
@@ -585,7 +587,7 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
     ).fetchall()
     env_re = r'''(?:^|&&|;|\|\|)\s*([A-Z][A-Z0-9_]*=(?:"[^"]*"|'[^']*'|\S+))'''
     bootstrap_map: dict[tuple[str, ...], dict] = {}
-    for session_id, failed, succeeded in pairs:
+    for session_id, failed, succeeded, source_ref in pairs:
         failed_env = set(re.findall(env_re, failed))
         succeeded_env = set(re.findall(env_re, succeeded))
         delta = tuple(sorted(succeeded_env - failed_env))
@@ -597,13 +599,14 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
                 "failed": failed,
                 "succeeded": succeeded,
                 "sessions": set(),
+                "source": source_ref,
                 "steps": [],
             },
         )
         item["sessions"].add(session_id)
         item["steps"].append(1)
     bootstrap = [
-        (list(delta), item["failed"], item["succeeded"], len(item["sessions"]), sum(item["steps"]) / len(item["steps"]))
+        (list(delta), item["failed"], item["succeeded"], len(item["sessions"]), item["source"], sum(item["steps"]) / len(item["steps"]))
         for delta, item in sorted(
             bootstrap_map.items(), key=lambda pair: len(pair[1]["sessions"]), reverse=True
         )[:5]
@@ -615,8 +618,10 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
             FROM tool_events WHERE repo = ? AND action_type = 'edit' GROUP BY 1
         )
         SELECT e.raw_target, count(*) AS calls, count(DISTINCT e.session_id) AS sessions,
-               sum(e.approx_out_tokens) AS tokens
+               sum(e.approx_out_tokens) AS tokens,
+               arg_min(s.source_ref, e.step_idx) AS source
         FROM tool_events e JOIN first_edit f USING (session_id)
+        JOIN sessions s ON s.session_id = e.session_id
         WHERE e.repo = ? AND e.action_type = 'exec' AND e.outcome = 'ok'
           AND e.step_idx > f.step
           AND regexp_matches(e.raw_target, '(?i)(cargo test|go test|pytest|unittest|npm test|yarn test|pnpm test|mvn test|gradle test|dotnet test|rspec|phpunit|mix test|swift test)')
@@ -651,13 +656,14 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
                 "failed": failed,
                 "succeeded": succeeded,
                 "sessions": sessions,
+                "source": source_ref,
                 "mean_steps": round(float(steps or 0), 1),
             }
-            for delta, failed, succeeded, sessions, steps in bootstrap
+            for delta, failed, succeeded, sessions, source_ref, steps in bootstrap
         ],
         "validation": [
-            {"command": command, "calls": calls, "sessions": sessions, "tokens": tokens}
-            for command, calls, sessions, tokens in validation
+            {"command": command, "calls": calls, "sessions": sessions, "tokens": tokens, "source": source}
+            for command, calls, sessions, tokens, source in validation
         ],
         "reads": [
             {"target": target, "sessions": sessions, "calls": calls, "tokens": tokens}

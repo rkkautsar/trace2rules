@@ -323,7 +323,8 @@ Write AGENTS.md rules for this repository. Requirements:
 - Total output must stay under {max_rules} rules, {max(MAX_LINES, max_rules * 10)} lines, and {max(MAX_CHARS, max_rules * 500):,} characters.
 
 Return JSON only, shaped exactly as:
-{{"repo": "{repo}", "rules": [{{"category": "...", "rule_markdown": "...", "evidence_summary": "...", "estimated_tokens_saved_per_session": 0}}]}}"""
+{{"repo": "{repo}", "rules": [{{"category": "...", "rule_markdown": "...", "evidence_summary": "...", "estimated_tokens_saved_per_session": 0, "sources": ["<session_ref> (step N)"]}}]}}
+- Include at least one source copied exactly from a finding window; never invent a source."""
 
 
 def _llm_synthesis(
@@ -517,6 +518,48 @@ def _offline_synthesis(
 PLACEHOLDER_RE = re.compile(r"<(?:id|n|path|workspace)>|\{\{")
 
 
+def _allowed_sources(findings: list[Finding]) -> set[str]:
+    allowed: set[str] = set()
+    for finding in findings:
+        for event in finding.window:
+            ref = event.get("session_ref")
+            step = event.get("step")
+            if ref and step is not None:
+                allowed.add(f"{ref} (step {step})")
+    return allowed
+
+
+def _validate_sources(synthesis: Synthesis, findings: list[Finding]) -> Synthesis:
+    allowed = _allowed_sources(findings)
+    rules = []
+    for rule in synthesis.rules:
+        if rule.sources:
+            valid = [source for source in rule.sources if source in allowed]
+            if len(valid) != len(rule.sources):
+                continue
+        rules.append(rule)
+    return Synthesis(repo=synthesis.repo, rules=rules)
+
+
+def _template_id(rule: Rule) -> str:
+    text = re.sub(r"`[^`]*`", "`<x>`", rule.rule_markdown.lower())
+    text = re.sub(r"\b\d+\b", "<n>", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return f"{rule.category}:{text[:180]}"
+
+
+def _dedupe_templates(rules: list[Rule]) -> list[Rule]:
+    seen: set[str] = set()
+    unique: list[Rule] = []
+    for rule in rules:
+        template = _template_id(rule)
+        if template in seen:
+            continue
+        seen.add(template)
+        unique.append(rule)
+    return unique
+
+
 def _filter_junk_rules(synthesis: Synthesis) -> Synthesis:
     rules = [
         rule
@@ -524,7 +567,7 @@ def _filter_junk_rules(synthesis: Synthesis) -> Synthesis:
         if not PLACEHOLDER_RE.search(rule.rule_markdown)
         and not PLACEHOLDER_RE.search(rule.evidence_summary)
     ]
-    return Synthesis(repo=synthesis.repo, rules=rules)
+    return Synthesis(repo=synthesis.repo, rules=_dedupe_templates(rules))
 
 
 def render(synthesis: Synthesis, repo: str, sessions: int) -> str:
@@ -621,6 +664,7 @@ def synthesize(
                 reason = "no LLM credentials"
             console.print(f"[yellow]Deterministic rules for {escape(repo_name)} ({reason}).[/yellow]")
 
+        synthesis = _validate_sources(synthesis, findings)
         synthesis = _filter_junk_rules(synthesis)
         synthesis, text = enforce_caps(
             synthesis, repo_name, row["sessions"], max_rules=max_rules

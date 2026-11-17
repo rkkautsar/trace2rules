@@ -108,3 +108,38 @@ def test_repo_without_findings_is_skipped(tmp_path, monkeypatch) -> None:
     con.close()
     assert results == []
     assert called is False
+
+
+def test_rule_with_unknown_source_is_dropped() -> None:
+    from trace2rules.detectors import Finding
+    from trace2rules.synthesize import Rule, Synthesis, _validate_sources
+
+    finding = Finding(
+        kind="recovery",
+        repo="acme/repo",
+        title="a -> b",
+        sessions=3,
+        tokens=10,
+        window=({"session_ref": "session.jsonl", "step": 4},),
+    )
+    synthesis = Synthesis(
+        repo="acme/repo",
+        rules=[
+            Rule(
+                category="convention",
+                rule_markdown="Do a.",
+                evidence_summary="3 sessions",
+                estimated_tokens_saved_per_session=1,
+                sources=["invented.jsonl (step 4)"],
+            ),
+            Rule(
+                category="convention",
+                rule_markdown="Do b.",
+                evidence_summary="3 sessions",
+                estimated_tokens_saved_per_session=1,
+                sources=["session.jsonl (step 4)"],
+            ),
+        ],
+    )
+    validated = _validate_sources(synthesis, [finding])
+    assert [rule.rule_markdown for rule in validated.rules] == ["Do b."]

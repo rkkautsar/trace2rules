@@ -87,6 +87,7 @@ class RuleAudit:
     followed: int = 0
     undecided: int = 0
     rate: float | None = None
+    examples: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -112,6 +113,7 @@ class RuleAudit:
             "followed": self.followed,
             "undecided": self.undecided,
             "rate": self.rate,
+            "examples": list(self.examples),
             "enforceable": self.enforceable,
             "enforcement": self.enforcement,
             "suggestion": self.suggestion,
@@ -354,6 +356,29 @@ def _text(path: Path) -> str:
         return ""
 
 
+def _execution_blocks(text: str) -> list[str]:
+    blocks: list[str] = []
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        match = re.match(r"^\s*(?:-\s*)?(?:run|entry|command):\s*(.*)$", lines[index])
+        if not match:
+            index += 1
+            continue
+        value = match.group(1).strip()
+        if value in {"|", ">", "|-", ">-"}:
+            index += 1
+            body: list[str] = []
+            while index < len(lines) and (not lines[index].strip() or lines[index][0].isspace()):
+                body.append(lines[index].strip())
+                index += 1
+            blocks.append("\n".join(body))
+            continue
+        blocks.append(value)
+        index += 1
+    return blocks
+
+
 def _command_in_text(command: str, text: str) -> bool:
     command = command.strip().lower()
     if not command:
@@ -437,10 +462,14 @@ def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:
             token in content for token in ("commitlint", "semantic-pull-request", "conventional-commits")
         ):
             configured.append(str(config.relative_to(root)))
-        elif any(_command_in_text(command, content) for command in commands):
+            continue
+        execution = "\n".join(_execution_blocks(content))
+        if not execution:
+            continue
+        if any(_command_in_text(command, execution) for command in commands):
             configured.append(str(config.relative_to(root)))
         elif any(
-            _command_in_text(f"make {source.split(': ', 1)[1]}", content)
+            _command_in_text(f"make {source.split(': ', 1)[1]}", execution)
             for source in available
             if source.startswith("Makefile: ")
         ):
@@ -561,6 +590,7 @@ def audit_agents(
         failed_validation = 0
         violations = 0
         not_observed = 0
+        examples: list[str] = []
         scope = _infer_scope(rule, root)
         for events in sessions.values():
             edit_events = [
@@ -602,6 +632,10 @@ def audit_agents(
             )
             if matched:
                 observed += 1
+                for _sid, _step, action, raw, target, _object, _outcome in events:
+                    if action == "exec" and _matches(rule, raw, target, _object):
+                        examples.append(raw[:240])
+                        break
             if rule.category == "test_command":
                 applicable += 1
                 if not matched:
@@ -618,6 +652,7 @@ def audit_agents(
                         else VALIDATION_RE.search(raw)
                     )
                 ]
+                examples.extend(raw[:240] for _step, _outcome, raw, _target, _object in matching[:2])
                 if any(outcome == "ok" for _step, outcome, *_rest in matching):
                     compliant += 1
                 else:
@@ -737,6 +772,7 @@ def audit_agents(
         audit.followed = followed
         audit.undecided = undecided
         audit.rate = rate
+        audit.examples = tuple(dict.fromkeys(examples))[:3]
     return audits
 
 

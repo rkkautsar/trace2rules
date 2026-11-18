@@ -445,3 +445,18 @@ def test_repo_matches_cwd_suffix(monkeypatch, tmp_path: Path) -> None:
     assert _repo_matches_cwd(f"owner/{tmp_path.name}")
     assert _repo_matches_cwd(tmp_path.name)
     assert not _repo_matches_cwd("owner/other")
+
+
+def test_enforcement_requires_workflow_run_block(tmp_path: Path) -> None:
+    from trace2rules.agents import discover_enforcement
+
+    workflow = tmp_path / ".github" / "workflows"
+    workflow.mkdir(parents=True)
+    (workflow / "ci.yml").write_text("# pytest\nname: ci\n")
+    rule = parse_agents_text("- Run `pytest tests/test_api.py` after editing.")[0]
+    status, _source = discover_enforcement(tmp_path, rule)
+    assert status != "configured"
+    (workflow / "ci.yml").write_text("jobs:\n  test:\n    steps:\n      - run: pytest tests/test_api.py\n")
+    status, source = discover_enforcement(tmp_path, rule)
+    assert status == "configured"
+    assert "ci.yml" in source

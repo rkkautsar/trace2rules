@@ -4,7 +4,7 @@ import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.progress import Progress
@@ -359,6 +359,8 @@ def _records_to_session(
             if value:
                 try:
                     started_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                    if started_at.tzinfo is not None:
+                        started_at = started_at.astimezone(timezone.utc).replace(tzinfo=None)
                 except ValueError:
                     pass
                 break

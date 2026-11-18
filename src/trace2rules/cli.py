@@ -510,7 +510,11 @@ def _audit_command(
     con = connect(db)
     try:
         if commit:
-            payload = audit_commit(con, repo, agents, commit)
+            try:
+                payload = audit_commit(con, repo, agents, commit)
+            except (subprocess.CalledProcessError, OSError, ValueError) as error:
+                console.print(f"[red]Could not audit commit {commit}: {error}[/red]")
+                raise typer.Exit(1)
         else:
             since_dt = parse_time(since)
             until_dt = parse_time(until)
@@ -523,10 +527,16 @@ def _audit_command(
                         [repo],
                     ).fetchone()
                     if coverage[1]:
-                        since_dt = committed_at
+                        if since_dt is None:
+                            since_dt = committed_at
                         payload = audit_payload(con, repo, agents, since=since_dt, until=until_dt)
                         payload["commit"] = sha
                         payload["committed_at"] = committed_at.isoformat()
+                        if coverage[1] < coverage[0]:
+                            payload["excluded_no_timestamp"] = coverage[0] - coverage[1]
+                            payload["warning"] = (
+                                f"{coverage[0] - coverage[1]} sessions have no timestamp and were excluded."
+                            )
                     else:
                         payload = audit_payload(con, repo, agents, since=since_dt, until=until_dt)
                         payload["commit"] = sha

@@ -68,12 +68,6 @@ def session_summary(con: duckdb.DuckDBPyConnection) -> list[dict]:
     ]
 
 
-_GENERIC_SCRIPT_RE = re.compile(
-    r"(?i)^(?:reproduce|repro|scratch|debug|verify|verification|comprehensive|final|"
-    r"test_fix|test_repro|validation_test)"
-)
-
-
 _TEST_TARGET_RE = re.compile(
     r"(?i)(^|\s)(pytest|py\.test|tox|nox|python3?\s+-m\s+(?:pytest|unittest)|make\s+(?:test|unit|check)|"
     r"npm\s+test|yarn\s+test|pnpm\s+test|cargo\s+test|go\s+test|mvn\s+test|gradle\s+test|"
@@ -363,9 +357,12 @@ def selector_misses(con: duckdb.DuckDBPyConnection, limit: int | None = None) ->
 def workaround_scripts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     query = """
         SELECT repo, count(*) AS sessions, sum(edits) AS edits, sum(runs) AS runs,
-               sum(tokens) AS tokens, sum(failures) AS failures
+               sum(tokens) AS tokens, sum(failures) AS failures,
+               any_value(exemplar) AS exemplar
         FROM (
             SELECT session_id, repo,
+                   any_value(object_id) FILTER (WHERE action_type = 'edit' AND regexp_matches(object_id,
+                       '(?i)^(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)')) AS exemplar,
                    count(*) FILTER (WHERE action_type = 'edit' AND regexp_matches(object_id,
                        '(?i)^(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)')) AS edits,
                    count(*) FILTER (WHERE action_type = 'exec' AND regexp_matches(object_id,
@@ -375,10 +372,6 @@ def workaround_scripts(con: duckdb.DuckDBPyConnection, limit: int | None = None)
                    count(*) FILTER (WHERE outcome = 'err' AND regexp_matches(object_id,
                        '(?i)^(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)')) AS failures
             FROM tool_events
-            WHERE NOT regexp_matches(
-                object_id,
-                '(?i)^(reproduce|repro|scratch|debug|verify|verification|comprehensive|final|test_fix|test_repro|validation_test)'
-            )
             GROUP BY 1, 2
         ) s
         WHERE edits > 0
@@ -391,7 +384,7 @@ def workaround_scripts(con: duckdb.DuckDBPyConnection, limit: int | None = None)
         Finding(
             kind="workaround_script",
             repo=repo,
-            title="root-level throwaway reproducer scripts",
+            title=exemplar or "root-level throwaway reproducer scripts",
             sessions=sessions,
             tokens=int(tokens or 0),
             detail=f"{edits} edits, {runs} runs, {failures} failures",
@@ -400,10 +393,11 @@ def workaround_scripts(con: duckdb.DuckDBPyConnection, limit: int | None = None)
             window=_repo_window(
                 con,
                 repo,
-                "action_type = 'exec' AND regexp_matches(object_id, '(?i)^(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)')",
+                "action_type = 'exec' AND regexp_matches(object_id, '(?i)^(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)') AND object_id = ?",
+                (exemplar or "",),
             ),
         )
-        for repo, sessions, edits, runs, tokens, failures in con.execute(query).fetchall()
+        for repo, sessions, edits, runs, tokens, failures, exemplar in con.execute(query).fetchall()
     ]
 
 

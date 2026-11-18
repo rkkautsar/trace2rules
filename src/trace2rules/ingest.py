@@ -9,7 +9,7 @@ from functools import lru_cache
 import urllib.request
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import duckdb
@@ -517,7 +517,10 @@ def _message_timestamp(messages: list[dict]):
             value = message.get(key)
             if value:
                 try:
-                    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                    if parsed.tzinfo is not None:
+                        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+                    return parsed
                 except ValueError:
                     continue
     return None

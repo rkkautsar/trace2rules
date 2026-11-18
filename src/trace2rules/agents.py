@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +52,14 @@ class RuleAudit:
             "enforcement": self.enforcement,
             "suggestion": self.suggestion,
         }
+
+
+def _utc_naive(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
 
 
 def _category(text: str, paths: tuple[str, ...]) -> str:
@@ -134,6 +142,8 @@ def audit_agents(
 ) -> list[RuleAudit]:
     filters = ["e.repo = ?"]
     params: list[Any] = [repo]
+    since = _utc_naive(since)
+    until = _utc_naive(until)
     if since is not None:
         filters.append("s.started_at >= ?")
         params.append(since)
@@ -201,15 +211,16 @@ def audit_agents(
                     violations += 1
         if not _needles(rule):
             suggestion = "Rule has no command, path, or concrete pattern; add one."
+        elif violations:
+            suggestion = (
+                f"Rule was violated in {violations} of {applicable} applicable sessions; "
+                "move it into CI/pre-commit."
+            )
         elif exercised == 0:
             suggestion = "No matching tool calls; the rule may be stale or phrased differently."
-        elif violations:
-            suggestion = f"Rule was violated in {violations} edited sessions; move it into CI/pre-commit."
         else:
             suggestion = "Rule was exercised without detected violations; keep as guidance."
-        enforceable = rule.category in {"test_command", "architecture_map", "context_hygiene"} or bool(
-            rule.commands or rule.paths
-        )
+        enforceable = rule.category in {"test_command", "architecture_map", "context_hygiene"}
         audits.append(
             RuleAudit(
                 rule.text,
@@ -253,7 +264,9 @@ def audit_payload(
 
 
 def _git(root: Path, *args: str) -> str:
-    return subprocess.check_output(["git", "-C", str(root), *args], text=True).strip()
+    return subprocess.check_output(
+        ["git", "-C", str(root), *args], text=True, stderr=subprocess.PIPE
+    ).strip()
 
 
 def latest_agents_commit(path: str | Path) -> tuple[str, datetime]:
@@ -261,6 +274,8 @@ def latest_agents_commit(path: str | Path) -> tuple[str, datetime]:
     root = Path(_git(file_path.parent, "rev-parse", "--show-toplevel"))
     relative = file_path.relative_to(root).as_posix()
     output = _git(root, "log", "-1", "--format=%H%x00%cI", "--", relative)
+    if not output:
+        raise ValueError(f"{relative} has no commit history")
     sha, stamp = output.split("\x00", 1)
     return sha, datetime.fromisoformat(stamp)
 
@@ -282,9 +297,14 @@ def audit_commit(
     relative = file_path.relative_to(root).as_posix()
     try:
         parent = _git(root, "rev-parse", f"{rev}^")
-        before_rules, _ = agents_at_commit(path, parent)
     except subprocess.CalledProcessError:
         parent = ""
+    if parent:
+        try:
+            before_rules, _ = agents_at_commit(path, parent)
+        except subprocess.CalledProcessError:
+            before_rules = []
+    else:
         before_rules = []
     after_rules, committed_at = agents_at_commit(path, rev)
     before = audit_agents(con, repo, before_rules, until=committed_at)

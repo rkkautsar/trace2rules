@@ -116,12 +116,13 @@ def test_mine_accepts_bracket_targets(tmp_path: Path) -> None:
     assert result.exit_code == 0
 
 
-def test_mine_renders_unknown_resolution_as_na(tmp_path: Path) -> None:
+def test_mine_does_not_render_resolution(tmp_path: Path) -> None:
     db = tmp_path / "unknown.duckdb"
     write_sessions(db, [Session("s1", "acme/repo", source="swe-chat")])
     result = runner.invoke(app, ["mine", "--db", str(db)])
     assert result.exit_code == 0
-    assert "n/a" in result.output
+    assert "Resolved" not in result.output
+    assert "n/a" not in result.output
 
 
 def test_bad_swebench_source_is_friendly() -> None:

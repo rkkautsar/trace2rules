@@ -211,21 +211,12 @@ def _print_summary(summary: list[dict]) -> None:
     table = Table(title="Corpus", header_style="bold")
     table.add_column("Repo")
     table.add_column("Sessions", justify="right")
-    table.add_column("Resolved", justify="right")
     table.add_column("Tool events", justify="right")
     table.add_column("Tokens", justify="right")
     for row in summary:
-        known = row["known_resolution"]
-        resolved = row["resolved"]
-        if known:
-            rate = resolved / known
-            resolved_text = f"{resolved} ({rate:.0%})"
-        else:
-            resolved_text = "n/a"
         table.add_row(
             escape(row["repo"]),
             str(row["sessions"]),
-            resolved_text,
             f"{row['events']:,}",
             f"{row['tokens']:,}",
         )

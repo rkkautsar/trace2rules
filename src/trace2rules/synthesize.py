@@ -129,10 +129,16 @@ def select_findings(
     selected: list[Finding] = []
     per_kind: dict[str, int] = {}
     seen_titles: set[tuple[str, str]] = set()
+    validation_family = {"premature_completion", "low_validation"}
+    family_selected = 0
     for finding in candidates:
         key = (finding.kind, finding.title)
         if key in seen_titles or per_kind.get(finding.kind, 0) >= 2:
             continue
+        if finding.kind in validation_family:
+            if family_selected:
+                continue
+            family_selected += 1
         seen_titles.add(key)
         per_kind[finding.kind] = per_kind.get(finding.kind, 0) + 1
         selected.append(finding)
@@ -369,7 +375,7 @@ Write AGENTS.md rules for this repository. Requirements:
 - Ignore task-specific verifier scripts, one-off filenames, and normal edit -> test-fail loops.
 - For `recovery` findings, use the representative window from failure through success to explain the failed -> successful transition; cite the support count. Do not infer intent not shown by the tool calls.
 - A window is one illustrative occurrence, not proof of intent. Never encode an identifier that appears in fewer than two sessions.
-- `outcomes.official_resolved` is optional and may be absent for local sessions. When `outcome_basis` is `validation` or `none`, do not claim sessions failed because they were not resolved; use `validated_sessions` / `unvalidated_sessions` instead.
+- Do not use resolution labels or infer success from them. Use `validated_sessions` and `unvalidated_sessions` only.
 - The `assistant` field is the agent's reasoning, not observed evidence. Use it to explain a sequence, but never cite it as a source or count it as a finding.
 - For `orientation` or `side=repo`, write a repository-side recommendation, not an agent rule.
 - Do not mechanically recommend `| head`; distinguish quiet flags, targeted test selection, and repo entrypoints.

@@ -50,8 +50,6 @@ def session_summary(con: duckdb.DuckDBPyConnection) -> list[dict]:
         """
         SELECT s.repo,
                count(*) AS sessions,
-               sum(CASE WHEN s.resolved THEN 1 ELSE 0 END) AS resolved,
-               count(*) FILTER (WHERE s.source NOT IN ('swe-chat', 'agent-trajectory')) AS known_resolution,
                (SELECT count(*) FROM tool_events e WHERE e.repo = s.repo) AS events,
                (SELECT sum(approx_out_tokens) FROM tool_events e WHERE e.repo = s.repo) AS tokens
         FROM sessions s
@@ -63,10 +61,8 @@ def session_summary(con: duckdb.DuckDBPyConnection) -> list[dict]:
         {
             "repo": r[0],
             "sessions": r[1],
-            "resolved": r[2],
-            "known_resolution": r[3],
-            "events": r[4] or 0,
-            "tokens": r[5] or 0,
+            "events": r[2] or 0,
+            "tokens": r[3] or 0,
         }
         for r in rows
     ]
@@ -695,10 +691,7 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
     outcomes = con.execute(
         """
         SELECT count(DISTINCT s.session_id),
-               count(DISTINCT s.session_id) FILTER (WHERE s.resolved),
-               count(DISTINCT e.session_id) FILTER (WHERE e.action_type = 'edit'),
-               count(DISTINCT s.session_id)
-                   FILTER (WHERE s.source NOT IN ('swe-chat', 'agent-trajectory'))
+               count(DISTINCT e.session_id) FILTER (WHERE e.action_type = 'edit')
         FROM sessions s LEFT JOIN tool_events e USING (session_id)
         WHERE s.repo = ?
         """,
@@ -755,19 +748,10 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
         ],
         "outcomes": {
             "sessions": outcomes[0],
-            "with_edit": outcomes[2],
-            "official_resolved": outcomes[1] if outcomes[3] > 0 else None,
-            "resolution_coverage": outcomes[3],
-            "resolved_known": outcomes[3] > 0,
+            "with_edit": outcomes[1],
             "validated_sessions": validation_summary[1] if validation_summary else 0,
             "unvalidated_sessions": (validation_summary[0] - validation_summary[1]) if validation_summary else 0,
             "validation_coverage": validation_summary[0] if validation_summary else 0,
-            "outcome_basis": (
-                "official" if outcomes[3] >= outcomes[0] and outcomes[0] > 0
-                else "mixed" if outcomes[3] > 0
-                else "validation" if validation_summary and validation_summary[0] > 0
-                else "none"
-            ),
         },
     }
 

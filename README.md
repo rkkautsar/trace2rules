@@ -33,10 +33,10 @@ Rules are capped at 5 rules, 60 lines, and 2,500 characters per repo.
 
 ## Quick start: your own sessions
 
-Ask your coding agent to mine and synthesize:
+Ask your coding agent to mine, report, and synthesize:
 
 ```text
-Install trace2rules if missing (`uv tool install trace2rules`). Ingest my local agent sessions, then run `trace2rules synthesize`. Keep only rules supported by the mined evidence.
+Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules ingest` for my local agent sessions, then `trace2rules mine`, then `trace2rules report --repo OWNER/NAME --prompt`. Read that report and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
 ```
 
 Ask it to audit existing rules from a checkout:
@@ -45,18 +45,20 @@ Ask it to audit existing rules from a checkout:
 Audit this repo's AGENTS.md and CLAUDE.md against my local sessions with `trace2rules audit --repo OWNER/NAME`. Report unobserved, violated, and unenforced rules, and propose existing CI/pre-commit checks where available.
 ```
 
-Or run it manually:
+Or run the evidence step manually:
 
 ```bash
 uv tool install trace2rules
 trace2rules ingest --limit 50
 trace2rules mine
-trace2rules synthesize
+trace2rules report --repo OWNER/NAME --prompt > evidence.txt
 ```
+
+Then give `evidence.txt` to your agent to synthesize the rules. `trace2rules synthesize` is the optional built-in LLM fallback.
 
 `--source` is repeatable and defaults to your home directory. It scans all standard local stores: `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, `~/.omp/agent/sessions`, and `~/.local/share/opencode`. The example imports 50 sessions per source; use `--limit 0` for all.
 
-LLM synthesis is the default. Add `--offline` if you do not have an API key.
+Agent synthesis from the report is the default workflow. `trace2rules synthesize` is optional; add `--offline` to force its deterministic rules.
 
 `ingest` writes to `data/trace2rules.duckdb` by default. `mine`, `exact`, and `synthesize` read from it.
 

@@ -74,6 +74,8 @@ class RuleAudit:
     enforcement_status: str = "unknown"
     detector: str = ""
     measurable: bool = False
+    coverage: str = "unmeasured"
+    coverage_reason: str = ""
     opportunities: int = 0
     followed: int = 0
     undecided: int = 0
@@ -97,6 +99,8 @@ class RuleAudit:
             "enforcement_status": self.enforcement_status,
             "detector": self.detector,
             "measurable": self.measurable,
+            "coverage": self.coverage,
+            "coverage_reason": self.coverage_reason,
             "opportunities": self.opportunities,
             "followed": self.followed,
             "undecided": self.undecided,
@@ -610,6 +614,18 @@ def audit_agents(
         else:
             followed = 0
             undecided = 0
+        if measurable:
+            coverage = "measured"
+            coverage_reason = "observable command or path evidence"
+        elif re.search(
+            r"(?i)\b(secrets?|credentials?|pr titles?|commit messages?|approval|attestation|reviewer)\b",
+            rule.text,
+        ):
+            coverage = "dark"
+            coverage_reason = "policy is not observable from tool transcripts"
+        else:
+            coverage = "unmeasured"
+            coverage_reason = "no observable command or path in the rule"
         rate = (
             round(followed / opportunities, 3)
             if opportunities >= 20
@@ -649,6 +665,8 @@ def audit_agents(
         audit = audits[-1]
         audit.detector = detector
         audit.measurable = measurable
+        audit.coverage = coverage
+        audit.coverage_reason = coverage_reason
         audit.opportunities = opportunities
         audit.followed = followed
         audit.undecided = undecided

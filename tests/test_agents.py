@@ -353,3 +353,26 @@ def test_audit_exposes_opportunities_and_rate(tmp_path: Path) -> None:
     assert audit.opportunities == 1
     assert audit.followed == 1
     assert audit.rate is None
+
+
+def test_audit_marks_unobservable_rules(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text(
+        "- Never commit secrets.\n"
+        "- Use comments for complex logic only.\n"
+        "- Run `pytest tests/test_api.py` after editing.\n"
+    )
+    db = tmp_path / "coverage.duckdb"
+    write_sessions(
+        db,
+        [Session("s", "acme/repo", calls=[ToolCall("Edit", "src/api.py", action_type="edit", target="src/api.py")])],
+    )
+    con = connect(db)
+    try:
+        audits = audit_agents(con, "acme/repo", parse_agents(path))
+    finally:
+        con.close()
+    by_text = {audit.text: audit for audit in audits}
+    assert by_text["Never commit secrets."].coverage == "dark"
+    assert by_text["Use comments for complex logic only."].coverage == "unmeasured"
+    assert by_text["Run `pytest tests/test_api.py` after editing."].coverage == "measured"

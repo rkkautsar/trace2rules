@@ -68,7 +68,7 @@ Then give `evidence.txt` to your agent to synthesize the rules. `trace2rules syn
 
 `--source` is repeatable and defaults to your home directory. It scans all standard local stores: `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, `~/.omp/agent/sessions`, and `~/.local/share/opencode`. The default cap is 200 sessions per source and selects the most recently modified files; use `--limit 0` for all.
 
-For local sessions, the repo label comes from the git remote (`owner/name`) when available, falling back to the working-directory basename. `report --prompt` without `--repo` emits one prompt per detected repo; pass `--repo owner/name` only to filter. Run `trace2rules mine` to see labels.
+For local sessions, the repo label comes from the git remote (`owner/name`) when available, falling back to the working-directory basename. `report --prompt` emits one prompt per detected repo. Run `trace2rules mine` to see labels.
 
 Agent synthesis from the report is the default workflow. `trace2rules synthesize` is optional; add `--offline` to force its deterministic rules.
 
@@ -79,9 +79,9 @@ Agent synthesis from the report is the default workflow. `trace2rules synthesize
 `audit` parses `AGENTS.md` and `CLAUDE.md`, checks each rule against real sessions, and finds existing enforcement:
 
 ```bash
-trace2rules audit --repo owner/name
-trace2rules audit --repo owner/name --commit HEAD --json
-trace2rules audit --repo owner/name --prompt
+trace2rules audit
+trace2rules audit --commit HEAD --json
+trace2rules audit --prompt
 ```
 
 Real sqlglot example:
@@ -101,7 +101,7 @@ source: .github/workflows/package-test.yml
 
 `available` means a Makefile/package target exists but is not wired into CI. `missing` means no mechanism was found. `--prompt` emits a self-contained review prompt for a fresh-context agent.
 
-`trace2rules synthesize --repo owner/name --agents AGENTS.md` reconciles proposed rules against the audit: duplicates are dropped, configured enforcement is reused, and soft rules are upgraded with concrete enforcement. When run from the target checkout, `--agents` is optional.
+`trace2rules synthesize --agents AGENTS.md` reconciles proposed rules against the audit: duplicates are dropped, configured enforcement is reused, and soft rules are upgraded with concrete enforcement. When run from the target checkout, `--agents` is optional.
 
 ## Synthesis
 
@@ -124,8 +124,6 @@ If no key is configured, or the call fails, synthesis falls back to deterministi
 | `swe-rebench` | `nebius/SWE-rebench-openhands-trajectories` parquet | Opt-in; cached locally from Hugging Face |
 | `agent-trajectory` | Local Claude Code, Codex, Pi, OMP, OpenCode SQLite/JSON | Default; Node.js 20+ required for non-OpenCode sources |
 
-SWE-chat is not a primary input. It is used below as an optional example corpus.
-
 Datasets are not included in this repository.
 
 ## Install
@@ -145,40 +143,6 @@ uv sync
 ```
 
 `agent-trajectory` calls its bundled JS bridge through the system Node runtime for Claude Code, Codex, Pi, and OMP. Install Node.js 20 or newer; OpenCode SQLite ingestion is pure Python.
-
-## Public dataset: Open-SWE
-
-If the Open-SWE shards are available locally, reproduce the SWC example with:
-
-```bash
-uv run trace2rules ingest --format open-swe --repos swc-project/swc --limit 0
-uv run trace2rules mine
-uv run trace2rules synthesize --repo swc-project/swc
-```
-
-## Optional example corpus: SWE-chat
-
-SWE-chat is an optional example corpus, not a core input format.
-
-Request access on the [dataset page](https://huggingface.co/datasets/SALT-NLP/SWE-chat), then download the two tables:
-
-```bash
-uvx --from huggingface_hub hf download SALT-NLP/SWE-chat \
-  --repo-type dataset \
-  --include "sessions.parquet" \
-  --include "conversations.parquet" \
-  --local-dir data/swe-chat
-
-uv run trace2rules ingest \
-  --format swe-chat \
-  --source data/swe-chat \
-  --limit 0
-
-uv run trace2rules mine
-uv run trace2rules synthesize
-```
-
-`--limit 0` imports the full corpus. The default limit is 200 sessions; use `--limit 0` for all matching rows.
 
 ## Local agent sessions
 
@@ -200,7 +164,7 @@ OpenCode is read directly from its SQLite database; JSON exports are still accep
 uv run trace2rules ingest --format agent-trajectory --source ~/.local/share/opencode
 ```
 
-Use `--repo owner/name` to override the repository label for local sessions.
+The repository label is inferred from the git remote or working-directory basename.
 
 ## Commands
 
@@ -210,8 +174,7 @@ Use `--repo owner/name` to override the repository label for local sessions.
 | `mine` | Show friction clusters, hotspots, recovery loops, and context blasts |
 | `report` | Emit all findings and patterns as evidence-rich JSON for an agent |
 | `doctor` | Check install, Node, credentials, source stores, and database schema |
-| `label` | Optional: classify targets with a decision model (`intent`, `object_type`, confidence) |
-| `patterns` | Mine structural multi-step friction; labels refine when available |
+| `patterns` | Mine structural multi-step friction |
 | `exact` | Show exact recurring sequences with evidence |
 | `synthesize` | Print per-repo rules to stdout |
 | `audit` | Audit existing `AGENTS.md` rules against sessions and suggest enforcement |
@@ -220,20 +183,17 @@ Useful options:
 
 ```bash
 trace2rules ingest                         # ~, all detected local stores
-trace2rules ingest --label                 # auto-detect clef/Gemini/OpenAI
 trace2rules ingest --format swe-rebench    # opt into the public dataset
 trace2rules ingest --source PATH --limit 200
 trace2rules synthesize
 trace2rules synthesize --offline
 trace2rules synthesize --max-rules 10
-trace2rules synthesize --repo owner/name
-trace2rules audit --repo owner/name --agents AGENTS.md
-trace2rules audit --repo owner/name --agents AGENTS.md --commit HEAD --json
-trace2rules audit --repo owner/name --agents AGENTS.md --prompt
-trace2rules report --repo owner/name --prompt --agents AGENTS.md
+trace2rules synthesize
+trace2rules audit --agents AGENTS.md
+trace2rules audit --agents AGENTS.md --commit HEAD --json
+trace2rules audit --agents AGENTS.md --prompt
+trace2rules report --prompt --agents AGENTS.md
 ```
-
-`--label` auto-detects an authenticated `wrangler` first, then `GEMINI_API_KEY`/`GOOGLE_API_KEY`, then `OPENAI_API_KEY`. It is opt-in because a full local run can have thousands of unique targets.
 
 ## Agentic workflow
 
@@ -242,49 +202,16 @@ The built-in synthesizer is optional. An agent can consume the evidence directly
 ```bash
 trace2rules ingest
 trace2rules report > /tmp/trace2rules-report.json
-trace2rules report --repo owner/name --prompt > /tmp/trace2rules-prompt.txt
+trace2rules report --prompt > /tmp/trace2rules-prompt.txt
 ```
 
-`report` emits JSON with repo/session/instance counts, findings, labels, exact sequences, and label-driven patterns. For the main agent workflow, `report --repo owner/name --prompt` emits the filtered evidence prompt directly; feed that prompt to a fresh agent and let it write the rules. The prompt includes findings, support, windows, and source references, and excludes orientation/hotspot noise. Each finding carries `sessions`, `tokens`, `evidence`, and detector-specific fields such as `lift`, `rework`, `setup_tax`, `cost`, and `paired_instances`.
+`report` emits JSON with repo/session/instance counts, findings, exact sequences, and patterns. For the main agent workflow, `report --prompt` emits the evidence prompt directly; feed that prompt to a fresh agent and let it write the rules. The prompt includes findings, support, windows, and source references, and excludes orientation/hotspot noise. Each finding carries `sessions`, `tokens`, `evidence`, and detector-specific fields such as `lift`, `rework`, `setup_tax`, `cost`, and `paired_instances`.
 
 The calling agent can then write `AGENTS.md` rules from that evidence without invoking `trace2rules synthesize` or configuring an LLM key.
 
 Rules go to stdout; progress and findings go to stderr.
 
 Synthesis is LLM-first. `--offline` skips the LLM and uses deterministic rules.
-
-### Decision labels
-
-`trace2rules label` classifies each distinct normalized target with a decision model:
-- `intent`: explore, read, search, edit, run_tests, run_script, install, env_check, git, other
-- `object_type`: file, directory, test_scope, package, module, config, unknown
-
-It stores the chosen labels and confidence in `target_labels`. `synthesize` annotates matching findings, sends the label summary to the LLM prompt, and drops low-confidence or `other` labels from deterministic rules. `patterns` mines structural object-level sequences without labels and uses labels only to name events when confidence is high.
-
-Supported models:
-
-| `--model` | Provider | Credential |
-|---|---|---|
-| `clef-flash` (default) | Cloudflare Workers AI | `wrangler login` |
-| `clef` | Cloudflare Workers AI | `wrangler login` |
-| `jev` | Cloudflare Workers AI (`typesafe/jev`) | `wrangler login` |
-| `gemini-decision-1` | Gemini Decisions API | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
-| `gpt-6-luna` (alias `luna`) | OpenAI Decisions API | `OPENAI_API_KEY` |
-
-`TRACE2RULES_DECISION_MODEL` sets the default; `--model` overrides it.
-
-```bash
-# default: clef-flash
-trace2rules label
-trace2rules label --model jev
-trace2rules label --model gemini-decision-1
-trace2rules label --model gpt-6-luna
-trace2rules patterns --min-confidence 0.4
-```
-
-Cloudflare models authenticate through `wrangler auth token --json` and `wrangler whoami --json`; the first account is used. Gemini and OpenAI use their standard keys. Labeling defaults to 270 requests/minute with 6 workers and retries 429/5xx responses.
-
-`label` sends the tool name, action type, redacted normalized target, and a redacted raw command example to the selected provider. The local DuckDB and `report` output remain unredacted. Do not run external labeling or synthesis on private sessions without reviewing the redaction and provider policy.
 
 ## Configuration
 
@@ -307,7 +234,6 @@ Cloudflare models authenticate through `wrangler auth token --json` and `wrangle
 1. **Ingest** normalizes tool calls into DuckDB (`sessions`, `tool_events`).
 2. **Detectors** find high-coverage setup failures, repeated exception signatures, read-only hotspots, and large output calls.
 3. **Exact n-gram mining** groups recurring 3–5-step tool sequences with lift and paired-rework evidence. Windows never cross a compaction boundary; nested sequences are deduplicated before selection.
-4. **Decision labels** (optional) classify normalized targets with clef/Jev/Gemini Decisions/Luna; `synthesize` uses them for category and filtering, and `patterns` uses them for intent-aware sequence mining.
 5. **Synthesis** is LLM-first. It selects gated findings and asks the configured model for structured rules; `--offline` forces deterministic rules.
 
 Generated verifier scripts and low-support task-specific sequences are filtered before synthesis.
@@ -317,14 +243,12 @@ Generated verifier scripts and low-support task-specific sequences are filtered 
 - Session data stays in your local DuckDB database.
 - `--offline` performs no LLM calls.
 - LLM synthesis sends mined findings, not the full raw session database. Findings can still contain commands, paths, and repository names; review before using an external provider.
-- `label` sends a normalized target plus a raw example to Cloudflare Workers AI; do not use it on sensitive private sessions without review.
 - `data/` is gitignored.
 
 ## Known limits
 
 - Detectors are heuristics. Review every proposed rule.
 - Local-session formats change frequently. `agent-trajectory` is the compatibility layer; pin its version.
-- Decision-model labels are probabilistic; inspect low-confidence labels before relying on them.
 
 ## Development
 

@@ -708,7 +708,7 @@ def synthesize(
     max_rules: int = MAX_RULES,
     console: Console | None = None,
     emit: bool = True,
-    agents: str | Path | None = None,
+    agents: str | Path | list[str | Path] | None = None,
 ) -> list[Synthesis]:
     from .cluster import exact_sequences, mine
 

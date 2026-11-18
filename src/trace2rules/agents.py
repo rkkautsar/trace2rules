@@ -6,7 +6,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import duckdb
 
@@ -24,6 +24,9 @@ ACTIONABLE_SECTION_RE = re.compile(
     r"(?i)(guideline|rule|command|test|lint|type|style|quality|workflow|"
     r"development|contribut|requirement|check|performance|convention)"
 )
+COMMAND_SECTION_RE = re.compile(
+    r"(?i)(command|test|lint|type|quality|check|install|benchmark|setup)"
+)
 NON_ACTIONABLE_SECTION_RE = re.compile(
     r"(?i)(about|overview|architecture|key concepts|common usage|important files|"
     r"entry points|philosophy)"
@@ -37,6 +40,9 @@ class AgentRule:
     commands: tuple[str, ...]
     paths: tuple[str, ...]
     keywords: tuple[str, ...]
+    source: str = "AGENTS.md"
+    line: int = 0
+    section: str = ""
 
 
 @dataclass(slots=True)
@@ -49,14 +55,26 @@ class RuleAudit:
     enforceable: bool
     enforcement: str
     suggestion: str
+    source: str = "AGENTS.md"
+    line: int = 0
+    section: str = ""
+    compliant_sessions: int = 0
+    failed_validation_sessions: int = 0
+    not_observed_sessions: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "text": self.text,
+            "source": self.source,
+            "line": self.line,
+            "section": self.section,
             "category": self.category,
             "exercised_sessions": self.exercised_sessions,
             "applicable_sessions": self.applicable_sessions,
+            "compliant_sessions": self.compliant_sessions,
             "violation_sessions": self.violation_sessions,
+            "failed_validation_sessions": self.failed_validation_sessions,
+            "not_observed_sessions": self.not_observed_sessions,
             "enforceable": self.enforceable,
             "enforcement": self.enforcement,
             "suggestion": self.suggestion,
@@ -89,20 +107,75 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
     return "convention"
 
 
+def _make_rule(
+    text: str,
+    source: str,
+    line: int,
+    section: str,
+    *,
+    commands: tuple[str, ...] | None = None,
+    paths: tuple[str, ...] | None = None,
+) -> AgentRule:
+    commands = commands or tuple(COMMAND_RE.findall(text))
+    paths = paths or tuple(dict.fromkeys(PATH_RE.findall(text)))
+    keywords = tuple(
+        token
+        for token in dict.fromkeys(WORD_RE.findall(text))
+        if token.lower() not in {"that", "this", "with", "from", "when", "then", "should", "never"}
+    )
+    return AgentRule(
+        text,
+        _category(text, paths),
+        commands,
+        paths,
+        keywords,
+        source,
+        line,
+        section,
+    )
+
+
 def parse_agents(path: str | Path) -> list[AgentRule]:
-    return parse_agents_text(Path(path).read_text(encoding="utf-8"))
+    file_path = Path(path)
+    source = file_path.name or "AGENTS.md"
+    return parse_agents_text(file_path.read_text(encoding="utf-8"), source)
 
 
-def parse_agents_text(text: str) -> list[AgentRule]:
-    lines = text.splitlines()
+def parse_agents_text(text: str, source: str = "AGENTS.md") -> list[AgentRule]:
     rules: list[AgentRule] = []
+    seen: set[tuple[str, str]] = set()
     section = ""
-    for line in lines:
-        stripped = line.strip()
+    in_code = False
+    code_lang = ""
+    for line_no, raw_line in enumerate(text.splitlines(), 1):
+        stripped = raw_line.strip()
+        if stripped.startswith("```"):
+            if in_code:
+                in_code = False
+                code_lang = ""
+            else:
+                in_code = True
+                code_lang = stripped[3:].strip().lower()
+            continue
+        if in_code:
+            if (
+                code_lang in {"bash", "sh", "shell", "console", "zsh"}
+                and section
+                and ACTIONABLE_SECTION_RE.search(section)
+                and COMMAND_SECTION_RE.search(section)
+                and stripped
+                and not stripped.startswith("#")
+            ):
+                rule = _make_rule(f"Run `{stripped}`", source, line_no, section, commands=(stripped,))
+                key = (rule.source, rule.text)
+                if key not in seen:
+                    seen.add(key)
+                    rules.append(rule)
+            continue
         if stripped.startswith("#"):
             section = stripped.lstrip("#").strip()
             continue
-        if not stripped or stripped.startswith("```"):
+        if not stripped:
             continue
         if section and (
             NON_ACTIONABLE_SECTION_RE.search(section)
@@ -120,19 +193,45 @@ def parse_agents_text(text: str) -> list[AgentRule]:
             text = numbered.group(1).strip()
         if not text or len(text) < 12:
             continue
-        commands = tuple(COMMAND_RE.findall(text))
-        paths = tuple(dict.fromkeys(PATH_RE.findall(text)))
-        keywords = tuple(
-            token
-            for token in dict.fromkeys(WORD_RE.findall(text))
-            if token.lower() not in {"that", "this", "with", "from", "when", "then", "should", "never"}
+        rule = _make_rule(text, source, line_no, section)
+        key = (
+            (rule.source, "cmd:" + _normalize_command(rule.commands[0]))
+            if rule.category == "test_command" and rule.commands
+            else (rule.source, rule.text)
         )
-        rules.append(AgentRule(text, _category(text, paths), commands, paths, keywords))
+        if key in seen:
+            continue
+        seen.add(key)
+        rules.append(rule)
     return rules
 
 
+def _normalize_command(command: str) -> str:
+    command = command.strip()
+    command = re.sub(r"^(?:cd\s+\S+\s*&&\s*)+", "", command)
+    command = re.sub(
+        r"^(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S+)\s+)+",
+        "",
+        command,
+    )
+    command = re.sub(r"^(?:timeout\s+\S+\s+)", "", command)
+    return command.strip().lower()
+
+
+def _path_matches(path: str, target: str) -> bool:
+    path = path.strip().rstrip("/")
+    target = target.strip().rstrip("/")
+    if not path or not target:
+        return False
+    if "<" in path:
+        prefix = path.split("<", 1)[0].rstrip("/")
+        return target.startswith(prefix + "/") or target == prefix
+    return target == path or target.startswith(path + "/") or path in target
+
+
 def _needles(rule: AgentRule) -> tuple[str, ...]:
-    values = list(rule.commands) + list(rule.paths)
+    values = [_normalize_command(command) for command in rule.commands]
+    values.extend(rule.paths)
     for token in rule.keywords:
         if "/" in token or "." in token or token.isupper():
             values.append(token)
@@ -140,13 +239,22 @@ def _needles(rule: AgentRule) -> tuple[str, ...]:
 
 
 def _matches(rule: AgentRule, raw_target: str, target: str, object_id: str) -> bool:
+    if rule.commands:
+        normalized = _normalize_command(raw_target)
+        for command in rule.commands:
+            needle = _normalize_command(command)
+            if needle and (needle in normalized or needle in (target or "").lower()):
+                return True
+    if rule.paths:
+        return any(_path_matches(path, target or "") for path in rule.paths)
     haystack = f"{raw_target}\n{target}\n{object_id}".lower()
     return any(needle in haystack for needle in _needles(rule))
 
 
 def _enforcement(rule: AgentRule) -> str:
     if rule.category == "test_command":
-        return "CI required check / pre-commit hook running the documented command."
+        command = rule.commands[0] if rule.commands else "the documented validation command"
+        return f"CI required check / pre-commit hook running `{command}`."
     if rule.category == "architecture_map":
         return "Import-boundary lint, CODEOWNERS, or a CI forbidden-path check."
     if rule.category == "context_hygiene":
@@ -194,97 +302,122 @@ def audit_agents(
 
     audits: list[RuleAudit] = []
     for rule in rules:
-        exercised = 0
+        observed = 0
         applicable = 0
+        compliant = 0
+        failed_validation = 0
         violations = 0
         for events in sessions.values():
             if any(
                 _matches(rule, raw, target, object_id)
                 for _sid, _step, _action, raw, target, object_id, _outcome in events
             ):
-                exercised += 1
+                observed += 1
             edit_steps = [
                 step for _sid, step, action, _raw, _target, _object, _outcome in events
                 if action == "edit"
             ]
             if rule.category == "test_command":
-                applicable += 1 if edit_steps else 0
-            else:
+                if not edit_steps:
+                    continue
                 applicable += 1
-            if not edit_steps:
-                continue
-            last_edit = max(edit_steps)
-            if rule.category == "test_command":
-                followed = any(
-                    action == "exec"
-                    and outcome == "ok"
+                last_edit = max(edit_steps)
+                matching = [
+                    (step, outcome, raw, target, object_id)
+                    for _sid, step, action, raw, target, object_id, outcome in events
+                    if action == "exec"
                     and step > last_edit
                     and (
                         _matches(rule, raw, target, object_id)
                         if rule.commands
                         else VALIDATION_RE.search(raw)
                     )
-                    for _sid, step, action, raw, target, object_id, outcome in events
-                )
-                if not followed:
+                ]
+                if any(outcome == "ok" for _step, outcome, *_rest in matching):
+                    compliant += 1
+                else:
                     violations += 1
+                    if any(outcome != "ok" for _step, outcome, *_rest in matching):
+                        failed_validation += 1
             elif rule.category == "context_hygiene":
+                applicable += 1
                 if any(
                     action == "edit"
-                    and (
-                        _matches(rule, _raw, target, object_id)
-                        or not _needles(rule) and SCRATCH_RE.search(object_id or target)
-                    )
+                    and _matches(rule, raw, target, object_id)
                     and not target.startswith(("/tmp/", "tmp/"))
-                    for _sid, _step, action, _raw, target, object_id, _outcome in events
+                    for _sid, _step, action, raw, target, object_id, _outcome in events
                 ):
                     violations += 1
+            else:
+                applicable += 1
+
+        enforcement = _enforcement(rule)
+        enforceable = not enforcement.startswith("No mechanical enforcement")
         if not _needles(rule):
             suggestion = "Rule has no command, path, or concrete pattern; add one."
         elif violations:
             suggestion = (
-                f"Rule was violated in {violations} of {applicable} applicable sessions; "
+                f"{violations} of {applicable} applicable sessions did not satisfy the rule "
+                f"(observed {observed}, compliant {compliant}, failed validation {failed_validation}); "
                 "move it into CI/pre-commit."
             )
-        elif exercised == 0 and enforceable:
+        elif observed == 0 and enforceable:
             suggestion = f"Not observed in sessions; enforce mechanically with: {enforcement}."
-        elif exercised == 0:
+        elif observed == 0:
             suggestion = "No matching tool calls; the rule may be stale or phrased differently."
         else:
             suggestion = "Rule was exercised without detected violations; keep as guidance."
-        enforcement = _enforcement(rule)
-        enforceable = not enforcement.startswith("No mechanical enforcement")
         audits.append(
             RuleAudit(
                 rule.text,
                 rule.category,
-                exercised,
+                observed,
                 applicable,
                 violations,
                 enforceable,
                 enforcement,
                 suggestion,
+                rule.source,
+                rule.line,
+                rule.section,
+                compliant,
+                failed_validation,
+                max(applicable - observed, 0),
             )
         )
     return audits
 
 
+def resolve_agents(path: str | Path | None = None) -> list[Path]:
+    if path is not None:
+        return [Path(path)]
+    candidates = [Path("AGENTS.md"), Path("CLAUDE.md")]
+    return [candidate for candidate in candidates if candidate.exists()]
+
+
 def audit_payload(
     con: duckdb.DuckDBPyConnection,
     repo: str,
-    path: str | Path,
+    path: str | Path | Sequence[str | Path] | None,
     *,
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> dict[str, Any]:
-    rules = parse_agents(path)
+    paths = (
+        [Path(path)]
+        if isinstance(path, (str, Path))
+        else [Path(item) for item in path]
+        if path is not None
+        else resolve_agents()
+    )
+    rules = [rule for file in paths for rule in parse_agents(file)]
     coverage = con.execute(
         "SELECT count(*), count(*) FILTER (WHERE started_at IS NOT NULL) FROM sessions WHERE repo = ?",
         [repo],
     ).fetchone()
     return {
         "repo": repo,
-        "agents_md": str(path),
+        "agents_md": [str(file) for file in paths],
         "since": since.isoformat() if since else None,
         "until": until.isoformat() if until else None,
         "sessions_with_timestamps": coverage[1],
@@ -319,7 +452,7 @@ def agents_at_commit(path: str | Path, rev: str) -> tuple[list[AgentRule], datet
     relative = file_path.relative_to(root).as_posix()
     content = _git(root, "show", f"{rev}:{relative}")
     stamp = _git(root, "show", "-s", "--format=%cI", rev)
-    return parse_agents_text(content), datetime.fromisoformat(stamp)
+    return parse_agents_text(content, file_path.name), datetime.fromisoformat(stamp)
 
 
 def audit_commit(
@@ -373,7 +506,7 @@ Review these existing rules and return a JSON object with:
 - `rules`: only rules that should change, each with:
   - `rule_text`: exact existing rule text
   - `diagnosis`: `unenforced`, `stale`, `ambiguous`, `violated`, or `keep`
-  - `evidence`: exercised/applicable/violation counts from the audit
+  - `evidence`: observed/applicable/compliant/failed/violation counts
   - `enforcement`: concrete CI, pre-commit, lint, or CODEOWNERS check
   - `replacement`: optional stricter wording, or null
 - `suggested_new_rules`: rules supported by evidence but missing from AGENTS.md

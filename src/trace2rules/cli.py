@@ -22,7 +22,7 @@ from rich.markup import escape
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from .agents import audit_commit, audit_payload, latest_agents_commit
+from .agents import audit_commit, audit_payload, latest_agents_commit, resolve_agents
 from .db import DB_PATH, connect
 from .ingest import DEFAULT_REPOS, SOURCE, ingest as ingest_traces
 from .labels import label_targets
@@ -442,7 +442,9 @@ def _report_command(
                     label_summary(con, repo),
                     max_rules=5,
                     context=prompt_context(con, repo),
-                    existing=audit_payload(con, repo, agents) if agents else None,
+                    existing=audit_payload(con, repo, resolve_agents(agents))
+                    if resolve_agents(agents)
+                    else None,
                 )
             )
             return
@@ -479,7 +481,10 @@ app.command("report")(_report_command)
 
 def _audit_command(
     repo: Annotated[str, typer.Option("--repo", help="Repository label to audit against.")],
-    agents: Annotated[Path, typer.Option("--agents", help="AGENTS.md path.")] = Path("AGENTS.md"),
+    agents: Annotated[
+        Path | None,
+        typer.Option("--agents", help="AGENTS.md or CLAUDE.md path; auto-detects both when omitted."),
+    ] = None,
     since: Annotated[str | None, typer.Option("--since", help="Only sessions at/after ISO timestamp.")] = None,
     until: Annotated[str | None, typer.Option("--until", help="Only sessions before ISO timestamp.")] = None,
     latest_commit: Annotated[
@@ -500,9 +505,11 @@ def _audit_command(
     json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON.")] = False,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
-    if not agents.exists():
-        console.print(f"[red]No AGENTS.md at {agents}[/red]")
+    agent_paths = resolve_agents(agents)
+    if not agent_paths:
+        console.print("[red]No AGENTS.md or CLAUDE.md found.[/red]")
         raise typer.Exit(1)
+    agents = agent_paths[0]
     def parse_time(value: str | None) -> datetime | None:
         if value is None:
             return None
@@ -536,7 +543,7 @@ def _audit_command(
                     if coverage[1]:
                         if since_dt is None:
                             since_dt = committed_at
-                        payload = audit_payload(con, repo, agents, since=since_dt, until=until_dt)
+                        payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt)
                         payload["commit"] = sha
                         payload["committed_at"] = committed_at.isoformat()
                         if coverage[1] < coverage[0]:
@@ -545,7 +552,7 @@ def _audit_command(
                                 f"{coverage[0] - coverage[1]} sessions have no timestamp and were excluded."
                             )
                     else:
-                        payload = audit_payload(con, repo, agents, since=since_dt, until=until_dt)
+                        payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt)
                         payload["commit"] = sha
                         payload["committed_at"] = committed_at.isoformat()
                         payload["warning"] = (
@@ -553,10 +560,10 @@ def _audit_command(
                             "instead of the latest AGENTS.md commit cutoff."
                         )
                 except (subprocess.CalledProcessError, OSError, ValueError) as error:
-                    payload = audit_payload(con, repo, agents, since=since_dt, until=until_dt)
+                    payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt)
                     payload["warning"] = f"Could not resolve latest AGENTS.md commit: {error}"
             else:
-                payload = audit_payload(con, repo, agents, since=since_dt, until=until_dt)
+                payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt)
     finally:
         con.close()
     if prompt_output:
@@ -898,7 +905,13 @@ def _synthesize_command(
                 max_rules=max_rules,
                 offline=offline,
                 console=cmd_console,
-                agents=agents,
+                agents=(
+                    resolve_agents(agents)
+                    if agents
+                    else resolve_agents()
+                    if repo
+                    else None
+                ),
             )
         except ValueError as error:
             cmd_console.print(f"[red]{escape(str(error))}[/red]")

@@ -128,3 +128,27 @@ def test_audit_since_filters_sessions(tmp_path: Path) -> None:
     finally:
         con.close()
     assert audits[0].applicable_sessions == 1
+
+
+def test_resolve_agents_detects_claude_md(tmp_path: Path, monkeypatch) -> None:
+    from trace2rules.agents import resolve_agents
+
+    (tmp_path / "CLAUDE.md").write_text("- Run `pytest tests/test_api.py` after editing.\n")
+    monkeypatch.chdir(tmp_path)
+    assert [path.name for path in resolve_agents()] == ["CLAUDE.md"]
+
+
+def test_parse_agents_collects_shell_commands(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text(
+        "## Testing\n"
+        "```bash\n"
+        "make check\n"
+        "```\n"
+        "## Architecture\n"
+        "```bash\n"
+        "cat README.md\n"
+        "```\n"
+    )
+    rules = parse_agents(path)
+    assert [rule.commands for rule in rules] == [("make check",)]

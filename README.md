@@ -19,32 +19,29 @@ The first rule is a soft instruction: nearly every session was applicable, but o
 
 The same sessions produce suggested rules:
 
-```markdown
-## test_command
-- **Rule:** Run `RUSTUP_TOOLCHAIN=1.84.1 cargo test -p <crate> --offline` after editing a crate.
-  **Evidence:** 21 sessions spent the bootstrap retry; 74 of 188 sessions ended without validation.
+**`swc-project/swc`**
 
-## context_hygiene
-- **Rule:** Locate a symbol with `rg -n` and read the enclosing line range instead of paging through large files such as `sequences.rs`.
-  **Evidence:** 33 reads of `sequences.rs` across 7 sessions averaged 1,802 tokens.
-```
+- Build and validate the touched crate offline with the pinned toolchain, e.g. `RUSTUP_TOOLCHAIN=1.84.1 cargo test -p swc_ecma_codegen --offline`; bare `cargo` attempts to download the nightly channel and fails in this sandbox.
+- In large sources such as crates/swc_ecma_codegen/src/lib.rs and crates/swc_ecma_minifier/src/compress/optimize/{mod,sequences}.rs, locate symbols with `grep -n` and read `sed -n` line ranges instead of whole-file reads or repeated full re-reads.
 
 ### Local examples
 
-#### `rkkautsar/trace2rules`
+**`rkkautsar/trace2rules`**
 
-- **Validate:** `uv run pytest -q`
-- **Architecture:** `sources/` → `ingest.py` → `detectors.py` → `cluster.py` → `synthesize.py` → `cli.py`
+- Treat `src/trace2rules/` as a linear pipeline: `ingest.py` normalizes calls, `detectors.py` emits findings, `cluster.py` groups failures, `synthesize.py` renders rules, and `cli.py` wires commands. Change the owning module and its `tests/test_<module>.py`, not every stage.
+- Find the symbol with `rg -n '^(def|class) ' src/trace2rules/<module>.py` and read only that range; avoid `cat -n` or `nl -ba` on all of `synthesize.py`, `cli.py`, `detectors.py`, or `cluster.py`.
+- Run `uv run pytest -q` from the repository root after edits; narrow one failing CLI case with `uv run pytest -q tests/test_cli.py -k <pattern>`.
 
-#### `rkkautsar/louibot`
+**`rkkautsar/louibot`**
 
-- **Validate:** `npx tsc --noEmit && npm test && npm run build`
-- **Runtime:** use `python3.10` for vendored Mini-SWE-Agent code
+- Verify changes from the repo root with `npx tsc --noEmit && npm test`, then `npm run build`.
+- Keep a section map of `src/agent.ts` (prompts, compaction, validation) in AGENTS.md; grep the symbol, then read only that bounded range.
+- Run vendored Mini-SWE-Agent code in `.louibot/benchmarks/*/miniswe-agent-env` with `python3.10`; `python3` 3.15 raises `ImportError: cannot import name 'ArgsKwargs' from 'pydantic_core._pydantic_core'`.
 
-#### `rkkautsar/personal-website`
+**`rkkautsar/personal-website`**
 
-- **Regenerate:** `node scripts/generate-blog.mjs`
-- **Check:** generated blog HTML has the expected `og:image` tags
+- After editing `scripts/generate-blog.mjs` or `scripts/og-image.mjs`, regenerate with `node scripts/generate-blog.mjs` and confirm the affected `dist/blog/<slug>/index.html` contains the expected `<meta property="og:image">`/`og:image:width` tags before reporting done.
+- Read `scripts/generate-blog.mjs` and `scripts/og-image.mjs` with targeted line ranges (`sed -n '1,40p'`) around the function under change instead of dumping the whole file in one call.
 
 Rules are capped at 5 rules, 60 lines, and 2,500 characters per repo.
 

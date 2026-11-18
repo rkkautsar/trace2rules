@@ -119,6 +119,7 @@ def select_findings(
             for finding in mined.get(key, [])
             if finding.repo == repo
             and finding.sessions >= 3
+            and not GENERATED_VERIFIER_RE.search(finding.title)
             and (finding.recommendation or finding.kind != "context")
             and (
                 finding.kind != "hotspot"

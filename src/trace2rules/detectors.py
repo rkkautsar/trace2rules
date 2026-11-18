@@ -68,6 +68,12 @@ def session_summary(con: duckdb.DuckDBPyConnection) -> list[dict]:
     ]
 
 
+_GENERIC_SCRIPT_RE = re.compile(
+    r"(?i)^(?:reproduce|repro|scratch|debug|verify|verification|comprehensive|final|"
+    r"test_fix|test_repro|validation_test)"
+)
+
+
 _TEST_TARGET_RE = re.compile(
     r"(?i)(^|\s)(pytest|py\.test|tox|nox|python3?\s+-m\s+(?:pytest|unittest)|make\s+(?:test|unit|check)|"
     r"npm\s+test|yarn\s+test|pnpm\s+test|cargo\s+test|go\s+test|mvn\s+test|gradle\s+test|"
@@ -162,6 +168,10 @@ def _representative_window(
         FROM tool_events e
         JOIN sessions s USING (session_id)
         WHERE e.session_id = ? AND e.step_idx BETWEEN ? AND ? AND e.segment_idx = ?
+          AND NOT regexp_matches(
+              e.object_id,
+              '(?i)^(reproduce|repro|scratch|debug|verify|verification|comprehensive|final|test_fix|test_repro|validation_test)'
+          )
         ORDER BY step_idx
         LIMIT 12
         """,
@@ -365,6 +375,10 @@ def workaround_scripts(con: duckdb.DuckDBPyConnection, limit: int | None = None)
                    count(*) FILTER (WHERE outcome = 'err' AND regexp_matches(object_id,
                        '(?i)^(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)')) AS failures
             FROM tool_events
+            WHERE NOT regexp_matches(
+                object_id,
+                '(?i)^(reproduce|repro|scratch|debug|verify|verification|comprehensive|final|test_fix|test_repro|validation_test)'
+            )
             GROUP BY 1, 2
         ) s
         WHERE edits > 0

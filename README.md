@@ -8,21 +8,14 @@ Status: beta. The output is a proposal, not an automatically applied `AGENTS.md`
 
 ## Example finding
 
-On SWC (Rust), the strongest repeated friction was toolchain bootstrap: 21 sessions hit rustup’s nightly channel download failure before switching to the pinned offline toolchain.
+On SWC (Rust), auditing the repository’s real `AGENTS.md` against 188 local sessions showed the gap between written rules and actual behavior:
 
-Abridged synthesized output:
+| Rule | Observed | Applicable | Compliant | Violations | Enforcement |
+|---|---:|---:|---:|---:|---|
+| `Prefer fixture tests over inline (#[test]) tests` | 5 | 188 | 1 | 187 | missing |
+| `Use gh CLI for github.com data` | 87 | 188 | 0 | 0 | configured in `.github/workflows/CI.yml` |
 
-```markdown
-## test_command
-- **Rule:** Run `RUSTUP_TOOLCHAIN=1.84.1 cargo test -p <crate> --offline` after editing a crate.
-  **Evidence:** 21 sessions spent the bootstrap retry; 74 of 188 sessions ended without validation.
-
-## context_hygiene
-- **Rule:** Locate a symbol with `rg -n` and read the enclosing line range instead of paging through large files such as `sequences.rs`.
-  **Evidence:** 33 reads of `sequences.rs` across 7 sessions averaged 1,802 tokens.
-```
-
-Rules are capped at 5 rules, 60 lines, and 2,500 characters per repo.
+The first rule is a soft instruction: nearly every session was applicable, but only five were observed exercising it. The second is already backed by CI. That distinction is what `audit` exposes.
 
 ## Quick start: your own sessions
 
@@ -77,13 +70,6 @@ Run `make check`
 status: configured
 source: .github/workflows/package-test.yml
 ```
-
-SWC audit (real `AGENTS.md`, all 188 sessions):
-
-| Rule | Observed | Applicable | Compliant | Violations | Enforcement |
-|---|---:|---:|---:|---:|---|
-| `Prefer fixture tests over inline (#[test]) tests` | 5 | 188 | 1 | 187 | missing |
-| `Use gh CLI for github.com data` | 87 | 188 | 0 | 0 | configured in `.github/workflows/CI.yml` |
 
 `available` means a Makefile/package target exists but is not wired into CI. `missing` means no mechanism was found. `--prompt` emits a self-contained review prompt for a fresh-context agent.
 

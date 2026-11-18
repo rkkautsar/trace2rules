@@ -6,6 +6,39 @@ Mine and audit coding-agent sessions into evidence-backed `AGENTS.md` rules.
 
 Status: beta. The output is a proposal, not an automatically applied `AGENTS.md`.
 
+## Quick start: audit existing rules
+
+Run from the target checkout. `AGENTS.md` and `CLAUDE.md` are auto-detected.
+
+```text
+Install trace2rules if missing (`uv tool install trace2rules`). Audit this repo's AGENTS.md and CLAUDE.md against my local sessions with `trace2rules audit`. Report unobserved, violated, and unenforced rules, and propose existing CI/pre-commit checks without duplicating configured enforcement.
+```
+
+Manual:
+
+```bash
+trace2rules audit --prompt > audit.txt
+```
+
+## Quick start: your own sessions
+
+Ask your coding agent to mine, report, and synthesize:
+
+```text
+Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules ingest` for my local agent sessions, then `trace2rules mine`, then `trace2rules report --prompt`. Read that report and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
+```
+
+Manual:
+
+```bash
+uv tool install trace2rules
+trace2rules ingest
+trace2rules mine
+trace2rules report --prompt > evidence.txt
+```
+
+Then give `evidence.txt` to your agent to synthesize the rules.
+
 ## Example finding
 
 On SWC (Rust), auditing the repository’s real `AGENTS.md` against 188 local sessions showed the gap between written rules and actual behavior:
@@ -46,40 +79,11 @@ The same sessions produce suggested rules:
 
 Rules are capped at 5 rules, 160 lines, and 12,000 characters per repo.
 
-## Quick start: audit existing rules
+## Local session details
 
-Run from the target checkout. `AGENTS.md` and `CLAUDE.md` are auto-detected.
+`--source` is repeatable and defaults to your home directory. It scans `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, `~/.omp/agent/sessions`, and `~/.local/share/opencode`. The default cap is 200 sessions per source and selects the most recently modified files; use `--limit 0` for all.
 
-```text
-Install trace2rules if missing (`uv tool install trace2rules`). Audit this repo's AGENTS.md and CLAUDE.md against my local sessions with `trace2rules audit`. Report unobserved, violated, and unenforced rules, and propose existing CI/pre-commit checks without duplicating configured enforcement.
-```
-
-Manual:
-
-```bash
-trace2rules audit --prompt > audit.txt
-```
-
-Then give `audit.txt` to your agent.
-
-## Quick start: your own sessions
-
-Ask your coding agent to mine, report, and synthesize:
-
-```text
-Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules ingest` for my local agent sessions, then `trace2rules mine`, then `trace2rules report --prompt`. Read that report and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
-```
-
-Or run the evidence step manually:
-
-```bash
-uv tool install trace2rules
-trace2rules ingest
-trace2rules mine
-trace2rules report --prompt > evidence.txt
-```
-
-Then give `evidence.txt` to your agent to synthesize the rules. `trace2rules synthesize` is the optional built-in LLM fallback.
+For local sessions, the repo label comes from the git remote (`owner/name`) when available, falling back to the working-directory basename. `report --prompt` emits one prompt per detected repo.
 
 To write one prompt per detected repo instead of one combined stream:
 
@@ -87,11 +91,7 @@ To write one prompt per detected repo instead of one combined stream:
 trace2rules report --prompt --out-dir reports/
 ```
 
-`--source` is repeatable and defaults to your home directory. It scans all standard local stores: `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, `~/.omp/agent/sessions`, and `~/.local/share/opencode`. The default cap is 200 sessions per source and selects the most recently modified files; use `--limit 0` for all.
-
-For local sessions, the repo label comes from the git remote (`owner/name`) when available, falling back to the working-directory basename. `report --prompt` emits one prompt per detected repo. Run `trace2rules mine` to see labels.
-
-Agent synthesis from the report is the default workflow. `trace2rules synthesize` is optional; add `--offline` to force its deterministic rules.
+Agent synthesis from the report is the default workflow. `trace2rules synthesize` is the optional built-in LLM fallback.
 
 `ingest` writes to `$TMPDIR/trace2rules/trace2rules.duckdb` by default. Set `TRACE2RULES_DB` to use a persistent path.
 

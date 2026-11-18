@@ -12,7 +12,7 @@ VALIDATION_RE = re.compile(
     r"npm test|vitest|jest|make (?:unit|test)|check)\b"
 )
 SCRATCH_RE = re.compile(
-    r"(?i)\b(reproduce|repro|scratch|debug|verify|validation_test|comprehensive|final)\b"
+    r"(?i)\b(?:reproduce|repro|scratch|debug|verify|validation_test|comprehensive|final)[\w.-]*\b"
 )
 PATH_RE = re.compile(r"(?<![\w./-])(?:[\w.-]+/){1,}[\w.-]+")
 COMMAND_RE = re.compile(r"`([^`]+)`")
@@ -33,7 +33,7 @@ class RuleAudit:
     text: str
     category: str
     exercised_sessions: int
-    edit_sessions: int
+    applicable_sessions: int
     violation_sessions: int
     enforcement: str
     suggestion: str
@@ -43,20 +43,25 @@ class RuleAudit:
             "text": self.text,
             "category": self.category,
             "exercised_sessions": self.exercised_sessions,
-            "edit_sessions": self.edit_sessions,
+            "applicable_sessions": self.applicable_sessions,
             "violation_sessions": self.violation_sessions,
             "enforcement": self.enforcement,
             "suggestion": self.suggestion,
         }
 
 
-def _category(text: str) -> str:
+def _category(text: str, paths: tuple[str, ...]) -> str:
     lower = text.lower()
+    if SCRATCH_RE.search(lower) and any(
+        token in lower for token in ("do not", "don't", "never", "keep", "outside")
+    ):
+        return "context_hygiene"
     if VALIDATION_RE.search(lower):
         return "test_command"
-    if SCRATCH_RE.search(lower):
-        return "context_hygiene"
-    if any(token in lower for token in ("directory", "package", "module", "src/", "crate")):
+    if paths or any(
+        token in lower
+        for token in ("directory", "package", "module", "src/", "crate", "dialect", "parser")
+    ):
         return "architecture_map"
     return "convention"
 
@@ -84,7 +89,7 @@ def parse_agents(path: str | Path) -> list[AgentRule]:
             for token in dict.fromkeys(WORD_RE.findall(text))
             if token.lower() not in {"that", "this", "with", "from", "when", "then", "should", "never"}
         )
-        rules.append(AgentRule(text, _category(text), commands, paths, keywords))
+        rules.append(AgentRule(text, _category(text, paths), commands, paths, keywords))
     return rules
 
 
@@ -129,37 +134,47 @@ def audit_agents(
     audits: list[RuleAudit] = []
     for rule in rules:
         exercised = 0
-        edited = 0
+        applicable = 0
         violations = 0
         for events in sessions.values():
             if any(
-                action == "edit" or _matches(rule, raw, target, object_id)
-                for _sid, _step, action, raw, target, object_id, _outcome in events
+                _matches(rule, raw, target, object_id)
+                for _sid, _step, _action, raw, target, object_id, _outcome in events
             ):
                 exercised += 1
             edit_steps = [
                 step for _sid, step, action, _raw, _target, _object, _outcome in events
                 if action == "edit"
             ]
+            if rule.category == "test_command":
+                applicable += 1 if edit_steps else 0
+            else:
+                applicable += 1
             if not edit_steps:
                 continue
-            edited += 1
             last_edit = max(edit_steps)
             if rule.category == "test_command":
                 followed = any(
                     action == "exec"
                     and outcome == "ok"
                     and step > last_edit
-                    and _matches(rule, raw, target, object_id)
+                    and (
+                        _matches(rule, raw, target, object_id)
+                        or VALIDATION_RE.search(raw)
+                    )
                     for _sid, step, action, raw, target, object_id, outcome in events
                 )
                 if not followed:
                     violations += 1
             elif rule.category == "context_hygiene":
                 if any(
-                    SCRATCH_RE.search(object_id)
-                    and not raw.startswith(("cd /tmp", "cd /tmp/"))
-                    for _sid, _step, _action, raw, _target, object_id, _outcome in events
+                    action == "edit"
+                    and (
+                        _matches(rule, _raw, target, object_id)
+                        or not _needles(rule) and SCRATCH_RE.search(object_id or target)
+                    )
+                    and not target.startswith(("/tmp/", "tmp/"))
+                    for _sid, _step, action, _raw, target, object_id, _outcome in events
                 ):
                     violations += 1
         if not _needles(rule):
@@ -175,7 +190,7 @@ def audit_agents(
                 rule.text,
                 rule.category,
                 exercised,
-                edited,
+                applicable,
                 violations,
                 _enforcement(rule),
                 suggestion,

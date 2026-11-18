@@ -22,6 +22,7 @@ from rich.markup import escape
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
+from .agents import audit_payload
 from .db import DB_PATH, connect
 from .ingest import DEFAULT_REPOS, SOURCE, ingest as ingest_traces
 from .labels import label_targets
@@ -380,6 +381,10 @@ def _report_command(
         typer.Option("--repo", help="Limit findings to one repository label."),
     ] = None,
     prompt: Annotated[bool, typer.Option("--prompt", help="Emit the evidence prompt for an external agent.")] = False,
+    agents: Annotated[
+        Path | None,
+        typer.Option("--agents", help="Existing AGENTS.md to audit and avoid duplicating."),
+    ] = None,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     if prompt and not repo:
@@ -437,6 +442,7 @@ def _report_command(
                     label_summary(con, repo),
                     max_rules=5,
                     context=prompt_context(con, repo),
+                    existing=audit_payload(con, repo, agents) if agents else None,
                 )
             )
             return
@@ -469,6 +475,43 @@ def _report_command(
 
 
 app.command("report")(_report_command)
+
+
+def _audit_command(
+    repo: Annotated[str, typer.Option("--repo", help="Repository label to audit against.")],
+    agents: Annotated[Path, typer.Option("--agents", help="AGENTS.md path.")] = Path("AGENTS.md"),
+    json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON.")] = False,
+    db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
+) -> None:
+    if not agents.exists():
+        console.print(f"[red]No AGENTS.md at {agents}[/red]")
+        raise typer.Exit(1)
+    con = connect(db)
+    try:
+        payload = audit_payload(con, repo, agents)
+    finally:
+        con.close()
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    table = Table(title=f"AGENTS.md audit: {repo}")
+    for column in ("Rule", "Category", "Exercised", "Applicable", "Violations", "Enforcement"):
+        table.add_column(column)
+    for rule in payload["rules"]:
+        table.add_row(
+            rule["text"][:90],
+            rule["category"],
+            str(rule["exercised_sessions"]),
+            str(rule["applicable_sessions"]),
+            str(rule["violation_sessions"]),
+            rule["enforcement"],
+        )
+    console.print(table)
+    for rule in payload["rules"]:
+        console.print(f"[dim]{rule['suggestion']}[/dim]")
+
+
+app.command("audit")(_audit_command)
 
 
 def _doctor_command(

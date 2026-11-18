@@ -330,6 +330,7 @@ def _prompt(
     labels: list[dict],
     max_rules: int = MAX_RULES,
     context: dict | None = None,
+    existing: dict | None = None,
 ) -> str:
     payload = redact_value(
         [
@@ -367,9 +368,13 @@ Semantic target labels observed for this repo (clef/decision-model annotations, 
 Command/bootstrap evidence (JSON):
 {json.dumps(redact_value(context or {}), indent=2)}
 
+Existing AGENTS.md rules and audit (JSON):
+{json.dumps(redact_value(existing or {}), indent=2)}
+
 Write AGENTS.md rules for this repository. Requirements:
 - Emit 0-{max_rules} declarative rules. Do not fill the quota: fewer rules are better, and zero is valid when the evidence does not support a rule. Do not emit task-specific issue descriptions.
 - Categories: test_command, architecture_map, context_hygiene, convention.
+- Do not repeat an existing AGENTS.md rule. If an existing rule is violated or unenforced, propose the concrete enforcement (CI/pre-commit/lint) instead.
 - rule_markdown: 1-2 imperative sentences, concrete command or file names.
 - evidence_summary: sessions affected and approximate setup/rework token cost.
 - No generic platitudes ("be careful", "read the docs").

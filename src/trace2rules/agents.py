@@ -72,6 +72,12 @@ class RuleAudit:
     scope: str = "repository"
     existing_enforcement: str = ""
     enforcement_status: str = "unknown"
+    detector: str = ""
+    measurable: bool = False
+    opportunities: int = 0
+    followed: int = 0
+    undecided: int = 0
+    rate: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -89,6 +95,12 @@ class RuleAudit:
             "scope": self.scope,
             "existing_enforcement": self.existing_enforcement,
             "enforcement_status": self.enforcement_status,
+            "detector": self.detector,
+            "measurable": self.measurable,
+            "opportunities": self.opportunities,
+            "followed": self.followed,
+            "undecided": self.undecided,
+            "rate": self.rate,
             "enforceable": self.enforceable,
             "enforcement": self.enforcement,
             "suggestion": self.suggestion,
@@ -582,6 +594,27 @@ def audit_agents(
             suggestion = "No matching tool calls; the rule may be stale or phrased differently."
         else:
             suggestion = "Rule was exercised without detected violations; keep as guidance."
+        detector = {
+            "test_command": "test-after-change",
+            "context_hygiene": "scratch-file-hygiene",
+            "architecture_map": "path-ownership",
+        }.get(rule.category, "generic")
+        measurable = rule.category in {"test_command", "context_hygiene"}
+        opportunities = applicable if measurable else 0
+        if rule.category == "test_command":
+            followed = compliant
+            undecided = not_observed
+        elif rule.category == "context_hygiene":
+            followed = max(applicable - violations, 0)
+            undecided = not_observed
+        else:
+            followed = 0
+            undecided = 0
+        rate = (
+            round(followed / opportunities, 3)
+            if opportunities >= 20
+            else None
+        )
         status, existing = discover_enforcement(root, rule)
         if status == "configured":
             suggestion = (
@@ -613,6 +646,13 @@ def audit_agents(
                 status,
             )
         )
+        audit = audits[-1]
+        audit.detector = detector
+        audit.measurable = measurable
+        audit.opportunities = opportunities
+        audit.followed = followed
+        audit.undecided = undecided
+        audit.rate = rate
     return audits
 
 

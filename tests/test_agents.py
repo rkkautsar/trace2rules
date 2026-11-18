@@ -318,3 +318,38 @@ def test_infer_scope_handles_nested_test_directory(tmp_path: Path) -> None:
     from trace2rules.agents import _infer_scope
 
     assert _infer_scope(rule, root) == ("backend/src/api.py",)
+
+
+def test_audit_exposes_opportunities_and_rate(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("- Run `pytest tests/test_api.py` after editing.\n")
+    db = tmp_path / "rate.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[
+                    ToolCall("Edit", "src/api.py", action_type="edit", target="src/api.py"),
+                    ToolCall(
+                        "Bash",
+                        "pytest tests/test_api.py",
+                        action_type="exec",
+                        target="pytest tests/test_api.py",
+                        is_error=False,
+                    ),
+                ],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.detector == "test-after-change"
+    assert audit.measurable is True
+    assert audit.opportunities == 1
+    assert audit.followed == 1
+    assert audit.rate is None

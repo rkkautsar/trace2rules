@@ -774,6 +774,17 @@ def synthesize(
                 reason = "no LLM credentials"
             console.print(f"[yellow]Deterministic rules for {escape(repo_name)} ({reason}).[/yellow]")
 
+        if existing:
+            from .reconcile import reconcile
+
+            kept, actions = reconcile(synthesis.rules, existing.get("rules", []))
+            for action in actions:
+                if action.action in {"drop", "update"}:
+                    console.print(
+                        f"[dim]  {action.action}: {escape(action.reason)}[/dim]"
+                    )
+            synthesis = Synthesis(repo=synthesis.repo, rules=kept)
+
         synthesis = _validate_sources(synthesis, findings)
         synthesis = _filter_junk_rules(synthesis)
         synthesis, text = enforce_caps(

@@ -162,7 +162,7 @@ def _representative_window(
                e.approx_out_tokens, coalesce(nullif(e.obs_cause, ''), e.obs_excerpt),
                e.segment_idx, s.source_ref,
                CASE WHEN e.outcome = 'err' THEN e.error_message ELSE '' END,
-               e.raw_target, e.target
+               e.raw_target, e.target, e.assistant_context
         FROM tool_events e
         JOIN sessions s USING (session_id)
         WHERE e.session_id = ? AND e.step_idx BETWEEN ? AND ? AND e.segment_idx = ?
@@ -187,8 +187,9 @@ def _representative_window(
             "recovered": recovery_step is not None and int(step) == int(recovery_step),
             "excerpt": (excerpt or "")[:300],
             "error_message": (error_message or "")[:600],
+            "assistant": (assistant_context or "")[:600],
         }
-        for step, action, verb, object_id, outcome, exit_code, tokens, excerpt, _segment, session_ref, error_message, raw_target, target in rows
+        for step, action, verb, object_id, outcome, exit_code, tokens, excerpt, _segment, session_ref, error_message, raw_target, target, assistant_context in rows
     )
 
 
@@ -695,8 +696,11 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
     ).fetchall()
     outcomes = con.execute(
         """
-        SELECT count(*), count(*) FILTER (WHERE s.resolved),
-               count(DISTINCT e.session_id) FILTER (WHERE e.action_type = 'edit')
+        SELECT count(DISTINCT s.session_id),
+               count(DISTINCT s.session_id) FILTER (WHERE s.resolved),
+               count(DISTINCT e.session_id) FILTER (WHERE e.action_type = 'edit'),
+               count(DISTINCT s.session_id)
+                   FILTER (WHERE s.source NOT IN ('swe-chat', 'agent-trajectory'))
         FROM sessions s LEFT JOIN tool_events e USING (session_id)
         WHERE s.repo = ?
         """,
@@ -733,7 +737,8 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
             "sessions": outcomes[0],
             "resolved": outcomes[1],
             "with_edit": outcomes[2],
-            "resolved_known": outcomes[1] > 0,
+            "resolution_coverage": outcomes[3],
+            "resolved_known": outcomes[3] > 0,
         },
     }
 

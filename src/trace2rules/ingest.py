@@ -522,6 +522,11 @@ def _parse_row(row: tuple) -> tuple[dict, list[dict]]:
     calls: list[dict] = []
     step = 0
     for index, msg in enumerate(messages):
+        assistant_context = " ".join(
+            part.strip()
+            for part in (msg.get("reasoning_content") or "", msg.get("content") or "")
+            if part and part.strip()
+        )[:800]
         for tool_call in msg.get("tool_calls") or []:
             fn = tool_call["function"]
             raw_target, _ = _tool_call_parts(fn["name"], fn.get("arguments", ""))
@@ -556,6 +561,7 @@ def _parse_row(row: tuple) -> tuple[dict, list[dict]]:
                     or _error_signature(observation, exit_code, timeout, text_error, tool_error),
                     "error_origin": _error_origin(observation),
                     "event_hash": _event_hash(raw_target, observation),
+                    "assistant_context": assistant_context,
                 }
             )
             step += 1
@@ -748,6 +754,7 @@ def _events_for_calls(calls: list[dict], cache: dict[tuple[str, str], tuple[str,
                 call["error_family"],
                 call["error_origin"],
                 call["event_hash"],
+                call.get("assistant_context", ""),
             )
         )
     return events
@@ -820,6 +827,7 @@ def ingest(
                         "approx_out_tokens", "obs_excerpt", "obs_cause",
                         "error_detail", "error_site", "error_message",
                         "error_family", "error_origin", "event_hash",
+                        "assistant_context",
                     ],
                 )
             session_count = con.execute("SELECT count(*) FROM new_sessions").fetchone()[0]
@@ -946,6 +954,7 @@ def write_sessions(
                         _error_detail(observation) or error_signature,
                         _error_origin(observation),
                         _event_hash(call.raw_target, observation),
+                        call.assistant_context or "",
                     )
                 )
 
@@ -958,8 +967,8 @@ def write_sessions(
                     verb, object_id, target, raw_target, outcome, exit_code,
                     error_signature, is_error, approx_out_tokens, obs_excerpt,
                     obs_cause, error_detail, error_site, error_message,
-                    error_family, error_origin, event_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    error_family, error_origin, event_hash, assistant_context
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 events,
             )

@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS tool_events (
     error_message     VARCHAR DEFAULT '',
     error_family      VARCHAR DEFAULT '',
     error_origin      VARCHAR DEFAULT '',
+    assistant_context VARCHAR DEFAULT '',
     event_hash        VARCHAR DEFAULT ''
 );
 
@@ -92,6 +93,7 @@ def connect(path: str | Path = DB_PATH) -> duckdb.DuckDBPyConnection:
         "ALTER TABLE tool_events ADD COLUMN error_family VARCHAR DEFAULT ''",
         "ALTER TABLE tool_events ADD COLUMN error_origin VARCHAR DEFAULT ''",
         "ALTER TABLE tool_events ADD COLUMN event_hash VARCHAR DEFAULT ''",
+        "ALTER TABLE tool_events ADD COLUMN assistant_context VARCHAR DEFAULT ''",
     ):
         try:
             con.execute(ddl)

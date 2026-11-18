@@ -464,9 +464,7 @@ def premature_completion(con: duckdb.DuckDBPyConnection, limit: int | None = Non
             SELECT session_id, max(step_idx) AS step
             FROM tool_events WHERE action_type = 'edit' GROUP BY 1
         )
-        SELECT s.repo, count(*) AS sessions,
-               count(*) FILTER (WHERE s.resolved) AS resolved,
-               sum(l.step) AS edit_steps
+        SELECT s.repo, count(*) AS sessions, sum(l.step) AS edit_steps
         FROM sessions s
         JOIN last_edit l USING (session_id)
         WHERE NOT EXISTS (
@@ -487,12 +485,12 @@ def premature_completion(con: duckdb.DuckDBPyConnection, limit: int | None = Non
             title="session ends after an edit without validation",
             sessions=sessions,
             tokens=int(edit_steps or 0),
-            detail=f"{resolved} resolved of {sessions}; no successful exec after last edit",
+            detail=f"{sessions} sessions; no successful exec after last edit",
             side="agent",
             recommendation="After the final edit, run the narrowest relevant test or lint command and confirm it passes before finishing.",
             window=_repo_window(con, repo, "action_type = 'edit'"),
         )
-        for repo, sessions, resolved, edit_steps in con.execute(query).fetchall()
+        for repo, sessions, edit_steps in con.execute(query).fetchall()
     ]
 
 
@@ -502,7 +500,7 @@ def low_validation(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
             SELECT session_id, min(step_idx) AS step
             FROM tool_events WHERE action_type = 'edit' GROUP BY 1
         )
-        SELECT s.repo, count(*) AS sessions, count(*) FILTER (WHERE s.resolved) AS resolved
+        SELECT s.repo, count(*) AS sessions, sum(f.step) AS edit_steps
         FROM sessions s
         JOIN first_edit f USING (session_id)
         WHERE NOT EXISTS (
@@ -522,13 +520,13 @@ def low_validation(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
             repo=repo,
             title="edits without a validation command",
             sessions=sessions,
-            tokens=int(resolved or 0),
-            detail=f"{resolved} resolved of {sessions}; no test/lint exec after first edit",
+            tokens=int(edit_steps or 0),
+            detail=f"{sessions} sessions; no test/lint exec after first edit",
             side="agent",
             recommendation="After changing code, run the narrowest test/lint command that exercises the change.",
             window=_repo_window(con, repo, "action_type = 'edit'"),
         )
-        for repo, sessions, resolved in con.execute(query).fetchall()
+        for repo, sessions, edit_steps in con.execute(query).fetchall()
     ]
 
 
@@ -706,6 +704,28 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
         """,
         [repo],
     ).fetchone()
+    validation_summary = con.execute(
+        """
+        WITH last_edit AS (
+            SELECT session_id, max(step_idx) AS step
+            FROM tool_events WHERE repo = ? AND action_type = 'edit' GROUP BY 1
+        )
+        SELECT count(*),
+               count(*) FILTER (WHERE EXISTS (
+                   SELECT 1 FROM tool_events e
+                   WHERE e.session_id = l.session_id
+                     AND e.step_idx > l.step
+                     AND e.action_type = 'exec'
+                     AND e.outcome = 'ok'
+                     AND regexp_matches(
+                         e.raw_target,
+                         '(?i)(pytest|unittest|test|lint|typecheck|mypy|ruff|tox|vitest|jest|cargo test|go test|dotnet test|rspec|phpunit|mix test|swift test)'
+                     )
+               ))
+        FROM last_edit l
+        """,
+        [repo],
+    ).fetchone()
     return {
         "bootstrap": [
             {
@@ -735,10 +755,19 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
         ],
         "outcomes": {
             "sessions": outcomes[0],
-            "resolved": outcomes[1],
             "with_edit": outcomes[2],
+            "official_resolved": outcomes[1] if outcomes[3] > 0 else None,
             "resolution_coverage": outcomes[3],
             "resolved_known": outcomes[3] > 0,
+            "validated_sessions": validation_summary[1] if validation_summary else 0,
+            "unvalidated_sessions": (validation_summary[0] - validation_summary[1]) if validation_summary else 0,
+            "validation_coverage": validation_summary[0] if validation_summary else 0,
+            "outcome_basis": (
+                "official" if outcomes[3] >= outcomes[0] and outcomes[0] > 0
+                else "mixed" if outcomes[3] > 0
+                else "validation" if validation_summary and validation_summary[0] > 0
+                else "none"
+            ),
         },
     }
 

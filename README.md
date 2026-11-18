@@ -17,6 +17,20 @@ On SWC (Rust), auditing the repository’s real `AGENTS.md` against 188 local se
 
 The first rule is a soft instruction: nearly every session was applicable, but only five were observed exercising it. The second is already backed by CI. That distinction is what `audit` exposes.
 
+The same sessions produce suggested rules:
+
+```markdown
+## test_command
+- **Rule:** Run `RUSTUP_TOOLCHAIN=1.84.1 cargo test -p <crate> --offline` after editing a crate.
+  **Evidence:** 21 sessions spent the bootstrap retry; 74 of 188 sessions ended without validation.
+
+## context_hygiene
+- **Rule:** Locate a symbol with `rg -n` and read the enclosing line range instead of paging through large files such as `sequences.rs`.
+  **Evidence:** 33 reads of `sequences.rs` across 7 sessions averaged 1,802 tokens.
+```
+
+Rules are capped at 5 rules, 60 lines, and 2,500 characters per repo.
+
 ## Quick start: your own sessions
 
 Ask your coding agent to mine and synthesize:

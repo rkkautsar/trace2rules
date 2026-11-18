@@ -31,6 +31,22 @@ The same sessions produce suggested rules:
 
 Rules are capped at 5 rules, 60 lines, and 2,500 characters per repo.
 
+## Quick start: audit existing rules
+
+Run from the target checkout. `AGENTS.md` and `CLAUDE.md` are auto-detected.
+
+```text
+Install trace2rules if missing (`uv tool install trace2rules`). Audit this repo's AGENTS.md and CLAUDE.md against my local sessions with `trace2rules audit --repo OWNER/NAME`. Report unobserved, violated, and unenforced rules, and propose existing CI/pre-commit checks without duplicating configured enforcement.
+```
+
+Manual:
+
+```bash
+trace2rules audit --repo OWNER/NAME --prompt > audit.txt
+```
+
+Then give `audit.txt` to your agent.
+
 ## Quick start: your own sessions
 
 Ask your coding agent to mine, report, and synthesize:
@@ -55,22 +71,6 @@ Then give `evidence.txt` to your agent to synthesize the rules. `trace2rules syn
 Agent synthesis from the report is the default workflow. `trace2rules synthesize` is optional; add `--offline` to force its deterministic rules.
 
 `ingest` writes to `data/trace2rules.duckdb` by default. `mine`, `exact`, and `synthesize` read from it.
-
-## Quick start: audit existing rules
-
-Run from the target checkout. `AGENTS.md` and `CLAUDE.md` are auto-detected.
-
-```text
-Install trace2rules if missing (`uv tool install trace2rules`). Audit this repo's AGENTS.md and CLAUDE.md against my local sessions with `trace2rules audit --repo OWNER/NAME`. Report unobserved, violated, and unenforced rules, and propose existing CI/pre-commit checks without duplicating configured enforcement.
-```
-
-Manual:
-
-```bash
-trace2rules audit --repo OWNER/NAME --prompt > audit.txt
-```
-
-Then give `audit.txt` to your agent.
 
 ## Audit existing rules
 

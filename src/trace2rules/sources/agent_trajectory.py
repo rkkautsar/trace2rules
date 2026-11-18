@@ -334,10 +334,13 @@ def _iter_files(root: Path, source: str, limit: int | None) -> list[Path]:
     skip = {"changes.jsonl"}
     files = [
         path
-        for path in sorted(root.rglob(f"*{suffix}"))
+        for path in root.rglob(f"*{suffix}")
         if path.is_file() and path.name not in skip
     ]
-    return files[:limit] if limit else files
+    if limit:
+        files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+        return files[:limit]
+    return files
 
 
 @lru_cache(maxsize=512)

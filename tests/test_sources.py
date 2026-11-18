@@ -571,3 +571,17 @@ def test_repo_label_uses_git_remote(tmp_path: Path) -> None:
         check=True,
     )
     assert _repo_from_cwd(str(tmp_path)) == "acme/repo"
+
+
+def test_limit_selects_most_recent_files(tmp_path: Path) -> None:
+    import os
+    import time
+    from trace2rules.sources.agent_trajectory import _iter_files
+
+    old = tmp_path / "old.jsonl"
+    new = tmp_path / "new.jsonl"
+    old.write_text("{}\n")
+    new.write_text("{}\n")
+    os.utime(old, (1, 1))
+    os.utime(new, (2, 2))
+    assert _iter_files(tmp_path, "omp", 1) == [new]

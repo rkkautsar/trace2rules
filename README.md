@@ -66,7 +66,7 @@ trace2rules report --prompt > evidence.txt
 
 Then give `evidence.txt` to your agent to synthesize the rules. `trace2rules synthesize` is the optional built-in LLM fallback.
 
-`--source` is repeatable and defaults to your home directory. It scans all standard local stores: `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, `~/.omp/agent/sessions`, and `~/.local/share/opencode`. The default cap is 200 sessions per source; use `--limit 0` for all.
+`--source` is repeatable and defaults to your home directory. It scans all standard local stores: `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, `~/.omp/agent/sessions`, and `~/.local/share/opencode`. The default cap is 200 sessions per source and selects the most recently modified files; use `--limit 0` for all.
 
 For local sessions, the repo label comes from the git remote (`owner/name`) when available, falling back to the working-directory basename. `report --prompt` without `--repo` emits one prompt per detected repo; pass `--repo owner/name` only to filter. Run `trace2rules mine` to see labels.
 

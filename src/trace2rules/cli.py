@@ -524,6 +524,9 @@ def _audit_command(
     con = connect(db)
     try:
         if commit:
+            if len(agent_paths) > 1:
+                console.print("[red]--commit supports one AGENTS.md/CLAUDE.md; pass --agents.[/red]")
+                raise typer.Exit(2)
             try:
                 payload = audit_commit(con, repo, agents, commit)
             except (subprocess.CalledProcessError, OSError, ValueError) as error:
@@ -534,7 +537,10 @@ def _audit_command(
             until_dt = parse_time(until)
             if latest_commit:
                 try:
-                    sha, committed_at = latest_agents_commit(agents)
+                    sha, committed_at = max(
+                        (latest_agents_commit(path) for path in agent_paths),
+                        key=lambda item: item[1],
+                    )
                     coverage = con.execute(
                         "SELECT count(*), count(*) FILTER (WHERE started_at IS NOT NULL) "
                         "FROM sessions WHERE repo = ?",

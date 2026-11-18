@@ -31,6 +31,14 @@ NON_ACTIONABLE_SECTION_RE = re.compile(
     r"(?i)(about|overview|architecture|key concepts|common usage|important files|"
     r"entry points|philosophy)"
 )
+IMPERATIVE_RE = re.compile(
+    r"(?i)^(?:run|use|add|keep|avoid|do not|don't|never|make|update|ensure|"
+    r"check|prefer|follow|change|remove|write|read|test|install|validate|set|"
+    r"put|create|delete|preserve|scope|inspect|handle|implement|move|rename|"
+    r"include|exclude|split|return|raise|call|refactor|document|maintain|"
+    r"verify|confirm|open|close|edit|format|reduce|simplify)\b"
+)
+RULE_CUE_RE = re.compile(r"(?i)\b(must|should|required|never|avoid|do not|don't)\b")
 
 
 @dataclass(slots=True)
@@ -151,6 +159,8 @@ def parse_agents_text(text: str, source: str = "AGENTS.md") -> list[AgentRule]:
     section = ""
     in_code = False
     code_lang = ""
+    pending_code = ""
+    pending_line = 0
     for line_no, raw_line in enumerate(text.splitlines(), 1):
         stripped = raw_line.strip()
         if stripped.startswith("```"):
@@ -165,13 +175,30 @@ def parse_agents_text(text: str, source: str = "AGENTS.md") -> list[AgentRule]:
             if (
                 code_lang in {"bash", "sh", "shell", "console", "zsh"}
                 and section
-                and ACTIONABLE_SECTION_RE.search(section)
+                and not NON_ACTIONABLE_SECTION_RE.search(section)
                 and COMMAND_SECTION_RE.search(section)
                 and stripped
                 and not stripped.startswith("#")
             ):
-                rule = _make_rule(f"Run `{stripped}`", source, line_no, section, commands=(stripped,))
-                key = (rule.source, rule.text)
+                if stripped.endswith("\\"):
+                    pending_code = (pending_code + " " + stripped[:-1]).strip()
+                    pending_line = pending_line or line_no
+                    continue
+                command = (pending_code + " " + stripped).strip()
+                pending_code = ""
+                rule = _make_rule(
+                    f"Run `{command}`",
+                    source,
+                    pending_line or line_no,
+                    section,
+                    commands=(command,),
+                )
+                pending_line = 0
+                key = (
+                    (rule.source, "cmd:" + _normalize_command(rule.commands[0]))
+                    if rule.category == "test_command" and rule.commands
+                    else (rule.source, rule.text)
+                )
                 if key not in seen:
                     seen.add(key)
                     rules.append(rule)
@@ -181,10 +208,7 @@ def parse_agents_text(text: str, source: str = "AGENTS.md") -> list[AgentRule]:
             continue
         if not stripped:
             continue
-        if section and (
-            NON_ACTIONABLE_SECTION_RE.search(section)
-            or not ACTIONABLE_SECTION_RE.search(section)
-        ):
+        if section and NON_ACTIONABLE_SECTION_RE.search(section):
             continue
         if stripped[0] in "-*":
             text = stripped[1:].strip()
@@ -196,6 +220,8 @@ def parse_agents_text(text: str, source: str = "AGENTS.md") -> list[AgentRule]:
                 continue
             text = numbered.group(1).strip()
         if not text or len(text) < 12:
+            continue
+        if not IMPERATIVE_RE.search(text) and not RULE_CUE_RE.search(text):
             continue
         rule = _make_rule(text, source, line_no, section)
         key = (
@@ -291,7 +317,11 @@ def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:
     if root is None or not root.is_dir():
         return "unknown", ""
     root = root.resolve()
-    commands = [_normalize_command(command) for command in rule.commands]
+    commands = [
+        command
+        for command in (_normalize_command(item) for item in rule.commands)
+        if command and not PATH_RE.fullmatch(command)
+    ]
     makefile = _text(root / "Makefile")
     targets = set(re.findall(r"^([A-Za-z0-9_.-]+)\s*:", makefile, re.M))
     make_blocks: dict[str, str] = {}
@@ -403,11 +433,19 @@ def audit_agents(
         compliant = 0
         failed_validation = 0
         violations = 0
+        not_observed = 0
         for events in sessions.values():
-            if any(
+            matched = any(
                 _matches(rule, raw, target, object_id)
-                for _sid, _step, _action, raw, target, object_id, _outcome in events
-            ):
+                or (
+                    rule.category == "test_command"
+                    and not rule.commands
+                    and action == "exec"
+                    and VALIDATION_RE.search(raw)
+                )
+                for _sid, _step, action, raw, target, object_id, _outcome in events
+            )
+            if matched:
                 observed += 1
             edit_steps = [
                 step for _sid, step, action, _raw, _target, _object, _outcome in events
@@ -417,6 +455,8 @@ def audit_agents(
                 if not edit_steps:
                     continue
                 applicable += 1
+                if not matched:
+                    not_observed += 1
                 last_edit = max(edit_steps)
                 matching = [
                     (step, outcome, raw, target, object_id)
@@ -437,15 +477,22 @@ def audit_agents(
                         failed_validation += 1
             elif rule.category == "context_hygiene":
                 applicable += 1
+                if not matched:
+                    not_observed += 1
                 if any(
                     action == "edit"
-                    and _matches(rule, raw, target, object_id)
+                    and (
+                        _matches(rule, raw, target, object_id)
+                        or (not _needles(rule) and SCRATCH_RE.search(object_id or target))
+                    )
                     and not target.startswith(("/tmp/", "tmp/"))
                     for _sid, _step, action, raw, target, object_id, _outcome in events
                 ):
                     violations += 1
             else:
                 applicable += 1
+                if not matched:
+                    not_observed += 1
 
         enforcement = _enforcement(rule)
         enforceable = not enforcement.startswith("No mechanical enforcement")
@@ -488,7 +535,7 @@ def audit_agents(
                 rule.section,
                 compliant,
                 failed_validation,
-                max(applicable - observed, 0),
+                not_observed,
                 existing,
                 status,
             )

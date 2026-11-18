@@ -174,3 +174,100 @@ def test_discover_enforcement_marks_make_target_available(tmp_path: Path) -> Non
     status, source = discover_enforcement(tmp_path, rule)
     assert status == "available"
     assert "Makefile" in source
+
+
+def test_parse_agents_accepts_document_title_sections() -> None:
+    rules = parse_agents_text("# AGENTS.md\n- Run `pytest` before committing.\n")
+    assert [rule.text for rule in rules] == ["Run `pytest` before committing."]
+
+
+def test_context_hygiene_without_commands_detects_scratch(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("- Do not commit scratch files.\n")
+    db = tmp_path / "hygiene.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[
+                    ToolCall(
+                        "Edit",
+                        "reproduce_issue.py",
+                        action_type="edit",
+                        target="reproduce_issue.py",
+                        object_id="reproduce_issue.py",
+                    )
+                ],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        audits = audit_agents(con, "acme/repo", parse_agents(path))
+    finally:
+        con.close()
+    assert audits[0].violation_sessions == 1
+
+
+def test_audit_not_observed_is_session_scoped(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("- Run `pytest` after editing.\n")
+    db = tmp_path / "counts.duckdb"
+    sessions = []
+    for sid, validate in (("edit-only", False), ("edit-test", True), ("test-only", True)):
+        calls = [
+            ToolCall("Edit", "src/api.py", action_type="edit", target="src/api.py")
+        ]
+        if validate:
+            calls.append(
+                ToolCall(
+                    "Bash",
+                    "pytest",
+                    action_type="exec",
+                    target="pytest",
+                    object_id="pytest",
+                    is_error=False,
+                )
+            )
+        if sid == "test-only":
+            calls = calls[1:]
+        sessions.append(Session(sid, "acme/repo", calls=calls))
+    write_sessions(db, sessions)
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.applicable_sessions == 2
+    assert audit.exercised_sessions == 2
+    assert audit.compliant_sessions == 1
+    assert audit.violation_sessions == 1
+    assert audit.not_observed_sessions == 1
+
+
+def test_enforcement_ignores_backticked_paths(tmp_path: Path) -> None:
+    from trace2rules.agents import discover_enforcement
+
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text(
+        "run: coverage report --include=src/api.py\n"
+    )
+    rule = parse_agents_text("- Keep `src/api.py` free of CLI imports.")[0]
+    status, _source = discover_enforcement(tmp_path, rule)
+    assert status != "configured"
+
+
+def test_parse_agents_dedupes_bullet_and_shell_block() -> None:
+    rules = parse_agents_text(
+        "## Testing\n- Run `make check`\n\n## Testing\n```bash\nmake check\n```\n"
+    )
+    assert [rule.text for rule in rules] == ["Run `make check`"]
+
+
+def test_parse_agents_joins_continued_shell_lines() -> None:
+    rules = parse_agents_text(
+        "## Testing\n```bash\npytest \\\n  tests/test_api.py -q\n```\n"
+    )
+    assert rules[0].commands == ("pytest tests/test_api.py -q",)

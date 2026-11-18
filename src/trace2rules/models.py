@@ -22,6 +22,14 @@ class ToolCall:
 
 
 @dataclass(slots=True)
+class Feedback:
+    text: str
+    step_idx: int
+    kind: str = "feedback"
+    keys: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
 class Session:
     """A normalized session accepted by the shared DuckDB writer."""
 
@@ -35,3 +43,4 @@ class Session:
     agent: str = ""
     success_score: float | None = None
     started_at: datetime | None = None
+    feedback: list[Feedback] = field(default_factory=list)

@@ -887,6 +887,10 @@ def write_sessions(
                 f"DELETE FROM sessions WHERE session_id IN ({placeholders})",
                 session_ids,
             )
+            con.execute(
+                f"DELETE FROM feedback_events WHERE session_id IN ({placeholders})",
+                session_ids,
+            )
             _insert_rows(
                 con,
                 "sessions",
@@ -983,6 +987,26 @@ def write_sessions(
                         call.assistant_context or "",
                     )
                 )
+
+        feedback_rows = [
+            (
+                session.session_id,
+                feedback.step_idx,
+                feedback.kind,
+                feedback.text[:2000],
+                ",".join(feedback.keys),
+                session.repo or "unknown",
+            )
+            for session in session_list
+            for feedback in session.feedback
+        ]
+        if feedback_rows:
+            _insert_rows(
+                con,
+                "feedback_events",
+                feedback_rows,
+                columns=["session_id", "step_idx", "kind", "text", "keys", "repo"],
+            )
 
         if events:
             _insert_rows(

@@ -8,9 +8,8 @@ from pathlib import Path
 
 TOPICS = (
     "cpu", "memory", "ram", "cache", "caching", "schema", "index", "test",
-    "benchmark", "load", "wsl", "timeout", "sqlite", "postgres", "file",
-    "path", "build", "compile", "server", "request", "query", "docker",
-    "gpu", "port", "config", "agent",
+    "benchmark", "load", "wsl", "timeout", "sqlite", "postgres", "build",
+    "compile", "server", "docker", "gpu", "port", "config",
 )
 NEGATION = re.compile(
     r"(?i)\b(no|not|never|don't|do not|without|stop|avoid|limit|cap|reduce|lower|only)\b"

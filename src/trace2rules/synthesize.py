@@ -92,6 +92,7 @@ def _candidate_score(finding: Finding) -> float:
         "context": 0.7,
         "hotspot": 0.8,
         "site_edit_mismatch": 1.1,
+        "feedback_loop": 1.3,
     }
     support = max(finding.sessions, 1)
     impact = max(finding.tokens, finding.cost, 1)
@@ -116,6 +117,7 @@ def select_findings(
         "premature_completion",
         "low_validation",
         "site_edit_mismatch",
+        "feedback",
     ):
         candidates.extend(
             finding

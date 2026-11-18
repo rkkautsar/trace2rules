@@ -14,7 +14,8 @@ from urllib.parse import urlparse
 
 from rich.progress import Progress
 
-from ..models import Session, ToolCall
+from ..feedback import constraint_keys
+from ..models import Feedback, Session, ToolCall
 from .common import classify_tool_call, parse_arguments, target_from_args
 
 SOURCE_DIRS = {
@@ -416,6 +417,27 @@ def _records_to_session(
     pending: dict[str, ToolCall] = {}
     for record in records:
         role = record.get("role")
+        if role == "user":
+            content = record.get("content")
+            if isinstance(content, list):
+                text = " ".join(
+                    part.get("text", "")
+                    for part in content
+                    if isinstance(part, dict)
+                )
+            else:
+                text = str(content or "")
+            text = text.strip()
+            if text and not text.startswith(("<system-reminder>", "<user>")):
+                keys = constraint_keys(text)
+                session.feedback.append(
+                    Feedback(
+                        text=text,
+                        step_idx=len(session.calls),
+                        kind="constraint" if keys else "feedback",
+                        keys=keys,
+                    )
+                )
         if role == "assistant" and record.get("tool_calls"):
             for tool_call in record["tool_calls"]:
                 name = tool_call.get("name") or ""

@@ -8,7 +8,7 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_distances
 
-from .detectors import Finding, context_blasts, global_patterns, hotspots, noop_retries, orientation, premature_completion, low_validation, site_edit_mismatch, recovery_loops, selector_misses, stuck_loops, workaround_scripts
+from .detectors import Finding, context_blasts, feedback_loops, global_patterns, hotspots, noop_retries, orientation, premature_completion, low_validation, site_edit_mismatch, recovery_loops, selector_misses, stuck_loops, workaround_scripts
 
 
 @dataclass
@@ -353,5 +353,6 @@ def mine(
         "premature_completion": premature_completion(con, limit=top),
         "low_validation": low_validation(con, limit=top),
         "site_edit_mismatch": site_edit_mismatch(con, limit=top),
+        "feedback": feedback_loops(con, limit=top),
         "clusters": [],
     }

@@ -55,6 +55,15 @@ CREATE TABLE IF NOT EXISTS tool_events (
     event_hash        VARCHAR DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS feedback_events (
+    session_id        VARCHAR NOT NULL,
+    step_idx          INTEGER NOT NULL,
+    kind              VARCHAR NOT NULL,
+    text              VARCHAR NOT NULL,
+    keys              VARCHAR NOT NULL,
+    repo              VARCHAR DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS target_labels (
     tool_name         VARCHAR NOT NULL,
     action_type       VARCHAR NOT NULL,

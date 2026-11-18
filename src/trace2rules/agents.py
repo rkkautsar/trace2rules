@@ -848,6 +848,18 @@ def audit_payload(
         "SELECT count(*), count(*) FILTER (WHERE started_at IS NOT NULL) FROM sessions WHERE repo = ?",
         [repo],
     ).fetchone()
+    filters = ["repo = ?"]
+    filter_params: list[Any] = [repo]
+    if since is not None:
+        filters.append("started_at >= ?")
+        filter_params.append(_utc_naive(since))
+    if until is not None:
+        filters.append("started_at < ?")
+        filter_params.append(_utc_naive(until))
+    filtered_sessions = con.execute(
+        f"SELECT count(*) FROM sessions WHERE {' AND '.join(filters)}",
+        filter_params,
+    ).fetchone()[0]
     return {
         "repo": repo,
         "agents_md": [str(file) for file in paths],
@@ -855,6 +867,7 @@ def audit_payload(
         "until": until.isoformat() if until else None,
         "sessions_with_timestamps": coverage[1],
         "sessions": coverage[0],
+        "filtered_sessions": filtered_sessions,
         "rules": [
             audit.as_dict()
             for audit in audit_agents(

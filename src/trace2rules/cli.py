@@ -22,7 +22,7 @@ from rich.markup import escape
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from .agents import audit_payload
+from .agents import audit_commit, audit_payload, latest_agents_commit
 from .db import DB_PATH, connect
 from .ingest import DEFAULT_REPOS, SOURCE, ingest as ingest_traces
 from .labels import label_targets
@@ -480,19 +480,67 @@ app.command("report")(_report_command)
 def _audit_command(
     repo: Annotated[str, typer.Option("--repo", help="Repository label to audit against.")],
     agents: Annotated[Path, typer.Option("--agents", help="AGENTS.md path.")] = Path("AGENTS.md"),
+    since: Annotated[str | None, typer.Option("--since", help="Only sessions at/after ISO timestamp.")] = None,
+    until: Annotated[str | None, typer.Option("--until", help="Only sessions before ISO timestamp.")] = None,
+    latest_commit: Annotated[
+        bool,
+        typer.Option("--latest-commit", help="Use the latest AGENTS.md commit as the session cutoff."),
+    ] = False,
+    commit: Annotated[
+        str | None,
+        typer.Option("--commit", help="Compare rule effectiveness before/after a commit."),
+    ] = None,
     json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON.")] = False,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     if not agents.exists():
         console.print(f"[red]No AGENTS.md at {agents}[/red]")
         raise typer.Exit(1)
+    def parse_time(value: str | None) -> datetime | None:
+        if value is None:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise typer.BadParameter(f"Invalid timestamp: {value}") from error
+
     con = connect(db)
     try:
-        payload = audit_payload(con, repo, agents)
+        if commit:
+            payload = audit_commit(con, repo, agents, commit)
+        else:
+            since_dt = parse_time(since)
+            until_dt = parse_time(until)
+            if latest_commit:
+                sha, committed_at = latest_agents_commit(agents)
+                since_dt = committed_at
+                payload = audit_payload(con, repo, agents, since=since_dt, until=until_dt)
+                payload["commit"] = sha
+                payload["committed_at"] = committed_at.isoformat()
+            else:
+                payload = audit_payload(con, repo, agents, since=since_dt, until=until_dt)
     finally:
         con.close()
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
+        return
+    if commit:
+        console.print(
+            f"[bold]{payload['commit']}[/bold] committed {payload['committed_at']}"
+        )
+        console.print(f"Added rules: {len(payload['added'])}; removed: {len(payload['removed'])}")
+        for label, key in (("After", "after"), ("Before", "before")):
+            table = Table(title=f"{label} commit audit: {repo}")
+            for column in ("Rule", "Exercised", "Applicable", "Violations"):
+                table.add_column(column)
+            for rule in payload[key]:
+                table.add_row(
+                    rule["text"][:90],
+                    str(rule["exercised_sessions"]),
+                    str(rule["applicable_sessions"]),
+                    str(rule["violation_sessions"]),
+                )
+            console.print(table)
         return
     table = Table(title=f"AGENTS.md audit: {repo}")
     for column in ("Rule", "Category", "Exercised", "Applicable", "Violations", "Enforcement"):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 
 
 @dataclass(slots=True)
@@ -33,3 +34,4 @@ class Session:
     source_ref: str = ""
     agent: str = ""
     success_score: float | None = None
+    started_at: datetime | None = None

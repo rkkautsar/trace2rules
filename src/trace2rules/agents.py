@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -67,7 +69,11 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
 
 
 def parse_agents(path: str | Path) -> list[AgentRule]:
-    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    return parse_agents_text(Path(path).read_text(encoding="utf-8"))
+
+
+def parse_agents_text(text: str) -> list[AgentRule]:
+    lines = text.splitlines()
     rules: list[AgentRule] = []
     for line in lines:
         stripped = line.strip()
@@ -117,15 +123,29 @@ def _enforcement(rule: AgentRule) -> str:
 
 
 def audit_agents(
-    con: duckdb.DuckDBPyConnection, repo: str, rules: list[AgentRule]
+    con: duckdb.DuckDBPyConnection,
+    repo: str,
+    rules: list[AgentRule],
+    *,
+    since: datetime | None = None,
+    until: datetime | None = None,
 ) -> list[RuleAudit]:
+    filters = ["e.repo = ?"]
+    params: list[Any] = [repo]
+    if since is not None:
+        filters.append("s.started_at >= ?")
+        params.append(since)
+    if until is not None:
+        filters.append("s.started_at < ?")
+        params.append(until)
     rows = con.execute(
-        """
-        SELECT session_id, step_idx, action_type, raw_target, target, object_id, outcome
-        FROM tool_events
-        WHERE repo = ?
+        f"""
+        SELECT e.session_id, e.step_idx, e.action_type, e.raw_target,
+               e.target, e.object_id, e.outcome
+        FROM tool_events e JOIN sessions s USING (session_id)
+        WHERE {' AND '.join(filters)}
         """,
-        [repo],
+        params,
     ).fetchall()
     sessions: dict[str, list[tuple]] = {}
     for row in rows:
@@ -199,10 +219,86 @@ def audit_agents(
     return audits
 
 
-def audit_payload(con: duckdb.DuckDBPyConnection, repo: str, path: str | Path) -> dict[str, Any]:
+def audit_payload(
+    con: duckdb.DuckDBPyConnection,
+    repo: str,
+    path: str | Path,
+    *,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> dict[str, Any]:
     rules = parse_agents(path)
+    coverage = con.execute(
+        "SELECT count(*), count(*) FILTER (WHERE started_at IS NOT NULL) FROM sessions WHERE repo = ?",
+        [repo],
+    ).fetchone()
     return {
         "repo": repo,
         "agents_md": str(path),
-        "rules": [audit.as_dict() for audit in audit_agents(con, repo, rules)],
+        "since": since.isoformat() if since else None,
+        "until": until.isoformat() if until else None,
+        "sessions_with_timestamps": coverage[1],
+        "sessions": coverage[0],
+        "rules": [
+            audit.as_dict()
+            for audit in audit_agents(con, repo, rules, since=since, until=until)
+        ],
+    }
+
+
+def _git(root: Path, *args: str) -> str:
+    return subprocess.check_output(["git", "-C", str(root), *args], text=True).strip()
+
+
+def latest_agents_commit(path: str | Path) -> tuple[str, datetime]:
+    file_path = Path(path).resolve()
+    root = Path(_git(file_path.parent, "rev-parse", "--show-toplevel"))
+    relative = file_path.relative_to(root).as_posix()
+    output = _git(root, "log", "-1", "--format=%H%x00%cI", "--", relative)
+    sha, stamp = output.split("\x00", 1)
+    return sha, datetime.fromisoformat(stamp)
+
+
+def agents_at_commit(path: str | Path, rev: str) -> tuple[list[AgentRule], datetime]:
+    file_path = Path(path).resolve()
+    root = Path(_git(file_path.parent, "rev-parse", "--show-toplevel"))
+    relative = file_path.relative_to(root).as_posix()
+    content = _git(root, "show", f"{rev}:{relative}")
+    stamp = _git(root, "show", "-s", "--format=%cI", rev)
+    return parse_agents_text(content), datetime.fromisoformat(stamp)
+
+
+def audit_commit(
+    con: duckdb.DuckDBPyConnection, repo: str, path: str | Path, rev: str
+) -> dict[str, Any]:
+    file_path = Path(path).resolve()
+    root = Path(_git(file_path.parent, "rev-parse", "--show-toplevel"))
+    relative = file_path.relative_to(root).as_posix()
+    try:
+        parent = _git(root, "rev-parse", f"{rev}^")
+        before_rules, _ = agents_at_commit(path, parent)
+    except subprocess.CalledProcessError:
+        parent = ""
+        before_rules = []
+    after_rules, committed_at = agents_at_commit(path, rev)
+    before = audit_agents(con, repo, before_rules, until=committed_at)
+    after = audit_agents(con, repo, after_rules, since=committed_at)
+    before_text = {rule.text for rule in before_rules}
+    after_text = {rule.text for rule in after_rules}
+    coverage = con.execute(
+        "SELECT count(*), count(*) FILTER (WHERE started_at IS NOT NULL) FROM sessions WHERE repo = ?",
+        [repo],
+    ).fetchone()
+    return {
+        "repo": repo,
+        "commit": rev,
+        "parent": parent,
+        "committed_at": committed_at.isoformat(),
+        "agents_md": str(file_path),
+        "sessions_with_timestamps": coverage[1],
+        "sessions": coverage[0],
+        "added": sorted(after_text - before_text),
+        "removed": sorted(before_text - after_text),
+        "before": [audit.as_dict() for audit in before],
+        "after": [audit.as_dict() for audit in after],
     }

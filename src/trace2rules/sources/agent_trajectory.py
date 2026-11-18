@@ -4,6 +4,7 @@ import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from rich.progress import Progress
@@ -351,6 +352,18 @@ def _records_to_session(
     meta_record = next((record for record in records if record.get("role") == "meta"), {})
     repo = repo_override or _repo_from_cwd(meta_record.get("cwd")) or "unknown"
     session_id = (meta.session_id if meta and meta.session_id else _session_id(path))
+    started_at = None
+    for record in records:
+        for key in ("timestamp", "created_at", "createdAt", "time"):
+            value = record.get(key)
+            if value:
+                try:
+                    started_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+                break
+        if started_at:
+            break
     session = Session(
         session_id=session_id,
         repo=repo,
@@ -358,6 +371,7 @@ def _records_to_session(
         source="agent-trajectory",
         source_ref=str(path),
         agent=source,
+        started_at=started_at,
     )
     pending: dict[str, ToolCall] = {}
     for record in records:

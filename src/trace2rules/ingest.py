@@ -9,6 +9,7 @@ from functools import lru_cache
 import urllib.request
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import duckdb
@@ -510,6 +511,18 @@ def _observation_for_call(call_id: str, obs_by_id: dict[str, str], rows: list[di
     return ""
 
 
+def _message_timestamp(messages: list[dict]):
+    for message in messages:
+        for key in ("timestamp", "created_at", "createdAt", "time"):
+            value = message.get(key)
+            if value:
+                try:
+                    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+    return None
+
+
 def _parse_row(row: tuple) -> tuple[dict, list[dict]]:
     trajectory_id, instance_id, repo, resolved, trajectory = row[:5]
     source_file = row[5] if len(row) > 5 else ""
@@ -572,6 +585,7 @@ def _parse_row(row: tuple) -> tuple[dict, list[dict]]:
         "instance_id": instance_id,
         "resolved": bool(resolved),
         "total_turns": step,
+        "started_at": _message_timestamp(messages),
     }
     return session, calls
 
@@ -771,7 +785,7 @@ def ingest(
 ) -> list[IngestStats]:
     repos = repos or DEFAULT_REPOS
     con = connect(db_path)
-    con.execute("CREATE OR REPLACE TEMP TABLE new_sessions (session_id VARCHAR, repo VARCHAR, instance_id VARCHAR, resolved BOOLEAN, total_turns INTEGER, source_ref VARCHAR)")
+    con.execute("CREATE OR REPLACE TEMP TABLE new_sessions (session_id VARCHAR, repo VARCHAR, instance_id VARCHAR, resolved BOOLEAN, total_turns INTEGER, source_ref VARCHAR, started_at TIMESTAMP)")
     stats: list[IngestStats] = []
     classify_cache: dict[tuple[str, str], tuple[str, str, str, str]] = {}
     con.execute("BEGIN TRANSACTION")
@@ -812,8 +826,8 @@ def ingest(
             con.execute("DELETE FROM tool_events WHERE session_id IN (SELECT session_id FROM new_sessions)")
             con.execute("DELETE FROM sessions WHERE session_id IN (SELECT session_id FROM new_sessions)")
             con.execute(
-                "INSERT INTO sessions (session_id, repo, instance_id, resolved, total_turns, source_ref) "
-                "SELECT session_id, repo, instance_id, resolved, total_turns, source_ref FROM new_sessions"
+                "INSERT INTO sessions (session_id, repo, instance_id, resolved, total_turns, source_ref, started_at) "
+                "SELECT session_id, repo, instance_id, resolved, total_turns, source_ref, started_at FROM new_sessions"
             )
             if events_for_prefix:
                 _insert_rows(
@@ -874,8 +888,8 @@ def write_sessions(
                 """
                 INSERT INTO sessions (
                     session_id, repo, instance_id, resolved, total_turns,
-                    source, source_ref, agent, success_score
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    source, source_ref, agent, success_score, started_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -888,6 +902,7 @@ def write_sessions(
                         session.source_ref,
                         session.agent,
                         session.success_score,
+                        session.started_at,
                     )
                     for session in session_list
                 ],
@@ -1006,7 +1021,7 @@ def _flush_sessions(con: duckdb.DuckDBPyConnection, sessions: list[dict]) -> Non
         con,
         "new_sessions",
         [
-            (s["session_id"], s["repo"], s["instance_id"], s["resolved"], s["total_turns"], s.get("source_ref", ""))
+            (s["session_id"], s["repo"], s["instance_id"], s["resolved"], s["total_turns"], s.get("source_ref", ""), s.get("started_at"))
             for s in sessions
         ],
     )

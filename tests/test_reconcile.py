@@ -65,3 +65,32 @@ def test_command_detection_ignores_backticked_paths() -> None:
     )
     assert kept == []
     assert actions[0].action == "keep"
+
+
+def test_reconcile_does_not_conflate_distinct_commands() -> None:
+    proposed = [_rule("Run `pytest tests/test_api.py -q` after editing API handlers.")]
+    existing = [
+        {
+            "text": "Run `pytest tests/test_db.py -q` after editing DB handlers.",
+            "enforcement_status": "configured",
+            "enforcement": "CI",
+        }
+    ]
+    kept, actions = reconcile(proposed, existing)
+    assert len(kept) == 1
+    assert actions[0].action == "add"
+
+
+def test_reconcile_upgrades_available_enforcement() -> None:
+    kept, actions = reconcile(
+        [_rule("Wire `make check` into required CI.", True, "required CI check")],
+        [
+            {
+                "text": "Run `make check` before submitting.",
+                "enforcement_status": "available",
+                "enforcement": "Makefile: check",
+            }
+        ],
+    )
+    assert len(kept) == 1
+    assert actions[0].action == "update"

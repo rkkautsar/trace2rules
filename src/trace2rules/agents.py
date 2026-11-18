@@ -413,22 +413,35 @@ def _source_index(root: Path) -> list[str]:
     return paths
 
 
-def _infer_scope(rule: AgentRule, root: Path | None) -> tuple[str, ...]:
-    explicit = tuple(
-        path for path in rule.paths if not path.startswith(("tests/", "test/"))
+def _is_test_path(path: str) -> bool:
+    normalized = Path(path).as_posix()
+    parts = Path(normalized).parts
+    name = Path(normalized).name
+    return (
+        "test" in parts
+        or "tests" in parts
+        or name.startswith("test_")
+        or name.endswith("_test.py")
     )
+
+
+def _infer_scope(rule: AgentRule, root: Path | None) -> tuple[str, ...]:
+    normalized_paths = tuple(Path(path).as_posix() for path in rule.paths)
+    explicit = tuple(path for path in normalized_paths if not _is_test_path(path))
     if explicit:
         return explicit
     if root is None or not root.is_dir():
         return ()
     source_paths = _source_index(root)
     inferred: list[str] = []
-    for path in rule.paths:
-        if not path.startswith(("tests/", "test/")):
+    for path in normalized_paths:
+        if not _is_test_path(path):
             continue
         stem = Path(path).stem
         if stem.startswith("test_"):
             stem = stem[5:]
+        elif stem.endswith("_test"):
+            stem = stem[:-5]
         test_parts = set(Path(path).parent.parts) - {"tests", "test", "."}
         matches = [source for source in source_paths if Path(source).stem == stem]
         if matches:

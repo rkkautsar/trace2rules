@@ -32,6 +32,10 @@ def _command_signature(value: str) -> str:
     return value.strip()
 
 
+def _spans(text: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(item.strip().lower() for item in COMMAND_RE.findall(text)))
+
+
 def _commands(text: str) -> tuple[str, ...]:
     values = []
     for item in COMMAND_RE.findall(text):
@@ -67,7 +71,15 @@ def reconcile(
         for old in existing:
             old_commands = _commands(old.get("text", ""))
             same_command = bool(commands and old_commands and set(commands) & set(old_commands))
-            same_text = _text_match(rule.rule_markdown, old.get("text", ""))
+            spans = _spans(rule.rule_markdown)
+            old_spans = _spans(old.get("text", ""))
+            conflicting_spans = bool(
+                spans and old_spans and not set(spans) & set(old_spans)
+            )
+            same_text = (
+                _text_match(rule.rule_markdown, old.get("text", ""))
+                and not conflicting_spans
+            )
             if same_command or same_text:
                 duplicate = old
                 break
@@ -77,7 +89,7 @@ def reconcile(
             continue
         status = duplicate.get("enforcement_status", "unknown")
         enforcement = duplicate.get("enforcement", "")
-        if status in {"configured", "available"}:
+        if status == "configured":
             actions.append(
                 ReconcileAction(
                     "drop",

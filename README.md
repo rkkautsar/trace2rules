@@ -41,6 +41,35 @@ Example output (abridged; model output varies):
 
 Rules are capped at 5 rules, 60 lines, and 2,500 characters per repo.
 
+## Audit existing rules
+
+`audit` parses `AGENTS.md` and `CLAUDE.md`, checks each rule against real sessions, and finds existing enforcement:
+
+```bash
+trace2rules audit --repo owner/name
+trace2rules audit --repo owner/name --commit HEAD --json
+trace2rules audit --repo owner/name --prompt
+```
+
+Real sqlglot example:
+
+```text
+Make sure all tests added to tests/dialects/*.py actually run...
+observed: 723  applicable: 1000  compliant: 705
+violations: 295  not observed: 277
+scope: sqlglot/dialects/snowflake.py
+```
+
+```text
+Run `make check`
+status: configured
+source: .github/workflows/package-test.yml
+```
+
+`available` means a Makefile/package target exists but is not wired into CI. `missing` means no mechanism was found. `--prompt` emits a self-contained review prompt for a fresh-context agent.
+
+`trace2rules synthesize --repo owner/name --agents AGENTS.md` reconciles proposed rules against the audit: duplicates are dropped, configured enforcement is reused, and soft rules are upgraded with concrete enforcement. When run from the target checkout, `--agents` is optional.
+
 ## Synthesis
 
 Synthesis is LLM-first. `trace2rules synthesize` sends redacted gated findings for each repo to an OpenAI-compatible chat model and asks for structured rules. Common API keys, bearer tokens, URL credentials, query tokens, password assignments, and private keys are redacted before external calls; redaction is best-effort, not a guarantee.

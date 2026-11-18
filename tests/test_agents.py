@@ -304,3 +304,17 @@ def test_audit_infers_test_scope_from_test_path(tmp_path: Path) -> None:
         con.close()
     assert audit.scope == "src/api.py"
     assert audit.applicable_sessions == 1
+
+
+def test_infer_scope_handles_nested_test_directory(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    (root / "backend" / "src").mkdir(parents=True)
+    (root / "backend" / "tests").mkdir()
+    (root / "backend" / "src" / "api.py").write_text("")
+    (root / "backend" / "tests" / "test_api.py").write_text("")
+    path = root / "AGENTS.md"
+    path.write_text("- Run `pytest backend/tests/test_api.py` after editing.\n")
+    rule = parse_agents(path)[0]
+    from trace2rules.agents import _infer_scope
+
+    assert _infer_scope(rule, root) == ("backend/src/api.py",)

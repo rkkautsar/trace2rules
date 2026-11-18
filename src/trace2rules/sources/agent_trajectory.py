@@ -25,8 +25,6 @@ SOURCE_DIRS = {
     "opencode": ("opencode", ""),
 }
 
-MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024
-
 TOOL_CALL_TYPES = {
     "tool_use",
     "toolCall",
@@ -526,9 +524,6 @@ def ingest_agent_sessions(
             )
             for path in files:
                 try:
-                    if path.stat().st_size > MAX_TRANSCRIPT_BYTES:
-                        print(f"Skipping oversized transcript {path}")
-                        continue
                     text = path.read_text(encoding="utf-8", errors="replace")
                 except OSError as error:
                     print(f"Skipping {path}: {error}")
@@ -589,11 +584,20 @@ def ingest_agent_sessions(
                             normalized.append({"records": [], "diagnostics": []})
                 return normalized
 
-            BATCH = 64
-            batches = [
-                transcript_metas[start : start + BATCH]
-                for start in range(0, len(transcript_metas), BATCH)
-            ]
+            BATCH_BYTES = 32 * 1024 * 1024
+            batches: list[list[tuple[Path, TranscriptMeta]]] = []
+            current: list[tuple[Path, TranscriptMeta]] = []
+            current_bytes = 0
+            for item in transcript_metas:
+                size = item[0].stat().st_size
+                if current and current_bytes + size > BATCH_BYTES:
+                    batches.append(current)
+                    current = []
+                    current_bytes = 0
+                current.append(item)
+                current_bytes += size
+            if current:
+                batches.append(current)
             workers = min(3, len(batches)) if batches else 1
             chunk: list[Session] = []
             with ThreadPoolExecutor(max_workers=workers) as pool:

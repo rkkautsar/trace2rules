@@ -347,6 +347,18 @@ def _text(path: Path) -> str:
         return ""
 
 
+def _command_in_text(command: str, text: str) -> bool:
+    command = command.strip().lower()
+    if not command:
+        return False
+    return bool(
+        re.search(
+            r"(?<![\w.-])" + re.escape(command) + r"(?![\w.-])",
+            text.lower(),
+        )
+    )
+
+
 def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:
     """Return (status, source) for an existing enforcement mechanism.
 
@@ -381,7 +393,7 @@ def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:
             if target in targets:
                 available.append(f"Makefile: {target}")
         for target, block in make_blocks.items():
-            if command and command in block.lower():
+            if _command_in_text(command, block):
                 available.append(f"Makefile: {target}")
                 break
     package = root / "package.json"
@@ -391,8 +403,8 @@ def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:
         except (json.JSONDecodeError, AttributeError):
             scripts = {}
         for command in commands:
-            for name in scripts:
-                if name in command:
+            for name, value in scripts.items():
+                if _command_in_text(command, str(value)):
                     available.append(f"package.json: {name}")
     rule_text = rule.text.lower()
     is_commit_rule = bool(re.search(r"(?i)pr title|commit message|conventional commits", rule_text))
@@ -418,10 +430,10 @@ def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:
             token in content for token in ("commitlint", "semantic-pull-request", "conventional-commits")
         ):
             configured.append(str(config.relative_to(root)))
-        elif any(command and command in content for command in commands):
+        elif any(_command_in_text(command, content) for command in commands):
             configured.append(str(config.relative_to(root)))
         elif any(
-            f"make {source.split(': ', 1)[1]}" in content
+            _command_in_text(f"make {source.split(': ', 1)[1]}", content)
             for source in available
             if source.startswith("Makefile: ")
         ):
@@ -443,7 +455,13 @@ def _source_index(root: Path) -> list[str]:
     if resolved in _SOURCE_CACHE:
         return _SOURCE_CACHE[resolved]
     paths: list[str] = []
-    for path in resolved.rglob("*.py"):
+    suffixes = {
+        ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".go", ".java",
+        ".kt", ".cs", ".rb", ".php", ".swift",
+    }
+    for path in resolved.rglob("*"):
+        if not path.is_file() or path.suffix not in suffixes:
+            continue
         relative = path.relative_to(resolved)
         if "tests" in relative.parts or "test" in relative.parts:
             continue

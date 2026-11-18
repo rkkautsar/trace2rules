@@ -720,14 +720,19 @@ def _audit_command(
         console.print(f"Added rules: {len(payload['added'])}; removed: {len(payload['removed'])}")
         for label, key in (("After", "after"), ("Before", "before")):
             table = Table(title=f"{label} commit audit: {repo}")
-            for column in ("Rule", "Exercised", "Applicable", "Violations"):
+            for column in (
+                "Rule", "Coverage", "Opportunities", "Followed",
+                "Violations", "Rate",
+            ):
                 table.add_column(column)
             for rule in payload[key]:
                 table.add_row(
                     rule["text"][:90],
-                    str(rule["exercised_sessions"]),
-                    str(rule["applicable_sessions"]),
+                    rule.get("coverage", "unmeasured"),
+                    str(rule.get("opportunities", 0)),
+                    str(rule.get("followed", 0)),
                     str(rule["violation_sessions"]),
+                    "-" if rule.get("rate") is None else f"{rule['rate']:.0%}",
                 )
             console.print(table)
         return

@@ -407,3 +407,25 @@ def test_parse_agents_reads_validation_code_block(tmp_path: Path) -> None:
     path.write_text("## Validation\n```bash\nuv run pytest -q\n```\n")
     rules = parse_agents(path)
     assert [rule.commands for rule in rules] == [("uv run pytest -q",)]
+
+
+def test_enforcement_requires_command_boundary(tmp_path: Path) -> None:
+    from trace2rules.agents import discover_enforcement
+
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"npm run build"}}')
+    rule = parse_agents_text("- Run `pytest tests/test_api.py` after editing.")[0]
+    status, source = discover_enforcement(tmp_path, rule)
+    assert status != "configured"
+
+
+def test_infer_scope_indexes_typescript(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    (root / "src").mkdir(parents=True)
+    (root / "tests").mkdir()
+    (root / "src" / "api.ts").write_text("")
+    (root / "tests" / "test_api.ts").write_text("")
+    path = root / "AGENTS.md"
+    path.write_text("- Run `npm test -- tests/test_api.ts` after editing.\n")
+    from trace2rules.agents import _infer_scope
+
+    assert _infer_scope(parse_agents(path)[0], root) == ("src/api.ts",)

@@ -72,7 +72,7 @@ For local sessions, the repo label comes from the git remote (`owner/name`) when
 
 Agent synthesis from the report is the default workflow. `trace2rules synthesize` is optional; add `--offline` to force its deterministic rules.
 
-`ingest` writes to `data/trace2rules.duckdb` by default. `mine`, `exact`, and `synthesize` read from it.
+`ingest` writes to `$TMPDIR/trace2rules/trace2rules.duckdb` by default. Set `TRACE2RULES_DB` to use a persistent path.
 
 ## Audit existing rules
 

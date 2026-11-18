@@ -190,6 +190,7 @@ trace2rules synthesize --max-rules 10
 trace2rules synthesize --repo owner/name
 trace2rules audit --repo owner/name --agents AGENTS.md
 trace2rules audit --repo owner/name --agents AGENTS.md --commit HEAD --json
+trace2rules audit --repo owner/name --agents AGENTS.md --prompt
 trace2rules report --repo owner/name --prompt --agents AGENTS.md
 ```
 

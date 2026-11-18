@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from dataclasses import dataclass
@@ -19,6 +20,14 @@ SCRATCH_RE = re.compile(
 PATH_RE = re.compile(r"(?<![\w./-])(?:[\w.-]+/){1,}[\w.-]+")
 COMMAND_RE = re.compile(r"`([^`]+)`")
 WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{3,}")
+ACTIONABLE_SECTION_RE = re.compile(
+    r"(?i)(guideline|rule|command|test|lint|type|style|quality|workflow|"
+    r"development|contribut|requirement|check|performance|convention)"
+)
+NON_ACTIONABLE_SECTION_RE = re.compile(
+    r"(?i)(about|overview|architecture|key concepts|common usage|important files|"
+    r"entry points|philosophy)"
+)
 
 
 @dataclass(slots=True)
@@ -87,12 +96,23 @@ def parse_agents(path: str | Path) -> list[AgentRule]:
 def parse_agents_text(text: str) -> list[AgentRule]:
     lines = text.splitlines()
     rules: list[AgentRule] = []
+    section = ""
     for line in lines:
         stripped = line.strip()
-        if not stripped or stripped.startswith(("#", "```")):
+        if stripped.startswith("#"):
+            section = stripped.lstrip("#").strip()
+            continue
+        if not stripped or stripped.startswith("```"):
+            continue
+        if section and (
+            NON_ACTIONABLE_SECTION_RE.search(section)
+            or not ACTIONABLE_SECTION_RE.search(section)
+        ):
             continue
         if stripped[0] in "-*":
             text = stripped[1:].strip()
+            if text.startswith(("*", "**")):
+                continue
         else:
             numbered = re.match(r"^\d+[.)]\s+(.*)", stripped)
             if not numbered:
@@ -131,6 +151,13 @@ def _enforcement(rule: AgentRule) -> str:
         return "Import-boundary lint, CODEOWNERS, or a CI forbidden-path check."
     if rule.category == "context_hygiene":
         return "Pre-commit or CI check rejecting scratch/reproducer files outside /tmp."
+    lower = rule.text.lower()
+    if re.search(r"(?i)pr title|commit message|conventional commits", lower):
+        return "commitlint `commit-msg` hook plus a required PR-title workflow check."
+    if re.search(r"(?i)test|coverage", lower):
+        return "Diff coverage check (`diff-cover`) or required test job."
+    if re.search(r"(?i)docstring|doctest|documentation", lower):
+        return "Docstring/doctest lint in CI."
     return "No mechanical enforcement; keep as guidance unless a concrete check is added."
 
 
@@ -194,7 +221,8 @@ def audit_agents(
                     and step > last_edit
                     and (
                         _matches(rule, raw, target, object_id)
-                        or VALIDATION_RE.search(raw)
+                        if rule.commands
+                        else VALIDATION_RE.search(raw)
                     )
                     for _sid, step, action, raw, target, object_id, outcome in events
                 )
@@ -218,11 +246,14 @@ def audit_agents(
                 f"Rule was violated in {violations} of {applicable} applicable sessions; "
                 "move it into CI/pre-commit."
             )
+        elif exercised == 0 and enforceable:
+            suggestion = f"Not observed in sessions; enforce mechanically with: {enforcement}."
         elif exercised == 0:
             suggestion = "No matching tool calls; the rule may be stale or phrased differently."
         else:
             suggestion = "Rule was exercised without detected violations; keep as guidance."
-        enforceable = rule.category in {"test_command", "architecture_map", "context_hygiene"}
+        enforcement = _enforcement(rule)
+        enforceable = not enforcement.startswith("No mechanical enforcement")
         audits.append(
             RuleAudit(
                 rule.text,
@@ -231,7 +262,7 @@ def audit_agents(
                 applicable,
                 violations,
                 enforceable,
-                _enforcement(rule),
+                enforcement,
                 suggestion,
             )
         )
@@ -330,3 +361,24 @@ def audit_commit(
         "before": [audit.as_dict() for audit in before],
         "after": [audit.as_dict() for audit in after],
     }
+
+
+def audit_prompt(payload: dict[str, Any]) -> str:
+    return f"""Repo: {payload.get('repo')}
+
+Existing AGENTS.md audit (JSON):
+{json.dumps(payload, indent=2)}
+
+Review these existing rules and return a JSON object with:
+- `rules`: only rules that should change, each with:
+  - `rule_text`: exact existing rule text
+  - `diagnosis`: `unenforced`, `stale`, `ambiguous`, `violated`, or `keep`
+  - `evidence`: exercised/applicable/violation counts from the audit
+  - `enforcement`: concrete CI, pre-commit, lint, or CODEOWNERS check
+  - `replacement`: optional stricter wording, or null
+- `suggested_new_rules`: rules supported by evidence but missing from AGENTS.md
+
+Do not repeat rules that are already effective. Prefer mechanical enforcement over
+soft instructions. If timestamp coverage is zero, state that before/after claims
+cannot be verified. Return JSON only.
+"""

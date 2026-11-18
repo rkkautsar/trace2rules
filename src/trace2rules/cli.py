@@ -493,6 +493,10 @@ def _audit_command(
         str | None,
         typer.Option("--commit", help="Compare rule effectiveness before/after a commit."),
     ] = None,
+    prompt_output: Annotated[
+        bool,
+        typer.Option("--prompt", help="Emit a prompt for a fresh-context review agent."),
+    ] = False,
     json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON.")] = False,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
@@ -555,6 +559,11 @@ def _audit_command(
                 payload = audit_payload(con, repo, agents, since=since_dt, until=until_dt)
     finally:
         con.close()
+    if prompt_output:
+        from .agents import audit_prompt
+
+        sys.stdout.write(audit_prompt(payload))
+        return
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
         return

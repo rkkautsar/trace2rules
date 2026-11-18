@@ -21,7 +21,7 @@ VALIDATION_RE = re.compile(
     r"npm test|vitest|jest|make (?:unit|test)|check)\b"
 )
 SCRATCH_RE = re.compile(
-    r"(?i)\b(?:reproduce|repro|scratch|debug|verify|validation_test|comprehensive|final)[\w.-]*\b"
+    r"(?i)\b(?:reproduce|repro|scratch|debug|artifact)[\w.-]*\b"
 )
 PATH_RE = re.compile(r"(?<![\w./-])(?:[\w.-]+/){1,}[\w.-]+")
 DOC_TARGET_RE = re.compile(r"(?i)(^|/)(readme|docs?|changelog|contributing|license)(\.|/|$)")
@@ -132,6 +132,8 @@ def _utc_naive(value: datetime | None) -> datetime | None:
 
 def _category(text: str, paths: tuple[str, ...]) -> str:
     lower = text.lower()
+    if re.search(r"(?i)fixture tests?", lower) and re.search(r"#\[test\]|inline", lower):
+        return "fixture_test"
     if SCRATCH_RE.search(lower) and any(
         token in lower for token in ("do not", "don't", "never", "keep", "outside")
     ):
@@ -354,6 +356,8 @@ def _enforcement(rule: AgentRule) -> str:
     if rule.category == "test_command":
         command = rule.commands[0] if rule.commands else "the documented validation command"
         return f"CI required check / pre-commit hook running `{command}`."
+    if rule.category == "fixture_test":
+        return "Fixture-suite CI check rejecting new inline `#[test]` functions."
     if rule.category == "architecture_map":
         return "Import-boundary lint, CODEOWNERS, or a CI forbidden-path check."
     if rule.category == "context_hygiene":
@@ -678,6 +682,33 @@ def audit_agents(
                     violations += 1
                     if any(outcome in ("err", "timeout") for _step, outcome, *_rest in matching):
                         failed_validation += 1
+            elif rule.category == "fixture_test":
+                test_edits = [
+                    target for _step, target in edit_events
+                    if target.endswith(".rs")
+                    and (
+                        _is_test_path(target)
+                        or re.search(r"(^|/)tests?\.rs$", target)
+                    )
+                ]
+                if not test_edits:
+                    continue
+                applicable += 1
+                observed += 1
+                examples.extend(test_edits[:2])
+                inline = any(
+                    re.search(r"(^|/)src/.*tests?\.rs$", target)
+                    for target in test_edits
+                )
+                fixture = any(
+                    _is_test_path(target)
+                    and not re.search(r"(?i)(?:^|/)(?:repro|tmp|scratch|debug)", target)
+                    for target in test_edits
+                )
+                if fixture and not inline:
+                    compliant += 1
+                elif inline:
+                    violations += 1
             elif rule.category == "context_hygiene":
                 if not edit_events and not matched:
                     continue
@@ -718,18 +749,22 @@ def audit_agents(
         detector = {
             "test_command": "test-after-change",
             "context_hygiene": "scratch-file-hygiene",
+            "fixture_test": "fixture-tests",
             "architecture_map": "path-ownership",
         }.get(rule.category, "generic")
-        measurable = rule.category in {"test_command", "context_hygiene"}
+        measurable = rule.category in {"test_command", "fixture_test", "context_hygiene"}
         opportunities = applicable if measurable else 0
+        undecided = 0
         if rule.category == "test_command":
             followed = compliant
             violations = max(applicable - compliant, 0)
+        elif rule.category == "fixture_test":
+            followed = compliant
+            undecided = max(applicable - followed - violations, 0)
         elif rule.category == "context_hygiene":
             followed = max(applicable - violations, 0)
         else:
             followed = 0
-        undecided = 0
         if measurable:
             coverage = "measured"
             coverage_reason = "observable command or path evidence"

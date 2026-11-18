@@ -39,14 +39,14 @@ Then give `reports/*.md` to your agent to synthesize the rules. `run` ingests lo
 
 ## Example finding
 
-On SWC (Rust), auditing the repository’s real `AGENTS.md` against 188 local sessions showed the gap between written rules and actual behavior:
+On SWC (Rust), auditing the repository’s real `AGENTS.md` against 188 local sessions found 30 rules. The audit separates opportunities from unmeasured policies:
 
-| Rule | Observed | Applicable | Compliant | Violations | Enforcement |
-|---|---:|---:|---:|---:|---|
-| `Prefer fixture tests over inline (#[test]) tests` | 5 | 188 | 1 | 187 | missing |
-| `Use gh CLI for github.com data` | 87 | 188 | 0 | 0 | configured in `.github/workflows/CI.yml` |
+| Rule | Coverage | Opportunities | Followed | Violations | Undecided | Confidence | Enforcement |
+|---|---|---:|---:|---:|---:|---|---|
+| `Prefer fixture tests over inline (#[test]) tests` | measured | 3 | 2 | 0 | 1 | low | missing |
+| `Use gh CLI for github.com data` | unmeasured | 0 | 0 | 0 | 0 | none | configured in `.github/workflows/CI.yml` |
 
-The first rule is a soft instruction: nearly every session was applicable, but only five were observed exercising it. The second is already backed by CI. That distinction is what `audit` exposes.
+The fixture rule is not applicable to all 188 sessions: only three sessions edited test files, and two of those used fixture-style paths. The `gh` rule has no compliance detector, so its 32 observed mentions cannot be scored as compliance. Most SWC rules remain unmeasured; the audit reports that gap instead of treating every unobserved session as a violation.
 
 The same sessions produce suggested rules:
 

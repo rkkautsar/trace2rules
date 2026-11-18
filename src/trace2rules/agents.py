@@ -61,6 +61,8 @@ class RuleAudit:
     compliant_sessions: int = 0
     failed_validation_sessions: int = 0
     not_observed_sessions: int = 0
+    existing_enforcement: str = ""
+    enforcement_status: str = "unknown"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -75,6 +77,8 @@ class RuleAudit:
             "violation_sessions": self.violation_sessions,
             "failed_validation_sessions": self.failed_validation_sessions,
             "not_observed_sessions": self.not_observed_sessions,
+            "existing_enforcement": self.existing_enforcement,
+            "enforcement_status": self.enforcement_status,
             "enforceable": self.enforceable,
             "enforcement": self.enforcement,
             "suggestion": self.suggestion,
@@ -269,6 +273,97 @@ def _enforcement(rule: AgentRule) -> str:
     return "No mechanical enforcement; keep as guidance unless a concrete check is added."
 
 
+def _text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:
+    """Return (status, source) for an existing enforcement mechanism.
+
+    configured: CI/pre-commit/commitlint wires the rule up.
+    available: a Makefile/package script exists, but no hook or CI reference.
+    missing: relevant config exists but no matching mechanism.
+    unknown: no inspectable repository or no concrete command.
+    """
+    if root is None or not root.is_dir():
+        return "unknown", ""
+    root = root.resolve()
+    commands = [_normalize_command(command) for command in rule.commands]
+    makefile = _text(root / "Makefile")
+    targets = set(re.findall(r"^([A-Za-z0-9_.-]+)\s*:", makefile, re.M))
+    make_blocks: dict[str, str] = {}
+    current = ""
+    for line in makefile.splitlines():
+        match = re.match(r"^([A-Za-z0-9_.-]+)\s*:", line)
+        if match:
+            current = match.group(1)
+            make_blocks[current] = ""
+        elif current:
+            make_blocks[current] += line + "\n"
+    available: list[str] = []
+    for command in commands:
+        if command.startswith("make "):
+            target = command.split(None, 1)[1].split()[0]
+            if target in targets:
+                available.append(f"Makefile: {target}")
+        for target, block in make_blocks.items():
+            if command and command in block.lower():
+                available.append(f"Makefile: {target}")
+                break
+    package = root / "package.json"
+    if package.exists():
+        try:
+            scripts = json.loads(_text(package)).get("scripts", {})
+        except (json.JSONDecodeError, AttributeError):
+            scripts = {}
+        for command in commands:
+            for name in scripts:
+                if name in command:
+                    available.append(f"package.json: {name}")
+    rule_text = rule.text.lower()
+    is_commit_rule = bool(re.search(r"(?i)pr title|commit message|conventional commits", rule_text))
+    configured: list[str] = []
+    config_files = [
+        root / ".pre-commit-config.yaml",
+        root / ".pre-commit-config.yml",
+        root / "commitlint.config.js",
+        root / "commitlint.config.cjs",
+        root / ".commitlintrc",
+        root / ".commitlintrc.json",
+        root / ".commitlintrc.yml",
+        root / ".commitlintrc.yaml",
+    ]
+    workflows = list((root / ".github" / "workflows").glob("*.yml"))
+    workflows += list((root / ".github" / "workflows").glob("*.yaml"))
+    config_files.extend(workflows)
+    for config in config_files:
+        content = _text(config).lower()
+        if not content:
+            continue
+        if is_commit_rule and any(
+            token in content for token in ("commitlint", "semantic-pull-request", "conventional-commits")
+        ):
+            configured.append(str(config.relative_to(root)))
+        elif any(command and command in content for command in commands):
+            configured.append(str(config.relative_to(root)))
+        elif any(
+            f"make {source.split(': ', 1)[1]}" in content
+            for source in available
+            if source.startswith("Makefile: ")
+        ):
+            configured.append(str(config.relative_to(root)))
+    if configured:
+        return "configured", ", ".join(configured[:2])
+    if available:
+        return "available", ", ".join(available[:2])
+    if commands or is_commit_rule:
+        return "missing", ""
+    return "unknown", ""
+
+
 def audit_agents(
     con: duckdb.DuckDBPyConnection,
     repo: str,
@@ -276,6 +371,7 @@ def audit_agents(
     *,
     since: datetime | None = None,
     until: datetime | None = None,
+    root: Path | None = None,
 ) -> list[RuleAudit]:
     filters = ["e.repo = ?"]
     params: list[Any] = [repo]
@@ -362,11 +458,21 @@ def audit_agents(
                 "move it into CI/pre-commit."
             )
         elif observed == 0 and enforceable:
-            suggestion = f"Not observed in sessions; enforce mechanically with: {enforcement}."
+            suggestion = f"Not observed in sessions; enforce mechanically with: {enforcement}"
         elif observed == 0:
             suggestion = "No matching tool calls; the rule may be stale or phrased differently."
         else:
             suggestion = "Rule was exercised without detected violations; keep as guidance."
+        status, existing = discover_enforcement(root, rule)
+        if status == "configured":
+            suggestion = (
+                f"Enforcement is already configured at {existing}; verify it runs as a required check."
+            )
+        elif status == "available":
+            suggestion = (
+                f"{available_text(existing)} exists but is not wired into CI/pre-commit; "
+                "make it a required check."
+            )
         audits.append(
             RuleAudit(
                 rule.text,
@@ -383,9 +489,15 @@ def audit_agents(
                 compliant,
                 failed_validation,
                 max(applicable - observed, 0),
+                existing,
+                status,
             )
         )
     return audits
+
+
+def available_text(existing: str) -> str:
+    return existing if existing else "An existing target"
 
 
 def resolve_agents(path: str | Path | None = None) -> list[Path]:
@@ -424,7 +536,14 @@ def audit_payload(
         "sessions": coverage[0],
         "rules": [
             audit.as_dict()
-            for audit in audit_agents(con, repo, rules, since=since, until=until)
+            for audit in audit_agents(
+                con,
+                repo,
+                rules,
+                since=since,
+                until=until,
+                root=paths[0].parent if paths else None,
+            )
         ],
     }
 
@@ -473,8 +592,8 @@ def audit_commit(
     else:
         before_rules = []
     after_rules, committed_at = agents_at_commit(path, rev)
-    before = audit_agents(con, repo, before_rules, until=committed_at)
-    after = audit_agents(con, repo, after_rules, since=committed_at)
+    before = audit_agents(con, repo, before_rules, until=committed_at, root=file_path.parent)
+    after = audit_agents(con, repo, after_rules, since=committed_at, root=file_path.parent)
     before_text = {rule.text for rule in before_rules}
     after_text = {rule.text for rule in after_rules}
     coverage = con.execute(

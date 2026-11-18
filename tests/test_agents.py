@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from trace2rules.agents import audit_agents, parse_agents
+from trace2rules.agents import audit_agents, parse_agents, parse_agents_text
 from trace2rules.db import connect
 from trace2rules.ingest import write_sessions
 from trace2rules.models import Session, ToolCall
@@ -152,3 +152,25 @@ def test_parse_agents_collects_shell_commands(tmp_path: Path) -> None:
     )
     rules = parse_agents(path)
     assert [rule.commands for rule in rules] == [("make check",)]
+
+
+def test_discover_enforcement_finds_make_and_ci(tmp_path: Path) -> None:
+    from trace2rules.agents import discover_enforcement
+
+    (tmp_path / "Makefile").write_text("check:\n\tpytest\n")
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text("run: make check\n")
+    rule = parse_agents_text("- Run `make check` after editing.")[0]
+    status, source = discover_enforcement(tmp_path, rule)
+    assert status == "configured"
+    assert "ci.yml" in source
+
+
+def test_discover_enforcement_marks_make_target_available(tmp_path: Path) -> None:
+    from trace2rules.agents import discover_enforcement
+
+    (tmp_path / "Makefile").write_text("check:\n\tpytest\n")
+    rule = parse_agents_text("- Run `make check` after editing.")[0]
+    status, source = discover_enforcement(tmp_path, rule)
+    assert status == "available"
+    assert "Makefile" in source

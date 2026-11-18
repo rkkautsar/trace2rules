@@ -399,7 +399,10 @@ def _report_command(
     top: Annotated[int, typer.Option(help="Rows per detector / pattern cap.")] = 25,
     repo: Annotated[
         str | None,
-        typer.Option("--repo", help="Limit findings to one repository label."),
+        typer.Option(
+            "--repo",
+            help="Optional repository label filter; omit to report every detected repo.",
+        ),
     ] = None,
     prompt: Annotated[bool, typer.Option("--prompt", help="Emit the evidence prompt for an external agent.")] = False,
     agents: Annotated[
@@ -416,8 +419,6 @@ def _report_command(
         if session_count == 0:
             console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
             raise typer.Exit(1)
-        if prompt and not repo:
-            repo = _resolve_repo_label(con, repo)
         label_count = con.execute("SELECT count(*) FROM target_labels").fetchone()[0]
         repo_rows = con.execute(
             "SELECT repo, count(*) FROM sessions GROUP BY repo ORDER BY repo"
@@ -426,7 +427,7 @@ def _report_command(
         from .cluster import exact_sequences, mine as mine_friction
         from .synthesize import EXACT_LENGTHS, _prompt, annotate_findings, label_summary, select_findings
 
-        mined = mine_friction(con, top=None if repo else top)
+        mined = mine_friction(con, top=None if (repo or prompt) else top)
         findings = [
             finding
             for key in ("hotspots", "recovery", "context", "orientation", "selector_miss", "workaround", "stuck_loop", "noop_retry", "premature_completion", "low_validation", "site_edit_mismatch")
@@ -450,24 +451,32 @@ def _report_command(
             repo_rows = [row for row in repo_rows if row[0] == repo]
             exact = [finding for finding in exact if finding.repo == repo]
         if prompt:
-            assert repo is not None
             from .detectors import prompt_context
 
-            selected_findings = annotate_findings(
-                con, select_findings(exact, mined, repo)
-            )
-            sys.stdout.write(
-                _prompt(
-                    selected_findings,
-                    repo,
-                    label_summary(con, repo),
-                    max_rules=5,
-                    context=prompt_context(con, repo),
-                    existing=audit_payload(con, repo, resolve_agents(agents))
-                    if resolve_agents(agents)
-                    else None,
+            agent_paths = resolve_agents(agents)
+            chunks: list[str] = []
+            for repo_name, _count in repo_rows:
+                selected_findings = annotate_findings(
+                    con, select_findings(exact, mined, repo_name)
                 )
-            )
+                existing = (
+                    audit_payload(con, repo_name, agent_paths)
+                    if agent_paths
+                    and (repo is not None or repo_name == Path.cwd().name)
+                    else None
+                )
+                chunks.append(
+                    f"# Repository: {repo_name}\n\n"
+                    + _prompt(
+                        selected_findings,
+                        repo_name,
+                        label_summary(con, repo_name),
+                        max_rules=5,
+                        context=prompt_context(con, repo_name),
+                        existing=existing,
+                    )
+                )
+            sys.stdout.write("\n\n---\n\n".join(chunks))
             return
         patterns = [
             pattern
@@ -501,7 +510,13 @@ app.command("report")(_report_command)
 
 
 def _audit_command(
-    repo: Annotated[str | None, typer.Option("--repo", help="Repository label to audit against; inferred when omitted.")] = None,
+    repo: Annotated[
+        str | None,
+        typer.Option(
+            "--repo",
+            help="Optional repository label filter; inferred from the checkout when omitted.",
+        ),
+    ] = None,
     agents: Annotated[
         Path | None,
         typer.Option("--agents", help="AGENTS.md or CLAUDE.md path; auto-detects both when omitted."),

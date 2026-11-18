@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,6 +24,8 @@ SOURCE_DIRS = {
     "omp": ("omp", ".omp/agent/sessions"),
     "opencode": ("opencode", ""),
 }
+
+MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024
 
 TOOL_CALL_TYPES = {
     "tool_use",
@@ -314,7 +317,10 @@ def _source_roots(root: Path) -> list[tuple[str, Path]]:
         )
         for candidate in candidates:
             _append_root(roots, seen, source, candidate)
-    if root.resolve() == Path.home().resolve():
+    if (
+        root.resolve() == Path.home().resolve()
+        and os.environ.get("TRACE2RULES_WINDOWS_STORES") == "1"
+    ):
         for user in sorted(Path("/mnt/c/Users").glob("*")):
             for relative, source in WINDOWS_AGENT_STORES:
                 _append_root(roots, seen, source, user / relative)
@@ -486,7 +492,6 @@ def ingest_agent_sessions(
             roots = [(detected, root)]
 
     stats: list[IngestStats] = []
-    all_sessions: list[Session] = []
     seen_session_ids: set[str] = set()
     bounds = {"toolResults": {"maxCharacters": 20000, "strategy": "head-tail"}}
     try:
@@ -509,33 +514,22 @@ def ingest_agent_sessions(
                         "export sessions with `opencode export <session-id>` first."
                     )
                 continue
-            transcripts: list[tuple[Path, str]] = []
-            read_task = (
-                progress.add_task(
-                    f"Reading {source_name}", total=len(files)
-                )
+            metas_by_id: dict[str, TranscriptMeta] = {}
+            transcript_metas: list[tuple[Path, TranscriptMeta]] = []
+            scan_task = (
+                progress.add_task(f"Scanning {source_name}", total=len(files))
                 if progress
                 else None
             )
             for path in files:
                 try:
-                    transcripts.append(
-                        (path, path.read_text(encoding="utf-8", errors="replace"))
-                    )
+                    if path.stat().st_size > MAX_TRANSCRIPT_BYTES:
+                        print(f"Skipping oversized transcript {path}")
+                        continue
+                    text = path.read_text(encoding="utf-8", errors="replace")
                 except OSError as error:
                     print(f"Skipping {path}: {error}")
-                if progress and read_task is not None:
-                    progress.update(read_task, advance=1)
-            metas_by_id: dict[str, TranscriptMeta] = {}
-            transcript_metas: list[tuple[Path, str, TranscriptMeta]] = []
-            scan_task = (
-                progress.add_task(
-                    f"Scanning {source_name}", total=len(transcripts)
-                )
-                if progress
-                else None
-            )
-            for path, text in transcripts:
+                    continue
                 meta = extract_transcript_meta(path, source_name, text)
                 meta.session_id = meta.session_id or _session_id(path)
                 if progress and scan_task is not None:
@@ -543,7 +537,7 @@ def ingest_agent_sessions(
                 if meta.session_id in metas_by_id:
                     continue
                 metas_by_id[meta.session_id] = meta
-                transcript_metas.append((path, text, meta))
+                transcript_metas.append((path, meta))
             for meta in metas_by_id.values():
                 meta.instance_id = _resolve_instance(meta.session_id, metas_by_id)
 
@@ -554,34 +548,36 @@ def ingest_agent_sessions(
                 if progress
                 else None
             )
+            source_sessions = 0
+            source_calls = 0
+
             def normalize_batch(batch):
                 normalized = []
+                texts: list[tuple[Path, str]] = []
+                for path, _meta in batch:
+                    try:
+                        texts.append((path, path.read_text(encoding="utf-8", errors="replace")))
+                    except OSError as error:
+                        print(f"Skipping {path}: {error}")
+                if not texts:
+                    return [{"records": [], "diagnostics": []} for _ in batch]
                 try:
-                    return list(
+                    normalized = list(
                         normalize_many(
                             [
-                                {
-                                    "source": source_name,
-                                    "transcript": text,
-                                    "bounds": bounds,
-                                }
-                                for _, text, _ in batch
+                                {"source": source_name, "transcript": text, "bounds": bounds}
+                                for _path, text in texts
                             ]
                         )
                     )
                 except NormalizationError:
-                    for path, text, _ in batch:
+                    normalized = []
+                    for path, text in texts:
                         try:
                             normalized.extend(
                                 [
                                     normalize_many(
-                                        [
-                                            {
-                                                "source": source_name,
-                                                "transcript": text,
-                                                "bounds": bounds,
-                                            }
-                                        ]
+                                        [{"source": source_name, "transcript": text, "bounds": bounds}]
                                     )[0]
                                 ]
                             )
@@ -595,38 +591,37 @@ def ingest_agent_sessions(
                 transcript_metas[start : start + BATCH]
                 for start in range(0, len(transcript_metas), BATCH)
             ]
-            ordered_results: list[list[dict] | None] = [None] * len(batches)
             workers = min(3, len(batches)) if batches else 1
+            chunk: list[Session] = []
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = {
-                    pool.submit(normalize_batch, batch): index
-                    for index, batch in enumerate(batches)
-                }
-                for future in as_completed(futures):
-                    index = futures[future]
-                    ordered_results[index] = future.result()
+                futures = [pool.submit(normalize_batch, batch) for batch in batches]
+                for batch, future in zip(batches, futures):
+                    results = future.result()
+                    for (_path, meta), result in zip(batch, results):
+                        if not result.get("records"):
+                            continue
+                        session = _records_to_session(
+                            _path, source_name, result["records"], repo, meta=meta
+                        )
+                        if session.session_id in seen_session_ids:
+                            continue
+                        seen_session_ids.add(session.session_id)
+                        chunk.append(session)
+                        source_sessions += 1
+                        source_calls += len(session.calls)
+                    if len(chunk) >= 64:
+                        write_sessions(db_path, chunk)
+                        chunk = []
                     if progress and task_id is not None:
-                        progress.update(task_id, advance=len(batches[index]))
-            results: list[dict] = []
-            for batch_results in ordered_results:
-                if batch_results:
-                    results.extend(batch_results)
-            for (path, _text, meta), result in zip(transcript_metas, results):
-                if not result.get("records"):
-                    continue
-                session = _records_to_session(
-                    path, source_name, result["records"], repo, meta=meta
-                )
-                if session.session_id in seen_session_ids:
-                    continue
-                seen_session_ids.add(session.session_id)
-                all_sessions.append(session)
+                        progress.update(task_id, advance=len(batch))
+            if chunk:
+                write_sessions(db_path, chunk)
             stats.append(
                 IngestStats(
                     f"agent-trajectory:{source_name}",
                     len(files),
-                    len([s for s in all_sessions if s.agent == source_name]),
-                    sum(len(s.calls) for s in all_sessions if s.agent == source_name),
+                    source_sessions,
+                    source_calls,
                 )
             )
     except NodeUnavailableError as error:
@@ -634,12 +629,4 @@ def ingest_agent_sessions(
             "agent-trajectory requires Node.js 20 or newer on PATH."
         ) from error
 
-    write_task = (
-        progress.add_task("Writing sessions", total=len(all_sessions))
-        if progress
-        else None
-    )
-    write_sessions(db_path, all_sessions)
-    if progress and write_task is not None:
-        progress.update(write_task, completed=len(all_sessions))
     return stats

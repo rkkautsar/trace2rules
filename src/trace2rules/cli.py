@@ -374,6 +374,27 @@ def _mine_command(
 app.command("mine")(_mine_command)
 
 
+def _resolve_repo_label(
+    con: duckdb.DuckDBPyConnection,
+    repo: str | None,
+    *candidates: str,
+) -> str:
+    labels = [row[0] for row in con.execute("SELECT DISTINCT repo FROM sessions ORDER BY repo").fetchall()]
+    if repo:
+        return repo
+    names = [candidate for candidate in candidates if candidate]
+    names.append(Path.cwd().name)
+    for name in names:
+        if name in labels:
+            return name
+    if len(labels) == 1:
+        return labels[0]
+    raise typer.BadParameter(
+        "Could not infer repository label; pass --repo. Known labels: "
+        + ", ".join(labels[:12])
+    )
+
+
 def _report_command(
     top: Annotated[int, typer.Option(help="Rows per detector / pattern cap.")] = 25,
     repo: Annotated[
@@ -387,8 +408,6 @@ def _report_command(
     ] = None,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
-    if prompt and not repo:
-        raise typer.BadParameter("--prompt requires --repo.")
     con = connect(db)
     try:
         session_count, instance_count = con.execute(
@@ -397,6 +416,8 @@ def _report_command(
         if session_count == 0:
             console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
             raise typer.Exit(1)
+        if prompt and not repo:
+            repo = _resolve_repo_label(con, repo)
         label_count = con.execute("SELECT count(*) FROM target_labels").fetchone()[0]
         repo_rows = con.execute(
             "SELECT repo, count(*) FROM sessions GROUP BY repo ORDER BY repo"
@@ -480,7 +501,7 @@ app.command("report")(_report_command)
 
 
 def _audit_command(
-    repo: Annotated[str, typer.Option("--repo", help="Repository label to audit against.")],
+    repo: Annotated[str | None, typer.Option("--repo", help="Repository label to audit against; inferred when omitted.")] = None,
     agents: Annotated[
         Path | None,
         typer.Option("--agents", help="AGENTS.md or CLAUDE.md path; auto-detects both when omitted."),
@@ -523,6 +544,12 @@ def _audit_command(
         raise typer.Exit(2)
     con = connect(db)
     try:
+        repo = _resolve_repo_label(
+            con,
+            repo,
+            agents.parent.name,
+            agents.parent.resolve().name,
+        )
         if commit:
             if len(agent_paths) > 1:
                 console.print("[red]--commit supports one AGENTS.md/CLAUDE.md; pass --agents.[/red]")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import duckdb
@@ -559,3 +560,14 @@ def test_opencode_export_ingests(tmp_path: Path) -> None:
         ).fetchone() == ("exec", "pwd")
     finally:
         con.close()
+
+
+def test_repo_label_uses_git_remote(tmp_path: Path) -> None:
+    from trace2rules.sources.agent_trajectory import _repo_from_cwd
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "remote", "add", "origin", "git@github.com:acme/repo.git"],
+        check=True,
+    )
+    assert _repo_from_cwd(str(tmp_path)) == "acme/repo"

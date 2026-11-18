@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 from rich.progress import Progress
 
@@ -330,10 +334,37 @@ def _iter_files(root: Path, source: str, limit: int | None) -> list[Path]:
     return files[:limit] if limit else files
 
 
+@lru_cache(maxsize=512)
 def _repo_from_cwd(cwd: str | None) -> str:
     if not cwd:
         return ""
-    return Path(cwd).name
+    path = Path(cwd)
+    root = path
+    try:
+        root = Path(
+            subprocess.check_output(
+                ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        )
+        remote = subprocess.check_output(
+            ["git", "-C", str(root), "config", "--get", "remote.origin.url"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        remote = ""
+    if remote:
+        value = remote.removesuffix(".git")
+        if "://" in value:
+            value = urlparse(value).path
+        elif "@" in value and ":" in value:
+            value = value.split(":", 1)[1]
+        parts = [part for part in re.split(r"[/:]", value) if part]
+        if len(parts) >= 2:
+            return "/".join(parts[-2:])
+    return root.name or path.name
 
 
 def _session_id(path: Path) -> str:

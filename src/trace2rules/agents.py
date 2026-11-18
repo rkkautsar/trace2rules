@@ -10,6 +10,12 @@ from typing import Any, Sequence
 
 import duckdb
 
+TEST_RUN_RE = re.compile(
+    r"(?i)\b(pytest|unittest|cargo test|go test|npm test|npm run test|pnpm test|"
+    r"yarn test|mvn test|gradle test|dotnet test|rspec|phpunit|mix test|"
+    r"swift test|make (?:test|check)|python -m (?:pytest|unittest))\b"
+)
+NEGATIVE_RULE_RE = re.compile(r"(?i)\b(never|do not|don't|avoid)\b")
 VALIDATION_RE = re.compile(
     r"(?i)\b(test|tests|lint|typecheck|validate|validation|pytest|cargo test|go test|"
     r"npm test|vitest|jest|make (?:unit|test)|check)\b"
@@ -18,6 +24,7 @@ SCRATCH_RE = re.compile(
     r"(?i)\b(?:reproduce|repro|scratch|debug|verify|validation_test|comprehensive|final)[\w.-]*\b"
 )
 PATH_RE = re.compile(r"(?<![\w./-])(?:[\w.-]+/){1,}[\w.-]+")
+DOC_TARGET_RE = re.compile(r"(?i)(^|/)(readme|docs?|changelog|contributing|license)(\.|/|$)")
 COMMAND_RE = re.compile(r"`([^`]+)`")
 WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{3,}")
 ACTIONABLE_SECTION_RE = re.compile(
@@ -25,7 +32,7 @@ ACTIONABLE_SECTION_RE = re.compile(
     r"development|contribut|requirement|check|performance|convention)"
 )
 COMMAND_SECTION_RE = re.compile(
-    r"(?i)(command|test|lint|type|quality|check|install|benchmark|setup)"
+    r"(?i)(command|test|lint|type|quality|check|install|benchmark|setup|validation|verify|build|run)"
 )
 NON_ACTIONABLE_SECTION_RE = re.compile(
     r"(?i)(about|overview|architecture|key concepts|common usage|important files|"
@@ -125,9 +132,7 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
         token in lower for token in ("do not", "don't", "never", "keep", "outside")
     ):
         return "context_hygiene"
-    if VALIDATION_RE.search(lower) and re.search(
-        r"(?i)\b(run|execute|invoke|use|validate|check|test)\b", lower
-    ) and not lower.startswith(("do not add test", "don't add test", "never add test")):
+    if TEST_RUN_RE.search(lower) and not NEGATIVE_RULE_RE.search(lower):
         return "test_command"
     if paths or any(
         token in lower
@@ -146,7 +151,10 @@ def _make_rule(
     commands: tuple[str, ...] | None = None,
     paths: tuple[str, ...] | None = None,
 ) -> AgentRule:
-    commands = commands or tuple(COMMAND_RE.findall(text))
+    commands = commands or tuple(
+        value for value in COMMAND_RE.findall(text)
+        if not PATH_RE.fullmatch(value.strip())
+    )
     paths = paths or tuple(dict.fromkeys(PATH_RE.findall(text)))
     keywords = tuple(
         token
@@ -163,6 +171,18 @@ def _make_rule(
         line,
         section,
     )
+
+
+def _dedupe_key(rule: AgentRule) -> tuple:
+    if rule.category == "test_command" and rule.commands:
+        polarity = bool(NEGATIVE_RULE_RE.search(rule.text))
+        return (
+            rule.source,
+            "cmd:" + _normalize_command(rule.commands[0]),
+            rule.paths,
+            polarity,
+        )
+    return (rule.source, rule.text)
 
 
 def parse_agents(path: str | Path) -> list[AgentRule]:
@@ -212,11 +232,7 @@ def parse_agents_text(text: str, source: str = "AGENTS.md") -> list[AgentRule]:
                     commands=(command,),
                 )
                 pending_line = 0
-                key = (
-                    (rule.source, "cmd:" + _normalize_command(rule.commands[0]))
-                    if rule.category == "test_command" and rule.commands
-                    else (rule.source, rule.text)
-                )
+                key = _dedupe_key(rule)
                 if key not in seen:
                     seen.add(key)
                     rules.append(rule)
@@ -234,19 +250,26 @@ def parse_agents_text(text: str, source: str = "AGENTS.md") -> list[AgentRule]:
                 continue
         else:
             numbered = re.match(r"^\d+[.)]\s+(.*)", stripped)
-            if not numbered:
-                continue
-            text = numbered.group(1).strip()
+            if numbered:
+                text = numbered.group(1).strip()
+            else:
+                if (
+                    not section
+                    or NON_ACTIONABLE_SECTION_RE.search(section)
+                    or not (
+                        IMPERATIVE_RE.search(stripped)
+                        or COMMAND_RE.search(stripped)
+                        or PATH_RE.search(stripped)
+                    )
+                ):
+                    continue
+                text = stripped
         if not text or len(text) < 12:
             continue
         if not IMPERATIVE_RE.search(text) and not RULE_CUE_RE.search(text):
             continue
         rule = _make_rule(text, source, line_no, section)
-        key = (
-            (rule.source, "cmd:" + _normalize_command(rule.commands[0]))
-            if rule.category == "test_command" and rule.commands
-            else (rule.source, rule.text)
-        )
+        key = _dedupe_key(rule)
         if key in seen:
             continue
         seen.add(key)
@@ -515,27 +538,40 @@ def audit_agents(
         not_observed = 0
         scope = _infer_scope(rule, root)
         for events in sessions.values():
-            edit_steps = [
-                step for _sid, step, action, _raw, _target, _object, _outcome in events
-                if action == "edit"
+            edit_events = [
+                (step, target)
+                for _sid, step, action, _raw, target, _object, outcome in events
+                if action == "edit" and outcome not in ("err", "timeout")
             ]
+            if scope:
+                edit_events = [
+                    (step, target)
+                    for step, target in edit_events
+                    if any(_path_matches(path, target) for path in scope)
+                ]
             if rule.category == "test_command":
-                if not edit_steps:
+                # Documentation-only edits do not create a validation opportunity.
+                edit_events = [
+                    (step, target) for step, target in edit_events
+                    if scope or not DOC_TARGET_RE.search(target or "")
+                ]
+                if not edit_events:
                     continue
-                if scope and not any(
-                    _path_matches(path, target)
-                    for path in scope
-                    for _sid, _step, action, _raw, target, _object, _outcome in events
-                    if action == "edit"
-                ):
-                    continue
+            edit_steps = [step for step, _target in edit_events]
             matched = any(
-                _matches(rule, raw, target, object_id)
-                or (
-                    rule.category == "test_command"
-                    and not rule.commands
-                    and action == "exec"
-                    and VALIDATION_RE.search(raw)
+                (
+                    action == "exec"
+                    and _matches(rule, raw, target, object_id)
+                )
+                if rule.category == "test_command" and rule.commands
+                else (
+                    _matches(rule, raw, target, object_id)
+                    or (
+                        rule.category == "test_command"
+                        and not rule.commands
+                        and action == "exec"
+                        and VALIDATION_RE.search(raw)
+                    )
                 )
                 for _sid, _step, action, raw, target, object_id, _outcome in events
             )
@@ -561,9 +597,11 @@ def audit_agents(
                     compliant += 1
                 else:
                     violations += 1
-                    if any(outcome != "ok" for _step, outcome, *_rest in matching):
+                    if any(outcome in ("err", "timeout") for _step, outcome, *_rest in matching):
                         failed_validation += 1
             elif rule.category == "context_hygiene":
+                if not edit_events and not matched:
+                    continue
                 applicable += 1
                 if not matched:
                     not_observed += 1
@@ -607,18 +645,20 @@ def audit_agents(
         opportunities = applicable if measurable else 0
         if rule.category == "test_command":
             followed = compliant
-            undecided = not_observed
+            violations = max(applicable - compliant, 0)
         elif rule.category == "context_hygiene":
             followed = max(applicable - violations, 0)
-            undecided = not_observed
         else:
             followed = 0
-            undecided = 0
+        undecided = 0
         if measurable:
             coverage = "measured"
             coverage_reason = "observable command or path evidence"
+        elif rule.commands or rule.paths:
+            coverage = "unmeasured"
+            coverage_reason = "no compliance detector for this rule category"
         elif re.search(
-            r"(?i)\b(secrets?|credentials?|pr titles?|commit messages?|approval|attestation|reviewer)\b",
+            r"(?i)\b(secrets?|credentials?|approval|attestation|reviewer)\b",
             rule.text,
         ):
             coverage = "dark"
@@ -626,9 +666,10 @@ def audit_agents(
         else:
             coverage = "unmeasured"
             coverage_reason = "no observable command or path in the rule"
+        measurable_count = followed + violations
         rate = (
-            round(followed / opportunities, 3)
-            if opportunities >= 20
+            round(followed / measurable_count, 3)
+            if measurable_count >= 20
             else None
         )
         status, existing = discover_enforcement(root, rule)

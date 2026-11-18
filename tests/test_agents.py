@@ -376,3 +376,34 @@ def test_audit_marks_unobservable_rules(tmp_path: Path) -> None:
     assert by_text["Never commit secrets."].coverage == "dark"
     assert by_text["Use comments for complex logic only."].coverage == "unmeasured"
     assert by_text["Run `pytest tests/test_api.py` after editing."].coverage == "measured"
+
+
+def test_audit_opportunity_partition_and_path_commands(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("- Run `pytest` after editing `src/api.py`.\n")
+    db = tmp_path / "partition.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[ToolCall("Edit", "src/api.py", action_type="edit", target="src/api.py")],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.exercised_sessions == 0
+    assert audit.opportunities == audit.followed + audit.violation_sessions + audit.undecided
+    assert audit.violation_sessions == 1
+
+
+def test_parse_agents_reads_validation_code_block(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Validation\n```bash\nuv run pytest -q\n```\n")
+    rules = parse_agents(path)
+    assert [rule.commands for rule in rules] == [("uv run pytest -q",)]

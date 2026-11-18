@@ -501,10 +501,18 @@ def available_text(existing: str) -> str:
 
 
 def resolve_agents(path: str | Path | None = None) -> list[Path]:
-    if path is not None:
-        return [Path(path)]
-    candidates = [Path("AGENTS.md"), Path("CLAUDE.md")]
-    return [candidate for candidate in candidates if candidate.exists()]
+    candidates = [Path(path)] if path is not None else [Path("AGENTS.md"), Path("CLAUDE.md")]
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        paths.append(candidate)
+    return paths
 
 
 def audit_payload(
@@ -515,13 +523,20 @@ def audit_payload(
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> dict[str, Any]:
-    paths = (
+    raw_paths = (
         [Path(path)]
         if isinstance(path, (str, Path))
         else [Path(item) for item in path]
         if path is not None
         else resolve_agents()
     )
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in raw_paths:
+        resolved = candidate.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            paths.append(candidate)
     rules = [rule for file in paths for rule in parse_agents(file)]
     coverage = con.execute(
         "SELECT count(*), count(*) FILTER (WHERE started_at IS NOT NULL) FROM sessions WHERE repo = ?",

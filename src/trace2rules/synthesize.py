@@ -6,6 +6,7 @@ import os
 import re
 import sys
 from collections import defaultdict
+from pathlib import Path
 from dataclasses import replace
 from typing import Literal
 
@@ -396,7 +397,11 @@ Return JSON only, shaped exactly as:
 
 
 def _llm_synthesis(
-    findings: list[Finding], repo: str, labels: list[dict], max_rules: int = MAX_RULES
+    findings: list[Finding],
+    repo: str,
+    labels: list[dict],
+    max_rules: int = MAX_RULES,
+    existing: dict | None = None,
 ) -> Synthesis | None:
     resolved = _client()
     if resolved is None:
@@ -411,7 +416,7 @@ def _llm_synthesis(
                 "role": "system",
                 "content": "You convert observed coding-agent friction into terse, repo-level AGENTS.md rules.",
             },
-            {"role": "user", "content": _prompt(findings, repo, labels, max_rules)},
+            {"role": "user", "content": _prompt(findings, repo, labels, max_rules, existing=existing)},
         ],
     )
     content = (response.choices[0].message.content or "").strip()
@@ -703,6 +708,7 @@ def synthesize(
     max_rules: int = MAX_RULES,
     console: Console | None = None,
     emit: bool = True,
+    agents: str | Path | None = None,
 ) -> list[Synthesis]:
     from .cluster import exact_sequences, mine
 
@@ -742,13 +748,18 @@ def synthesize(
 
         synthesis: Synthesis | None = None
         llm_failed = False
+        existing = None
+        if agents:
+            from .agents import audit_payload
+
+            existing = audit_payload(con, repo_name, agents)
         if not offline:
             try:
                 with console.status(
                     f"[cyan]Synthesizing {escape(repo_name)}...[/cyan]"
                 ):
                     synthesis = _llm_synthesis(
-                        findings, repo_name, labels, max_rules=max_rules
+                        findings, repo_name, labels, max_rules=max_rules, existing=existing
                     )
             except Exception as error:  # noqa: BLE001 - degrade to deterministic output
                 llm_failed = True

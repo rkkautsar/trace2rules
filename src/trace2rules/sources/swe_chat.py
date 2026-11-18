@@ -1,11 +1,32 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import duckdb
 
 from ..models import Session, ToolCall
 from .common import classify_tool_call, parse_arguments, target_from_args
+
+
+def _timestamp(value) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, (int, float)):
+        seconds = float(value)
+        if seconds > 1e11:
+            seconds /= 1000
+        parsed = datetime.fromtimestamp(seconds, tz=timezone.utc)
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
 
 
 def _paths(source: str | Path) -> tuple[Path, Path]:
@@ -56,10 +77,17 @@ def ingest_swe_chat(
         sessions: dict[str, Session] = {}
         calls: dict[str, list[ToolCall]] = {}
         pending: dict[tuple[str, str], ToolCall] = {}
+        columns = {
+            row[0]
+            for row in con.execute(
+                "DESCRIBE SELECT * FROM read_parquet(?)", [str(conversations_path)]
+            ).fetchall()
+        }
+        timestamp_expr = "c.timestamp" if "timestamp" in columns else "NULL"
         cursor = con.execute(
-            """
+            f"""
             SELECT c.session_id, c.turn_type, c.tool_name, c.tool_call_id,
-                   c.tool_input_json, c.command, c.file_path, c.content
+                   c.tool_input_json, c.command, c.file_path, c.content, {timestamp_expr}
             FROM read_parquet(?) c
             JOIN selected s USING (session_id)
             WHERE c.turn_type IN ('tool_use', 'tool_result')
@@ -71,7 +99,7 @@ def ingest_swe_chat(
             batch = cursor.fetchmany(10_000)
             if not batch:
                 break
-            for session_id, turn_type, tool_name, tool_call_id, input_json, command, path, content in batch:
+            for session_id, turn_type, tool_name, tool_call_id, input_json, command, path, content, stamped in batch:
                 if session_id not in sessions:
                     _, repo_id, agent, success = meta.get(session_id, (session_id, repo or "unknown", "", None))
                     sessions[session_id] = Session(
@@ -82,8 +110,16 @@ def ingest_swe_chat(
                         source="swe-chat",
                         source_ref=f"{conversations_path}#{session_id}",
                         success_score=float(success) if success not in (None, "") else None,
+                        started_at=_timestamp(stamped),
                     )
                     calls[session_id] = []
+                else:
+                    stamped_at = _timestamp(stamped)
+                    if stamped_at and (
+                        sessions[session_id].started_at is None
+                        or stamped_at < sessions[session_id].started_at
+                    ):
+                        sessions[session_id].started_at = stamped_at
                 if turn_type == "tool_use":
                     args = parse_arguments(input_json)
                     raw_target = (

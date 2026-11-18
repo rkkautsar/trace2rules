@@ -507,6 +507,9 @@ def _audit_command(
         except ValueError as error:
             raise typer.BadParameter(f"Invalid timestamp: {value}") from error
 
+    if commit and (since or until):
+        console.print("[red]--commit cannot be combined with --since/--until[/red]")
+        raise typer.Exit(2)
     con = connect(db)
     try:
         if commit:
@@ -858,6 +861,10 @@ app.command("exact")(_exact_command)
 def _synthesize_command(
     repo: Annotated[str | None, typer.Option("--repo", help="Synthesize only this repo.")] = None,
     top: Annotated[int, typer.Option(help="Findings to pass to synthesis.")] = 25,
+    agents: Annotated[
+        Path | None,
+        typer.Option("--agents", help="Existing AGENTS.md to audit and avoid duplicating."),
+    ] = None,
     max_rules: Annotated[
         int,
         typer.Option("--max-rules", min=1, max=20, help="Maximum rules per repo."),
@@ -882,6 +889,7 @@ def _synthesize_command(
                 max_rules=max_rules,
                 offline=offline,
                 console=cmd_console,
+                agents=agents,
             )
         except ValueError as error:
             cmd_console.print(f"[red]{escape(str(error))}[/red]")

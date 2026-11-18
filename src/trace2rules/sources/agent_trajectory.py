@@ -361,9 +361,9 @@ def _records_to_session(
                     started_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
                     if started_at.tzinfo is not None:
                         started_at = started_at.astimezone(timezone.utc).replace(tzinfo=None)
+                    break
                 except ValueError:
-                    pass
-                break
+                    continue
         if started_at:
             break
     session = Session(

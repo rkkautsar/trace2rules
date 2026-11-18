@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..ingest import IngestStats, write_sessions
@@ -23,6 +24,26 @@ def find_database(source: str | Path) -> Path | None:
             return candidates[0]
     default = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
     return default if default.exists() else None
+
+
+def _timestamp(value) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, (int, float)):
+        seconds = float(value)
+        if seconds > 1e11:
+            seconds /= 1000
+        parsed = datetime.fromtimestamp(seconds, tz=timezone.utc)
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
 
 
 def _tables(con: sqlite3.Connection) -> set[str]:
@@ -147,6 +168,11 @@ def ingest_opencode(
                     source_ref=str(path),
                     agent="opencode",
                     calls=calls,
+                    started_at=(
+                        _timestamp(row["time_created"])
+                        if "time_created" in row.keys()
+                        else None
+                    ),
                 )
             )
         stats = write_sessions(db_path, sessions)

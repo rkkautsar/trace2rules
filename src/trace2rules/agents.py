@@ -68,7 +68,9 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
         token in lower for token in ("do not", "don't", "never", "keep", "outside")
     ):
         return "context_hygiene"
-    if VALIDATION_RE.search(lower):
+    if VALIDATION_RE.search(lower) and re.search(
+        r"(?i)\b(run|execute|invoke|use|validate|check|test)\b", lower
+    ) and not lower.startswith(("do not add test", "don't add test", "never add test")):
         return "test_command"
     if paths or any(
         token in lower

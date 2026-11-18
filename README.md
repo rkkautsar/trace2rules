@@ -175,6 +175,7 @@ Use `--repo owner/name` to override the repository label for local sessions.
 | `patterns` | Mine structural multi-step friction; labels refine when available |
 | `exact` | Show exact recurring sequences with evidence |
 | `synthesize` | Print per-repo rules to stdout |
+| `audit` | Audit existing `AGENTS.md` rules against sessions and suggest enforcement |
 
 Useful options:
 
@@ -187,6 +188,9 @@ trace2rules synthesize
 trace2rules synthesize --offline
 trace2rules synthesize --max-rules 10
 trace2rules synthesize --repo owner/name
+trace2rules audit --repo owner/name --agents AGENTS.md
+trace2rules audit --repo owner/name --agents AGENTS.md --commit HEAD --json
+trace2rules report --repo owner/name --prompt --agents AGENTS.md
 ```
 
 `--label` auto-detects an authenticated `wrangler` first, then `GEMINI_API_KEY`/`GOOGLE_API_KEY`, then `OPENAI_API_KEY`. It is opt-in because a full local run can have thousands of unique targets.

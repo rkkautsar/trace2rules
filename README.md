@@ -31,9 +31,20 @@ The same sessions produce suggested rules:
 
 ### Local examples
 
-- **`rkkautsar/trace2rules`**: use `uv run pytest -q`; map changes through `sources/` → `ingest.py` → `detectors.py` → `cluster.py` → `synthesize.py` → `cli.py`.
-- **`rkkautsar/louibot`**: verify with `npx tsc --noEmit && npm test && npm run build`; use `python3.10` for vendored Mini-SWE-Agent code.
-- **`rkkautsar/personal-website`**: after blog/OG edits run `node scripts/generate-blog.mjs` and verify the generated `og:image` tags.
+#### `rkkautsar/trace2rules`
+
+- **Validate:** `uv run pytest -q`
+- **Architecture:** `sources/` → `ingest.py` → `detectors.py` → `cluster.py` → `synthesize.py` → `cli.py`
+
+#### `rkkautsar/louibot`
+
+- **Validate:** `npx tsc --noEmit && npm test && npm run build`
+- **Runtime:** use `python3.10` for vendored Mini-SWE-Agent code
+
+#### `rkkautsar/personal-website`
+
+- **Regenerate:** `node scripts/generate-blog.mjs`
+- **Check:** generated blog HTML has the expected `og:image` tags
 
 Rules are capped at 5 rules, 60 lines, and 2,500 characters per repo.
 

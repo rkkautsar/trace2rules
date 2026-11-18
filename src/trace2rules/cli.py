@@ -484,8 +484,11 @@ def _audit_command(
     until: Annotated[str | None, typer.Option("--until", help="Only sessions before ISO timestamp.")] = None,
     latest_commit: Annotated[
         bool,
-        typer.Option("--latest-commit", help="Use the latest AGENTS.md commit as the session cutoff."),
-    ] = False,
+        typer.Option(
+            "--latest-commit/--all-sessions",
+            help="Use the latest AGENTS.md commit as the default session cutoff.",
+        ),
+    ] = True,
     commit: Annotated[
         str | None,
         typer.Option("--commit", help="Compare rule effectiveness before/after a commit."),
@@ -512,11 +515,29 @@ def _audit_command(
             since_dt = parse_time(since)
             until_dt = parse_time(until)
             if latest_commit:
-                sha, committed_at = latest_agents_commit(agents)
-                since_dt = committed_at
-                payload = audit_payload(con, repo, agents, since=since_dt, until=until_dt)
-                payload["commit"] = sha
-                payload["committed_at"] = committed_at.isoformat()
+                try:
+                    sha, committed_at = latest_agents_commit(agents)
+                    coverage = con.execute(
+                        "SELECT count(*), count(*) FILTER (WHERE started_at IS NOT NULL) "
+                        "FROM sessions WHERE repo = ?",
+                        [repo],
+                    ).fetchone()
+                    if coverage[1]:
+                        since_dt = committed_at
+                        payload = audit_payload(con, repo, agents, since=since_dt, until=until_dt)
+                        payload["commit"] = sha
+                        payload["committed_at"] = committed_at.isoformat()
+                    else:
+                        payload = audit_payload(con, repo, agents, since=since_dt, until=until_dt)
+                        payload["commit"] = sha
+                        payload["committed_at"] = committed_at.isoformat()
+                        payload["warning"] = (
+                            "No session timestamps for this repo; audit used all sessions "
+                            "instead of the latest AGENTS.md commit cutoff."
+                        )
+                except (subprocess.CalledProcessError, OSError, ValueError) as error:
+                    payload = audit_payload(con, repo, agents, since=since_dt, until=until_dt)
+                    payload["warning"] = f"Could not resolve latest AGENTS.md commit: {error}"
             else:
                 payload = audit_payload(con, repo, agents, since=since_dt, until=until_dt)
     finally:
@@ -543,7 +564,7 @@ def _audit_command(
             console.print(table)
         return
     table = Table(title=f"AGENTS.md audit: {repo}")
-    for column in ("Rule", "Category", "Exercised", "Applicable", "Violations", "Enforcement"):
+    for column in ("Rule", "Category", "Exercised", "Applicable", "Violations", "Enforceable", "Enforcement"):
         table.add_column(column)
     for rule in payload["rules"]:
         table.add_row(
@@ -552,9 +573,12 @@ def _audit_command(
             str(rule["exercised_sessions"]),
             str(rule["applicable_sessions"]),
             str(rule["violation_sessions"]),
+            "yes" if rule["enforceable"] else "no",
             rule["enforcement"],
         )
     console.print(table)
+    if payload.get("warning"):
+        console.print(f"[yellow]{payload['warning']}[/yellow]")
     for rule in payload["rules"]:
         console.print(f"[dim]{rule['suggestion']}[/dim]")
 

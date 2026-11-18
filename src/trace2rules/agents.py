@@ -37,6 +37,7 @@ class RuleAudit:
     exercised_sessions: int
     applicable_sessions: int
     violation_sessions: int
+    enforceable: bool
     enforcement: str
     suggestion: str
 
@@ -47,6 +48,7 @@ class RuleAudit:
             "exercised_sessions": self.exercised_sessions,
             "applicable_sessions": self.applicable_sessions,
             "violation_sessions": self.violation_sessions,
+            "enforceable": self.enforceable,
             "enforcement": self.enforcement,
             "suggestion": self.suggestion,
         }
@@ -205,6 +207,9 @@ def audit_agents(
             suggestion = f"Rule was violated in {violations} edited sessions; move it into CI/pre-commit."
         else:
             suggestion = "Rule was exercised without detected violations; keep as guidance."
+        enforceable = rule.category in {"test_command", "architecture_map", "context_hygiene"} or bool(
+            rule.commands or rule.paths
+        )
         audits.append(
             RuleAudit(
                 rule.text,
@@ -212,6 +217,7 @@ def audit_agents(
                 exercised,
                 applicable,
                 violations,
+                enforceable,
                 _enforcement(rule),
                 suggestion,
             )

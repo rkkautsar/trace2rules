@@ -69,6 +69,7 @@ class RuleAudit:
     compliant_sessions: int = 0
     failed_validation_sessions: int = 0
     not_observed_sessions: int = 0
+    scope: str = "repository"
     existing_enforcement: str = ""
     enforcement_status: str = "unknown"
 
@@ -85,6 +86,7 @@ class RuleAudit:
             "violation_sessions": self.violation_sessions,
             "failed_validation_sessions": self.failed_validation_sessions,
             "not_observed_sessions": self.not_observed_sessions,
+            "scope": self.scope,
             "existing_enforcement": self.existing_enforcement,
             "enforcement_status": self.enforcement_status,
             "enforceable": self.enforceable,
@@ -394,6 +396,54 @@ def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:
     return "unknown", ""
 
 
+_SOURCE_CACHE: dict[Path, list[str]] = {}
+
+
+def _source_index(root: Path) -> list[str]:
+    resolved = root.resolve()
+    if resolved in _SOURCE_CACHE:
+        return _SOURCE_CACHE[resolved]
+    paths: list[str] = []
+    for path in resolved.rglob("*.py"):
+        relative = path.relative_to(resolved)
+        if "tests" in relative.parts or "test" in relative.parts:
+            continue
+        paths.append(relative.as_posix())
+    _SOURCE_CACHE[resolved] = paths
+    return paths
+
+
+def _infer_scope(rule: AgentRule, root: Path | None) -> tuple[str, ...]:
+    explicit = tuple(
+        path for path in rule.paths if not path.startswith(("tests/", "test/"))
+    )
+    if explicit:
+        return explicit
+    if root is None or not root.is_dir():
+        return ()
+    source_paths = _source_index(root)
+    inferred: list[str] = []
+    for path in rule.paths:
+        if not path.startswith(("tests/", "test/")):
+            continue
+        stem = Path(path).stem
+        if stem.startswith("test_"):
+            stem = stem[5:]
+        test_parts = set(Path(path).parent.parts) - {"tests", "test", "."}
+        matches = [source for source in source_paths if Path(source).stem == stem]
+        if matches:
+            inferred.append(
+                max(
+                    matches,
+                    key=lambda source: (
+                        len(test_parts & set(Path(source).parent.parts)),
+                        -len(Path(source).parts),
+                    ),
+                )
+            )
+    return tuple(dict.fromkeys(inferred))
+
+
 def audit_agents(
     con: duckdb.DuckDBPyConnection,
     repo: str,
@@ -434,7 +484,22 @@ def audit_agents(
         failed_validation = 0
         violations = 0
         not_observed = 0
+        scope = _infer_scope(rule, root)
         for events in sessions.values():
+            edit_steps = [
+                step for _sid, step, action, _raw, _target, _object, _outcome in events
+                if action == "edit"
+            ]
+            if rule.category == "test_command":
+                if not edit_steps:
+                    continue
+                if scope and not any(
+                    _path_matches(path, target)
+                    for path in scope
+                    for _sid, _step, action, _raw, target, _object, _outcome in events
+                    if action == "edit"
+                ):
+                    continue
             matched = any(
                 _matches(rule, raw, target, object_id)
                 or (
@@ -447,13 +512,7 @@ def audit_agents(
             )
             if matched:
                 observed += 1
-            edit_steps = [
-                step for _sid, step, action, _raw, _target, _object, _outcome in events
-                if action == "edit"
-            ]
             if rule.category == "test_command":
-                if not edit_steps:
-                    continue
                 applicable += 1
                 if not matched:
                     not_observed += 1
@@ -536,6 +595,7 @@ def audit_agents(
                 compliant,
                 failed_validation,
                 not_observed,
+                ", ".join(scope) if scope else "repository",
                 existing,
                 status,
             )

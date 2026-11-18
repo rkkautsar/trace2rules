@@ -241,7 +241,7 @@ def test_audit_not_observed_is_session_scoped(tmp_path: Path) -> None:
     finally:
         con.close()
     assert audit.applicable_sessions == 2
-    assert audit.exercised_sessions == 2
+    assert audit.exercised_sessions == 1
     assert audit.compliant_sessions == 1
     assert audit.violation_sessions == 1
     assert audit.not_observed_sessions == 1
@@ -271,3 +271,36 @@ def test_parse_agents_joins_continued_shell_lines() -> None:
         "## Testing\n```bash\npytest \\\n  tests/test_api.py -q\n```\n"
     )
     assert rules[0].commands == ("pytest tests/test_api.py -q",)
+
+
+def test_audit_infers_test_scope_from_test_path(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    (root / "src").mkdir(parents=True)
+    (root / "tests").mkdir()
+    (root / "src" / "api.py").write_text("")
+    (root / "tests" / "test_api.py").write_text("")
+    path = root / "AGENTS.md"
+    path.write_text("- Run `pytest tests/test_api.py` after editing.\n")
+    db = tmp_path / "scope.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "api",
+                "acme/repo",
+                calls=[ToolCall("Edit", "src/api.py", action_type="edit", target="src/api.py")],
+            ),
+            Session(
+                "other",
+                "acme/repo",
+                calls=[ToolCall("Edit", "src/other.py", action_type="edit", target="src/other.py")],
+            ),
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path), root=root)[0]
+    finally:
+        con.close()
+    assert audit.scope == "src/api.py"
+    assert audit.applicable_sessions == 1

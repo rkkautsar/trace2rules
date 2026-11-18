@@ -43,10 +43,10 @@ On SWC (Rust), auditing the repository’s real `AGENTS.md` against 188 local se
 
 | Rule | Coverage | Opportunities | Followed | Violations | Undecided | Confidence | Enforcement |
 |---|---|---:|---:|---:|---:|---|---|
-| `Prefer fixture tests over inline (#[test]) tests` | measured | 3 | 2 | 0 | 1 | low | missing |
+| `Prefer fixture tests over inline (#[test]) tests` | unmeasured | 0 | 0 | 0 | 0 | none | missing |
 | `Use gh CLI for github.com data` | unmeasured | 0 | 0 | 0 | 0 | none | configured in `.github/workflows/CI.yml` |
 
-The fixture rule is not applicable to all 188 sessions: only three sessions edited test files, and two of those used fixture-style paths. The `gh` rule has no compliance detector, so its 32 observed mentions cannot be scored as compliance. Most SWC rules remain unmeasured; the audit reports that gap instead of treating every unobserved session as a violation.
+The fixture rule needs test-content classification, which the tool-event schema does not expose; path shape alone is not enough to distinguish fixture tests from inline tests. The `gh` rule has no compliance detector, so its 32 observed mentions cannot be scored as compliance. All 30 SWC rules are unmeasured in this run; the audit reports that gap instead of treating every unobserved session as a violation.
 
 The same sessions produce suggested rules:
 

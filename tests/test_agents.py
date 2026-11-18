@@ -485,23 +485,3 @@ def test_audit_exposes_confidence(tmp_path: Path) -> None:
         con.close()
     assert audit.confidence == "low"
 
-
-def test_fixture_rule_tracks_fixture_and_inline_edits(tmp_path: Path) -> None:
-    path = tmp_path / "AGENTS.md"
-    path.write_text("- Prefer fixture tests over inline (`#[test]`) tests.\n")
-    db = tmp_path / "fixture.duckdb"
-    write_sessions(
-        db,
-        [
-            Session("a", "acme/repo", calls=[ToolCall("Edit", "crates/x/tests/fixture.rs", action_type="edit")]),
-            Session("b", "acme/repo", calls=[ToolCall("Edit", "crates/x/src/tests.rs", action_type="edit")]),
-        ],
-    )
-    con = connect(db)
-    try:
-        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
-    finally:
-        con.close()
-    assert audit.category == "fixture_test"
-    assert audit.coverage == "measured"
-    assert (audit.opportunities, audit.followed, audit.violation_sessions) == (2, 1, 1)

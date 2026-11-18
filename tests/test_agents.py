@@ -460,3 +460,27 @@ def test_enforcement_requires_workflow_run_block(tmp_path: Path) -> None:
     status, source = discover_enforcement(tmp_path, rule)
     assert status == "configured"
     assert "ci.yml" in source
+
+
+def test_command_matching_is_argv_aware() -> None:
+    from trace2rules.agents import _matches
+
+    rule = parse_agents_text("- Run `gh pr view` when checking PRs.")[0]
+    assert _matches(rule, "gh pr view 42", "", "")
+    assert not _matches(rule, "github-tool pr view 42", "", "")
+
+
+def test_audit_exposes_confidence(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("- Run `pytest tests/test_api.py` after editing.\n")
+    db = tmp_path / "confidence.duckdb"
+    write_sessions(
+        db,
+        [Session("s", "acme/repo", calls=[ToolCall("Edit", "src/api.py", action_type="edit", target="src/api.py")])],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.confidence == "low"

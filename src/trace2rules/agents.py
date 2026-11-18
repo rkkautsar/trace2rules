@@ -87,6 +87,7 @@ class RuleAudit:
     followed: int = 0
     undecided: int = 0
     rate: float | None = None
+    confidence: str = "none"
     examples: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
@@ -113,6 +114,7 @@ class RuleAudit:
             "followed": self.followed,
             "undecided": self.undecided,
             "rate": self.rate,
+            "confidence": self.confidence,
             "examples": list(self.examples),
             "enforceable": self.enforceable,
             "enforcement": self.enforcement,
@@ -312,6 +314,27 @@ def _needles(rule: AgentRule) -> tuple[str, ...]:
     return tuple(dict.fromkeys(value.lower() for value in values if len(value) >= 3))
 
 
+def _argv_match(required: str, actual: str) -> bool:
+    required_tokens = required.split()
+    actual_tokens = actual.split()
+    if not required_tokens:
+        return False
+
+    def match(required_index: int, actual_index: int) -> bool:
+        if required_index == len(required_tokens):
+            return True
+        if actual_index == len(actual_tokens):
+            return False
+        token = required_tokens[required_index]
+        if token.startswith("<") and token.endswith(">"):
+            return match(required_index + 1, actual_index + 1)
+        if token != actual_tokens[actual_index]:
+            return False
+        return match(required_index + 1, actual_index + 1)
+
+    return any(match(0, start) for start in range(len(actual_tokens)))
+
+
 def _matches(rule: AgentRule, raw_target: str, target: str, object_id: str) -> bool:
     if rule.commands:
         normalized = _normalize_command(raw_target)
@@ -319,11 +342,7 @@ def _matches(rule: AgentRule, raw_target: str, target: str, object_id: str) -> b
             needle = _normalize_command(command)
             if not needle:
                 continue
-            if "<" in needle:
-                prefix = needle.split("<", 1)[0].strip()
-                if prefix and prefix in normalized:
-                    return True
-            elif needle in normalized or needle in (target or "").lower():
+            if _argv_match(needle, normalized):
                 return True
     if rule.paths:
         return any(_path_matches(path, target or "") for path in rule.paths)
@@ -732,6 +751,12 @@ def audit_agents(
             if measurable_count >= 20
             else None
         )
+        confidence = (
+            "none" if not measurable or opportunities == 0
+            else "low" if opportunities < 20
+            else "medium" if opportunities < 50
+            else "high"
+        )
         status, existing = discover_enforcement(root, rule)
         if status == "configured":
             suggestion = (
@@ -772,6 +797,7 @@ def audit_agents(
         audit.followed = followed
         audit.undecided = undecided
         audit.rate = rate
+        audit.confidence = confidence
         audit.examples = tuple(dict.fromkeys(examples))[:3]
     return audits
 

@@ -887,13 +887,9 @@ def write_sessions(
                 f"DELETE FROM sessions WHERE session_id IN ({placeholders})",
                 session_ids,
             )
-            con.executemany(
-                """
-                INSERT INTO sessions (
-                    session_id, repo, instance_id, resolved, total_turns,
-                    source, source_ref, agent, success_score, started_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+            _insert_rows(
+                con,
+                "sessions",
                 [
                     (
                         session.session_id,
@@ -908,6 +904,10 @@ def write_sessions(
                         session.started_at,
                     )
                     for session in session_list
+                ],
+                columns=[
+                    "session_id", "repo", "instance_id", "resolved", "total_turns",
+                    "source", "source_ref", "agent", "success_score", "started_at",
                 ],
             )
 
@@ -934,9 +934,6 @@ def write_sessions(
                 tool_error = (
                     len(observation) < 500 and bool(TOOL_ERROR_RE.search(observation))
                 )
-                error_signature = _error_signature(
-                    observation, exit_code, timeout, text_error, tool_error
-                )
                 outcome = _event_outcome(
                     action, observation, exit_code, text_error, timeout, tool_error, verb
                 )
@@ -944,8 +941,19 @@ def write_sessions(
                     outcome = "err"
                 elif call.is_error is False and outcome == "unknown":
                     outcome = "ok"
-                if outcome == "err" and not error_signature:
-                    error_signature = "err:unknown"
+                if outcome == "err":
+                    error_signature = _error_signature(
+                        observation, exit_code, timeout, text_error, tool_error
+                    ) or "err:unknown"
+                    detail = _error_detail(observation)
+                    family = detail or error_signature
+                    error_message = observation[:1200]
+                    cause = _observation_cause(observation)
+                    site = _error_site(observation)
+                    origin = _error_origin(observation)
+                else:
+                    error_signature = ""
+                    detail = family = error_message = cause = site = origin = ""
                 events.append(
                     (
                         f"{session.session_id}:{step_idx}",
@@ -965,30 +973,30 @@ def write_sessions(
                         outcome == "err",
                         (len(observation) + 3) // 4,
                         observation[:400],
-                        _observation_cause(observation),
-                        _error_detail(observation),
-                        _error_site(observation),
-                        observation[:1200],
-                        _error_detail(observation) or error_signature,
-                        _error_origin(observation),
+                        cause,
+                        detail,
+                        site,
+                        error_message,
+                        family,
+                        origin,
                         _event_hash(call.raw_target, observation),
                         call.assistant_context or "",
                     )
                 )
 
         if events:
-            con.executemany(
-                """
-                INSERT INTO tool_events (
-                    event_id, session_id, repo, step_idx, segment_idx,
-                    tool_name, action_type,
-                    verb, object_id, target, raw_target, outcome, exit_code,
-                    error_signature, is_error, approx_out_tokens, obs_excerpt,
-                    obs_cause, error_detail, error_site, error_message,
-                    error_family, error_origin, event_hash, assistant_context
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+            _insert_rows(
+                con,
+                "tool_events",
                 events,
+                columns=[
+                    "event_id", "session_id", "repo", "step_idx", "segment_idx",
+                    "tool_name", "action_type", "verb", "object_id", "target",
+                    "raw_target", "outcome", "exit_code", "error_signature",
+                    "is_error", "approx_out_tokens", "obs_excerpt", "obs_cause",
+                    "error_detail", "error_site", "error_message", "error_family",
+                    "error_origin", "event_hash", "assistant_context",
+                ],
             )
         con.execute("COMMIT")
         return IngestStats(

@@ -586,7 +586,7 @@ def ingest_agent_sessions(
                             normalized.append({"records": [], "diagnostics": []})
                 return normalized
 
-            BATCH = 16
+            BATCH = 64
             batches = [
                 transcript_metas[start : start + BATCH]
                 for start in range(0, len(transcript_metas), BATCH)

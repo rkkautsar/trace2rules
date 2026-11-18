@@ -394,6 +394,10 @@ def _mine_command(
 app.command("mine")(_mine_command)
 
 
+def _repo_matches_cwd(repo_name: str) -> bool:
+    return repo_name == Path.cwd().name or repo_name.rsplit("/", 1)[-1] == Path.cwd().name
+
+
 def _resolve_repo_label(
     con: duckdb.DuckDBPyConnection,
     repo: str | None,
@@ -516,7 +520,7 @@ def _report_command(
                 existing = (
                     audit_payload(con, repo_name, agent_paths)
                     if agent_paths
-                    and (repo is not None or repo_name == Path.cwd().name)
+                    and (repo is not None or _repo_matches_cwd(repo_name))
                     else None
                 )
                 chunks.append(

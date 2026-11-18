@@ -429,3 +429,19 @@ def test_infer_scope_indexes_typescript(tmp_path: Path) -> None:
     from trace2rules.agents import _infer_scope
 
     assert _infer_scope(parse_agents(path)[0], root) == ("src/api.ts",)
+
+
+def test_matches_command_placeholders() -> None:
+    from trace2rules.agents import _matches
+
+    rule = parse_agents_text("- Run `cargo test -p <crate> --offline` after editing.")[0]
+    assert _matches(rule, "cargo test -p swc_ecma_parser --offline", "", "")
+
+
+def test_repo_matches_cwd_suffix(monkeypatch, tmp_path: Path) -> None:
+    from trace2rules.cli import _repo_matches_cwd
+
+    monkeypatch.chdir(tmp_path)
+    assert _repo_matches_cwd(f"owner/{tmp_path.name}")
+    assert _repo_matches_cwd(tmp_path.name)
+    assert not _repo_matches_cwd("owner/other")

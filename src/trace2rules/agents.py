@@ -286,6 +286,7 @@ def _normalize_command(command: str) -> str:
         command,
     )
     command = re.sub(r"^(?:timeout\s+\S+\s+)", "", command)
+    command = re.sub(r"^(?:uv run|npx|pnpm exec|yarn run|npm run)\s+", "", command)
     return command.strip().lower()
 
 
@@ -314,7 +315,13 @@ def _matches(rule: AgentRule, raw_target: str, target: str, object_id: str) -> b
         normalized = _normalize_command(raw_target)
         for command in rule.commands:
             needle = _normalize_command(command)
-            if needle and (needle in normalized or needle in (target or "").lower()):
+            if not needle:
+                continue
+            if "<" in needle:
+                prefix = needle.split("<", 1)[0].strip()
+                if prefix and prefix in normalized:
+                    return True
+            elif needle in normalized or needle in (target or "").lower():
                 return True
     if rule.paths:
         return any(_path_matches(path, target or "") for path in rule.paths)
@@ -872,6 +879,10 @@ def audit_prompt(payload: dict[str, Any]) -> str:
 
 Existing AGENTS.md audit (JSON):
 {json.dumps(payload, indent=2)}
+
+Definitions:
+- `coverage=measured` means the rule has transcript evidence; `unmeasured` means no detector is implemented; `dark` means the policy is not observable from tool logs.
+- `opportunities` are applicable sessions; `followed` and `violations` partition them. `rate` is null below 20 opportunities.
 
 Review these existing rules and return a JSON object with:
 - `rules`: only rules that should change, each with:

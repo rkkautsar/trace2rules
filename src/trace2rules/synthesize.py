@@ -390,6 +390,7 @@ Write AGENTS.md rules for this repository. Requirements:
 - For `recovery` findings, use the representative window from failure through success to explain the failed -> successful transition; cite the support count. Do not infer intent not shown by the tool calls.
 - A window is one illustrative occurrence, not proof of intent. Never encode an identifier that appears in fewer than two sessions.
 - Do not use resolution labels or infer success from them. Use `validated_sessions` and `unvalidated_sessions` only.
+- `outcomes`/audit `rate: null` means fewer than 20 opportunities; do not describe it as a failure.
 - The `assistant` field is the agent's reasoning, not observed evidence. Use it to explain a sequence, but never cite it as a source or count it as a finding.
 - For `orientation` or `side=repo`, write a repository-side recommendation, not an agent rule.
 - Do not mechanically recommend `| head`; distinguish quiet flags, targeted test selection, and repo entrypoints.

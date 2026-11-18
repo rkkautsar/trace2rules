@@ -26,7 +26,13 @@ Rules are capped at 5 rules, 60 lines, and 2,500 characters per repo.
 
 ## Quick start: your own sessions
 
-Analyze the sessions already on your machine.
+Let your coding agent run the workflow:
+
+```text
+Read the trace2rules README, install it with `uv tool install trace2rules` if it is missing, then ingest my local agent sessions. Use `trace2rules report` to surface recurring friction with evidence and synthesize repo-specific `AGENTS.md` rules from that JSON.
+```
+
+Or run it manually:
 
 ```bash
 uv tool install trace2rules
@@ -34,10 +40,6 @@ trace2rules ingest --limit 50
 trace2rules mine
 trace2rules synthesize
 ```
-
-Or hand the workflow to your coding agent:
-
-> Read the `trace2rules` README, install it with `uv tool install trace2rules` if it is missing, then ingest my local agent sessions. Use `trace2rules report` to surface recurring friction with evidence and synthesize repo-specific `AGENTS.md` rules from that JSON.
 
 `--source` is repeatable and defaults to your home directory. It scans all standard local stores: `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, `~/.omp/agent/sessions`, and `~/.local/share/opencode`. The example imports 50 sessions per source; use `--limit 0` for all.
 
@@ -69,6 +71,13 @@ Run `make check`
 status: configured
 source: .github/workflows/package-test.yml
 ```
+
+SWC audit (real `AGENTS.md`, all 188 sessions):
+
+| Rule | Observed | Applicable | Compliant | Violations | Enforcement |
+|---|---:|---:|---:|---:|---|
+| `Prefer fixture tests over inline (#[test]) tests` | 5 | 188 | 1 | 187 | missing |
+| `Use gh CLI for github.com data` | 87 | 188 | 0 | 0 | configured in `.github/workflows/CI.yml` |
 
 `available` means a Makefile/package target exists but is not wired into CI. `missing` means no mechanism was found. `--prompt` emits a self-contained review prompt for a fresh-context agent.
 

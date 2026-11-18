@@ -123,7 +123,7 @@ def select_findings(
             finding
             for finding in mined.get(key, [])
             if finding.repo == repo
-            and finding.sessions >= 3
+            and (finding.sessions >= 3 or finding.kind == "feedback_loop")
             and not GENERATED_VERIFIER_RE.search(finding.title)
             and (finding.recommendation or finding.kind != "context")
             and (

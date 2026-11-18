@@ -29,6 +29,12 @@ The same sessions produce suggested rules:
   **Evidence:** 33 reads of `sequences.rs` across 7 sessions averaged 1,802 tokens.
 ```
 
+### Local examples
+
+- **`rkkautsar/trace2rules`**: use `uv run pytest -q`; map changes through `sources/` → `ingest.py` → `detectors.py` → `cluster.py` → `synthesize.py` → `cli.py`.
+- **`rkkautsar/louibot`**: verify with `npx tsc --noEmit && npm test && npm run build`; use `python3.10` for vendored Mini-SWE-Agent code.
+- **`rkkautsar/personal-website`**: after blog/OG edits run `node scripts/generate-blog.mjs` and verify the generated `og:image` tags.
+
 Rules are capped at 5 rules, 60 lines, and 2,500 characters per repo.
 
 ## Quick start: audit existing rules
@@ -65,6 +71,12 @@ trace2rules report --prompt > evidence.txt
 ```
 
 Then give `evidence.txt` to your agent to synthesize the rules. `trace2rules synthesize` is the optional built-in LLM fallback.
+
+To write one prompt per detected repo instead of one combined stream:
+
+```bash
+trace2rules report --prompt --out-dir reports/
+```
 
 `--source` is repeatable and defaults to your home directory. It scans all standard local stores: `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, `~/.omp/agent/sessions`, and `~/.local/share/opencode`. The default cap is 200 sessions per source and selects the most recently modified files; use `--limit 0` for all.
 

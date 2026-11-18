@@ -409,8 +409,14 @@ def _report_command(
         Path | None,
         typer.Option("--agents", help="Existing AGENTS.md to audit and avoid duplicating."),
     ] = None,
+    out_dir: Annotated[
+        Path | None,
+        typer.Option("--out-dir", help="Write one prompt per repo into this directory."),
+    ] = None,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
+    if out_dir is not None and not prompt:
+        raise typer.BadParameter("--out-dir requires --prompt.")
     con = connect(db)
     try:
         session_count, instance_count = con.execute(
@@ -476,7 +482,18 @@ def _report_command(
                         existing=existing,
                     )
                 )
-            sys.stdout.write("\n\n---\n\n".join(chunks))
+            if out_dir is None:
+                sys.stdout.write("\n\n---\n\n".join(chunks))
+            else:
+                out_dir.mkdir(parents=True, exist_ok=True)
+                for repo_name, _count in repo_rows:
+                    safe = repo_name.replace("/", "__").replace("\\", "__")
+                    path = out_dir / f"{safe}.md"
+                    prompt_text = next(
+                        chunk for chunk in chunks if chunk.startswith(f"# Repository: {repo_name}\n")
+                    )
+                    path.write_text(prompt_text, encoding="utf-8")
+                    print(f"wrote {path}", file=sys.stderr)
             return
         patterns = [
             pattern

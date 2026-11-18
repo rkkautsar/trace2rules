@@ -198,6 +198,7 @@ The repository label is inferred from the git remote or working-directory basena
 | `exact` | Show exact recurring sequences with evidence |
 | `synthesize` | Print per-repo rules to stdout |
 | `audit` | Audit existing `AGENTS.md` rules against sessions and suggest enforcement |
+| `feedback` | Mine repeated human constraints/corrections from local transcripts |
 
 Useful options:
 
@@ -213,6 +214,7 @@ trace2rules audit --agents AGENTS.md
 trace2rules audit --agents AGENTS.md --commit HEAD --json
 trace2rules audit --agents AGENTS.md --prompt
 trace2rules report --prompt --agents AGENTS.md
+trace2rules feedback --source ~/.omp/agent/sessions
 ```
 
 ## Agentic workflow

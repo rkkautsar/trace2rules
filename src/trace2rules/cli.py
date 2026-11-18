@@ -24,6 +24,7 @@ from rich.table import Table
 
 from .agents import audit_commit, audit_payload, latest_agents_commit, resolve_agents
 from .db import DB_PATH, connect
+from .feedback import mine_repeated_steering
 from .ingest import DEFAULT_REPOS, SOURCE, ingest as ingest_traces
 from .labels import label_targets
 from .patterns import mine_sequences
@@ -942,6 +943,46 @@ def _exact_command(
 
 
 app.command("exact")(_exact_command)
+
+
+def _feedback_command(
+    source: Annotated[
+        Path,
+        typer.Option("--source", help="Agent session directory to scan."),
+    ] = Path.home() / ".omp" / "agent" / "sessions",
+    json_output: Annotated[bool, typer.Option("--json", help="Emit JSON.")] = False,
+) -> None:
+    findings = mine_repeated_steering(source)
+    if json_output:
+        console.print_json(
+            data=[
+                {
+                    "repo": item.repo,
+                    "session": item.session,
+                    "key": item.key,
+                    "occurrences": item.occurrences,
+                    "examples": list(item.examples),
+                }
+                for item in findings
+            ]
+        )
+        return
+    table = Table(title="Repeated human steering")
+    table.add_column("Repo")
+    table.add_column("Key")
+    table.add_column("Count", justify="right")
+    table.add_column("Example")
+    for item in sorted(findings, key=lambda row: row.occurrences, reverse=True):
+        table.add_row(
+            escape(item.repo),
+            item.key,
+            str(item.occurrences),
+            escape(item.examples[0] if item.examples else ""),
+        )
+    console.print(table)
+
+
+app.command("feedback")(_feedback_command)
 
 
 def _synthesize_command(

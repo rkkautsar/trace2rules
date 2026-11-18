@@ -1,8 +1,8 @@
 # trace2rules
 
-Mine coding-agent sessions into evidence-backed `AGENTS.md` rules.
+Mine and audit coding-agent sessions into evidence-backed `AGENTS.md` rules.
 
-`trace2rules` is a local-first CLI. It ingests agent trajectories, detects recurring friction (setup failures, repeated exceptions, oversized output, rediscovery hotspots), and proposes a small number of repository-specific rules with the evidence attached.
+`trace2rules` is a local-first CLI. It ingests agent trajectories, mines recurring friction, audits existing `AGENTS.md`/`CLAUDE.md` rules against real sessions, and identifies whether each rule is observed, compliant, violated, unobserved, or already enforced by CI/pre-commit. New rule proposals are reconciled against existing rules instead of blindly duplicated.
 
 Status: beta. The output is a proposal, not an automatically applied `AGENTS.md`.
 

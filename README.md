@@ -36,13 +36,13 @@ Rules are capped at 5 rules, 60 lines, and 2,500 characters per repo.
 Run from the target checkout. `AGENTS.md` and `CLAUDE.md` are auto-detected.
 
 ```text
-Install trace2rules if missing (`uv tool install trace2rules`). Audit this repo's AGENTS.md and CLAUDE.md against my local sessions with `trace2rules audit --repo OWNER/NAME`. Report unobserved, violated, and unenforced rules, and propose existing CI/pre-commit checks without duplicating configured enforcement.
+Install trace2rules if missing (`uv tool install trace2rules`). Audit this repo's AGENTS.md and CLAUDE.md against my local sessions with `trace2rules audit --repo REPO_LABEL`. Report unobserved, violated, and unenforced rules, and propose existing CI/pre-commit checks without duplicating configured enforcement.
 ```
 
 Manual:
 
 ```bash
-trace2rules audit --repo OWNER/NAME --prompt > audit.txt
+trace2rules audit --repo REPO_LABEL --prompt > audit.txt
 ```
 
 Then give `audit.txt` to your agent.
@@ -52,7 +52,7 @@ Then give `audit.txt` to your agent.
 Ask your coding agent to mine, report, and synthesize:
 
 ```text
-Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules ingest` for my local agent sessions, then `trace2rules mine`, then `trace2rules report --repo OWNER/NAME --prompt`. Read that report and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
+Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules ingest` for my local agent sessions, then `trace2rules mine`, then `trace2rules report --repo REPO_LABEL --prompt`. Read that report and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
 ```
 
 Or run the evidence step manually:
@@ -61,12 +61,14 @@ Or run the evidence step manually:
 uv tool install trace2rules
 trace2rules ingest --limit 50
 trace2rules mine
-trace2rules report --repo OWNER/NAME --prompt > evidence.txt
+trace2rules report --repo REPO_LABEL --prompt > evidence.txt
 ```
 
 Then give `evidence.txt` to your agent to synthesize the rules. `trace2rules synthesize` is the optional built-in LLM fallback.
 
 `--source` is repeatable and defaults to your home directory. It scans all standard local stores: `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, `~/.omp/agent/sessions`, and `~/.local/share/opencode`. The example imports 50 sessions per source; use `--limit 0` for all.
+
+For local sessions, `REPO_LABEL` defaults to the working-directory basename, not `owner/name`. Run `trace2rules mine` to see the labels; use `--repo` during `ingest` to override one.
 
 Agent synthesis from the report is the default workflow. `trace2rules synthesize` is optional; add `--offline` to force its deterministic rules.
 

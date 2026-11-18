@@ -485,3 +485,30 @@ def test_audit_exposes_confidence(tmp_path: Path) -> None:
         con.close()
     assert audit.confidence == "low"
 
+
+
+def test_audit_reports_stale_paths_and_conditional_wording(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Testing\n\n- Run `pytest tests/test_missing.py` when tests change.\n")
+    db = tmp_path / "stale.duckdb"
+    write_sessions(db, [Session("s", "acme/repo", calls=[ToolCall("Read", "src/api.py")])])
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path), root=tmp_path)[0]
+    finally:
+        con.close()
+    assert audit.wording == "conditional"
+    assert audit.stale_paths == ("tests/test_missing.py",)
+
+
+def test_stale_paths_ignore_markdown_links(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Links\n\n- Use [owner/repo](https://github.com/owner/repo) for issues.\n")
+    db = tmp_path / "links.duckdb"
+    write_sessions(db, [Session("s", "acme/repo")])
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path), root=tmp_path)[0]
+    finally:
+        con.close()
+    assert audit.stale_paths == ()

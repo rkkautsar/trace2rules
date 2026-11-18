@@ -88,6 +88,8 @@ class RuleAudit:
     undecided: int = 0
     rate: float | None = None
     confidence: str = "none"
+    wording: str = "direct"
+    stale_paths: tuple[str, ...] = ()
     examples: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
@@ -115,6 +117,8 @@ class RuleAudit:
             "undecided": self.undecided,
             "rate": self.rate,
             "confidence": self.confidence,
+            "wording": self.wording,
+            "stale_paths": list(self.stale_paths),
             "examples": list(self.examples),
             "enforceable": self.enforceable,
             "enforcement": self.enforcement,
@@ -569,6 +573,29 @@ def _infer_scope(rule: AgentRule, root: Path | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(inferred))
 
 
+def _stale_paths(rule: AgentRule, root: Path | None) -> tuple[str, ...]:
+    if root is None or not root.is_dir():
+        return ()
+    stale: list[str] = []
+    for value in COMMAND_RE.findall(rule.text):
+        for candidate in PATH_RE.findall(value):
+            candidate = candidate.strip().strip("`")
+            if (
+                not candidate
+                or candidate.startswith(("/", "~"))
+                or candidate.startswith(("http://", "https://"))
+                or re.search(r"[*<>]", candidate)
+                or (
+                    len(candidate.split("/")) == 2
+                    and not Path(candidate).suffix
+                )
+            ):
+                continue
+            if not (root / candidate).exists():
+                stale.append(candidate)
+    return tuple(dict.fromkeys(stale))
+
+
 def audit_agents(
     con: duckdb.DuckDBPyConnection,
     repo: str,
@@ -699,6 +726,8 @@ def audit_agents(
                 if not matched:
                     not_observed += 1
 
+        wording = "conditional" if re.search(r"(?i)\b(?:if|when|unless)\b", rule.text) else "direct"
+        stale_paths = _stale_paths(rule, root)
         enforcement = _enforcement(rule)
         enforceable = not enforcement.startswith("No mechanical enforcement")
         if not _needles(rule):
@@ -798,6 +827,8 @@ def audit_agents(
         audit.undecided = undecided
         audit.rate = rate
         audit.confidence = confidence
+        audit.wording = wording
+        audit.stale_paths = stale_paths
         audit.examples = tuple(dict.fromkeys(examples))[:3]
     return audits
 
@@ -967,6 +998,8 @@ Review these existing rules and return a JSON object with:
   - `enforcement`: concrete CI, pre-commit, lint, or CODEOWNERS check
   - `replacement`: optional stricter wording, or null
 - `suggested_new_rules`: rules supported by evidence but missing from AGENTS.md
+- Prefer rewriting conditional rules (`if`, `when`, `unless`) as direct instructions.
+- Report stale backticked paths; they make the rule look current when it is not.
 
 Do not repeat rules that are already effective. Prefer mechanical enforcement over
 soft instructions. If timestamp coverage is zero, state that before/after claims

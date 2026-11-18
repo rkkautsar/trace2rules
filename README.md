@@ -26,10 +26,16 @@ Rules are capped at 5 rules, 60 lines, and 2,500 characters per repo.
 
 ## Quick start: your own sessions
 
-Let your coding agent run the workflow:
+Ask your coding agent to mine and synthesize:
 
 ```text
-Read the trace2rules README, install it with `uv tool install trace2rules` if it is missing, then ingest my local agent sessions. Use `trace2rules report` to surface recurring friction with evidence and synthesize repo-specific `AGENTS.md` rules from that JSON.
+Install trace2rules if missing (`uv tool install trace2rules`). Ingest my local agent sessions, then run `trace2rules synthesize`. Keep only rules supported by the mined evidence.
+```
+
+Ask it to audit existing rules from a checkout:
+
+```text
+Audit this repo's AGENTS.md and CLAUDE.md against my local sessions with `trace2rules audit --repo OWNER/NAME`. Report unobserved, violated, and unenforced rules, and propose existing CI/pre-commit checks where available.
 ```
 
 Or run it manually:

@@ -28,22 +28,23 @@ The same sessions produce suggested rules:
 
 **`rkkautsar/trace2rules`**
 
-- Treat `src/trace2rules/` as a linear pipeline: `ingest.py` normalizes calls, `detectors.py` emits findings, `cluster.py` groups failures, `synthesize.py` renders rules, and `cli.py` wires commands. Change the owning module and its `tests/test_<module>.py`, not every stage.
-- Find the symbol with `rg -n '^(def|class) ' src/trace2rules/<module>.py` and read only that range; avoid `cat -n` or `nl -ba` on all of `synthesize.py`, `cli.py`, `detectors.py`, or `cluster.py`.
-- Run `uv run pytest -q` from the repository root after edits; narrow one failing CLI case with `uv run pytest -q tests/test_cli.py -k <pattern>`.
+- Keep stage ownership explicit in `src/trace2rules/`: source adapters in `sources/`, normalization in `ingest.py`, schema access in `db.py`, findings in `detectors.py`, grouping in `cluster.py`/`patterns.py`, rule and prompt assembly in `synthesize.py`, scoring in `evaluate.py`, and command wiring only in `cli.py`. Add pipeline behavior to its owning module rather than duplicating queries or formatting in `cli.py`.
+- Before reading `src/trace2rules/synthesize.py` or `src/trace2rules/cli.py`, index their symbols with `rg -n '^(def|class) ' <file>` and open only the matching ranges instead of re-reading the whole 500+-line module.
+- Run DuckDB queries and CLI checks through the project environment: `.venv/bin/python` for scripts and `.venv/bin/trace2rules` for subcommands. Do not invoke the system `python`, which lacks the `duckdb` package.
 
 **`rkkautsar/louibot`**
 
-- Verify changes from the repo root with `npx tsc --noEmit && npm test`, then `npm run build`.
-- Keep a section map of `src/agent.ts` (prompts, compaction, validation) in AGENTS.md; grep the symbol, then read only that bounded range.
-- Run vendored Mini-SWE-Agent code in `.louibot/benchmarks/*/miniswe-agent-env` with `python3.10`; `python3` 3.15 raises `ImportError: cannot import name 'ArgsKwargs' from 'pydantic_core._pydantic_core'`.
+- Validate source changes from the repo root with `npm test && npm run build`, the pair used in the recorded validation runs. Do not spend turns on one-off `npx tsc --noEmit ... | head` variants that add no coverage beyond the build.
+- `src/agent.ts` is the ~2.7k-line core holding model prompts, controller validation, and thread compaction, while `src/benchmark.ts` runs benchmarks and `benchmarks/README.md` documents them. Locate a symbol with `grep -n` and read a narrow `sed -n` range instead of re-reading the whole file.
+- Extract benchmark state by filtering `.event` with `jq` or Python from `.louibot/benchmarks/runs/<run>/louibot-state-*/<n>.jsonl`, and read the run's `report.json` for pass/fail status. Never `grep` or dump whole state JSONL files or `.louibot/benchmarks/runs` trees into context.
+- Run scripts that import the vendored Mini-SWE-Agent environment under `.louibot/benchmarks/*/miniswe-agent-env` with `python3.10`. The default `python3` is 3.15 and fails with `ImportError: cannot import name 'ArgsKwargs' from 'pydantic_core._pydantic_core'`.
 
 **`rkkautsar/personal-website`**
 
 - After editing `scripts/generate-blog.mjs` or `scripts/og-image.mjs`, regenerate with `node scripts/generate-blog.mjs` and confirm the affected `dist/blog/<slug>/index.html` contains the expected `<meta property="og:image">`/`og:image:width` tags before reporting done.
 - Read `scripts/generate-blog.mjs` and `scripts/og-image.mjs` with targeted line ranges (`sed -n '1,40p'`) around the function under change instead of dumping the whole file in one call.
 
-Rules are capped at 5 rules, 60 lines, and 2,500 characters per repo.
+Rules are capped at 5 rules, 160 lines, and 12,000 characters per repo.
 
 ## Quick start: audit existing rules
 

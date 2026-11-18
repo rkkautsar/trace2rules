@@ -354,6 +354,7 @@ def _mine_command(
     top: Annotated[int, typer.Option(help="Clusters / rows per detector to show.")] = 25,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
+    _ensure_local_sessions(db)
     con = connect(db)
     try:
         session_count = con.execute("SELECT count(*) FROM sessions").fetchone()[0]
@@ -412,6 +413,34 @@ def _resolve_repo_label(
         "Could not infer repository label; pass --repo. Known labels: "
         + ", ".join(labels[:12])
     )
+
+
+def _ensure_local_sessions(
+    db: Path,
+    source: Path = Path.home(),
+    limit: int = 200,
+) -> bool:
+    con = connect(db)
+    try:
+        count = con.execute("SELECT count(*) FROM sessions").fetchone()[0]
+    finally:
+        con.close()
+    if count:
+        return False
+    from .sources.agent_trajectory import ingest_agent_sessions
+
+    cmd_console = Console(stderr=True)
+    cmd_console.print(f"[cyan]No sessions in {db}; ingesting local sessions...[/cyan]")
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TimeElapsedColumn(),
+        console=cmd_console,
+    )
+    with progress:
+        ingest_agent_sessions(source, db, limit=limit, progress=progress)
+    return True
 
 
 def _report_command(
@@ -543,6 +572,32 @@ def _report_command(
 
 
 app.command("report")(_report_command)
+
+
+def _run_command(
+    source: Annotated[
+        Path,
+        typer.Option("--source", help="Local agent session directory."),
+    ] = Path.home(),
+    limit: Annotated[int, typer.Option(help="Sessions to ingest if the database is empty.")] = 200,
+    out_dir: Annotated[
+        Path | None,
+        typer.Option("--out-dir", help="Write one prompt per detected repo."),
+    ] = None,
+    db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
+) -> None:
+    _ensure_local_sessions(db, source, limit)
+    _report_command(
+        top=25,
+        repo=None,
+        prompt=True,
+        agents=None,
+        out_dir=out_dir,
+        db=db,
+    )
+
+
+app.command("run")(_run_command)
 
 
 def _audit_command(

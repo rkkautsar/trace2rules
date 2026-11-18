@@ -25,19 +25,17 @@ trace2rules audit --prompt > audit.txt
 Ask your coding agent to mine, report, and synthesize:
 
 ```text
-Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules ingest` for my local agent sessions, then `trace2rules mine`, then `trace2rules report --prompt`. Read that report and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
+Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules run --out-dir reports/` for my local agent sessions. Read the report files and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
 ```
 
 Manual:
 
 ```bash
 uv tool install trace2rules
-trace2rules ingest
-trace2rules mine
-trace2rules report --prompt > evidence.txt
+trace2rules run --out-dir reports/
 ```
 
-Then give `evidence.txt` to your agent to synthesize the rules.
+Then give `reports/*.md` to your agent to synthesize the rules. `run` ingests local sessions automatically when the database is empty.
 
 ## Example finding
 
@@ -93,7 +91,7 @@ trace2rules report --prompt --out-dir reports/
 
 Agent synthesis from the report is the default workflow. `trace2rules synthesize` is the optional built-in LLM fallback.
 
-`ingest` writes to `$TMPDIR/trace2rules/trace2rules.duckdb` by default. Set `TRACE2RULES_DB` to use a persistent path.
+`run` and `mine` auto-ingest local sessions when the database is empty. `ingest` writes to `$TMPDIR/trace2rules/trace2rules.duckdb` by default. Set `TRACE2RULES_DB` to use a persistent path.
 
 ## Audit existing rules
 
@@ -194,6 +192,7 @@ The repository label is inferred from the git remote or working-directory basena
 | `ingest` | Load sessions and tool events into DuckDB |
 | `mine` | Show friction clusters, hotspots, recovery loops, and context blasts |
 | `report` | Emit all findings and patterns as evidence-rich JSON for an agent |
+| `run` | Ingest if needed, then write one evidence prompt per detected repo |
 | `doctor` | Check install, Node, credentials, source stores, and database schema |
 | `patterns` | Mine structural multi-step friction |
 | `exact` | Show exact recurring sequences with evidence |

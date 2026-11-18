@@ -590,7 +590,10 @@ def ingest_agent_sessions(
                             ]
                         )
                     )
-                except NormalizationError:
+                except Exception:
+                    # A single malformed or oversized transcript can crash the
+                    # Node runtime. Isolate each file so the whole ingest does
+                    # not die with it.
                     normalized = []
                     for path, text in texts:
                         try:
@@ -601,7 +604,7 @@ def ingest_agent_sessions(
                                     )[0]
                                 ]
                             )
-                        except NormalizationError as error:
+                        except Exception as error:
                             print(f"Skipping {path}: {error}")
                             normalized.append({"records": [], "diagnostics": []})
                 return normalized

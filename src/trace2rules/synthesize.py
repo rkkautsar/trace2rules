@@ -19,8 +19,10 @@ from .detectors import Finding
 from .redact import redact_value
 
 MAX_RULES = 5
-MAX_LINES = 60
-MAX_CHARS = 2500
+# Evidence and source refs are part of the output; keep enough room to avoid
+# forcing the model to discard supported rules.
+MAX_LINES = 160
+MAX_CHARS = 12000
 EXACT_LENGTHS = (3, 4, 5)
 
 GENERATED_VERIFIER_RE = re.compile(

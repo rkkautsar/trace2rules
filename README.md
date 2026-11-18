@@ -8,38 +8,42 @@ Status: beta. The output is a proposal, not an automatically applied `AGENTS.md`
 
 ## Example finding
 
-On the demo corpus, [PDM](https://github.com/pdm-project/pdm), a Python package manager, showed its most expensive repeated friction as a setup loop: `import pdm` failed until `pip install -e .` was run. It appeared in 56 sessions and accounted for ~82,966 setup tokens.
+On SWC (Rust), the strongest repeated friction was toolchain bootstrap: 21 sessions hit rustup’s nightly channel download failure before switching to the pinned offline toolchain.
 
-`synthesize` turns that into:
-
-```bash
-trace2rules ingest --format swe-rebench --repos pdm-project__pdm --limit 200
-trace2rules synthesize --repo pdm-project/pdm
-```
-
-The default path is LLM-backed. Add `--offline` to force deterministic rules.
-
-Example output (abridged; model output varies):
+Abridged synthesized output:
 
 ```markdown
-## convention
-- **Rule:** Run `pip install -e .` once at the start of a session before importing `pdm` or invoking the `pdm` CLI. Skipping editable installation causes `ImportError` and `which pdm` failures that trigger repeated setup retries.
-  **Evidence:** 56 sessions with ImportError recovery (82,966 tokens) and 28+14+12 exact setup sequences (~73,149 setup_tax tokens).
-
 ## test_command
-- **Rule:** Run scoped tests directly with `python -m pytest tests/ -x -q -k "<expr>"` instead of running `python -m pytest --version` and separate `python -c "import pdm"` probes first.
-  **Evidence:** 12 exact test-setup sessions (26,806 total tokens, 14,565 setup_tax tokens) and 199 sessions running run_tests.
-
-## convention
-- **Rule:** Read the exact exception signature on any `exit:1` or `ImportError` failure; if the same signature repeats after an edit, fix the product code or test scope instead of editing or re-running the harness.
-  **Evidence:** 3 sessions with paired_instances=2 and delta_rework=+2.13 (26,079 tokens), plus 68 exit:1 recovery sessions (117,440 tokens).
+- **Rule:** Run `RUSTUP_TOOLCHAIN=1.84.1 cargo test -p <crate> --offline` after editing a crate.
+  **Evidence:** 21 sessions spent the bootstrap retry; 74 of 188 sessions ended without validation.
 
 ## context_hygiene
-- **Rule:** Truncate verbose `execute_bash` output with `-q` or `| head`/`| tail`, and skip redundant `view /workspace` and `pwd` checks before reading `README.md` or `tests/`.
-  **Evidence:** 181 sessions averaging 1,804 tokens per bash call (373,521 tokens) and 143 workspace-exploration cluster sessions (782,785 tokens).
+- **Rule:** Locate a symbol with `rg -n` and read the enclosing line range instead of paging through large files such as `sequences.rs`.
+  **Evidence:** 33 reads of `sequences.rs` across 7 sessions averaged 1,802 tokens.
 ```
 
 Rules are capped at 5 rules, 60 lines, and 2,500 characters per repo.
+
+## Quick start: your own sessions
+
+Analyze the sessions already on your machine.
+
+```bash
+uv tool install trace2rules
+trace2rules ingest --limit 50
+trace2rules mine
+trace2rules synthesize
+```
+
+Or hand the workflow to your coding agent:
+
+> Read the `trace2rules` README, install it with `uv tool install trace2rules` if it is missing, then ingest my local agent sessions. Use `trace2rules report` to surface recurring friction with evidence and synthesize repo-specific `AGENTS.md` rules from that JSON.
+
+`--source` is repeatable and defaults to your home directory. It scans all standard local stores: `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, `~/.omp/agent/sessions`, and `~/.local/share/opencode`. The example imports 50 sessions per source; use `--limit 0` for all.
+
+LLM synthesis is the default. Add `--offline` if you do not have an API key.
+
+`ingest` writes to `data/trace2rules.duckdb` by default. `mine`, `exact`, and `synthesize` read from it.
 
 ## Audit existing rules
 
@@ -113,42 +117,19 @@ uv sync
 
 `agent-trajectory` calls its bundled JS bridge through the system Node runtime for Claude Code, Codex, Pi, and OMP. Install Node.js 20 or newer; OpenCode SQLite ingestion is pure Python.
 
-## Quick start: your own sessions
+## Public dataset: Open-SWE
 
-Analyze the sessions already on your machine.
-
-```bash
-uv tool install trace2rules
-trace2rules ingest --limit 50
-trace2rules mine
-trace2rules synthesize
-```
-
-Or hand the workflow to your coding agent:
-
-> Read the `trace2rules` README, install it with `uv tool install trace2rules` if it is missing, then ingest my local agent sessions. Use `trace2rules report` to surface recurring friction with evidence and synthesize repo-specific `AGENTS.md` rules from that JSON.
-
-`--source` is repeatable and defaults to your home directory. It scans all standard local stores: `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, `~/.omp/agent/sessions`, and `~/.local/share/opencode`. The example imports 50 sessions per source; use `--limit 0` for all.
-
-LLM synthesis is the default. Add `--offline` if you do not have an API key.
-
-`ingest` writes to `data/trace2rules.duckdb` by default. `mine`, `exact`, and `synthesize` read from it.
-
-## Public dataset: SWE-rebench
-
-To reproduce the PDM example above without local sessions, ingest the default **SWE-rebench OpenHands parquet** from Hugging Face. `django__django` is an `instance_id` prefix, not a GitHub slug.
+If the Open-SWE shards are available locally, reproduce the SWC example with:
 
 ```bash
-uv run trace2rules ingest --format swe-rebench --repos django__django --limit 50
+uv run trace2rules ingest --format open-swe --repos swc-project/swc --limit 0
 uv run trace2rules mine
-uv run trace2rules synthesize
+uv run trace2rules synthesize --repo swc-project/swc
 ```
-
-The first remote ingest downloads the full parquet (~2.1 GB) to `~/.cache/trace2rules`; later runs reuse it. Override the location with `TRACE2RULES_CACHE_DIR`; pass `--refresh-cache` to re-download after the dataset changes.
 
 ## Optional example corpus: SWE-chat
 
-SWE-chat is an optional example corpus, not a core input format. It is useful for reproducing the PDM finding above.
+SWE-chat is an optional example corpus, not a core input format.
 
 Request access on the [dataset page](https://huggingface.co/datasets/SALT-NLP/SWE-chat), then download the two tables:
 

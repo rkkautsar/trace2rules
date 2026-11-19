@@ -448,7 +448,7 @@ def _doctor_command(
                 timeout=5,
                 check=False,
             ).stdout.strip()
-        except OSError:
+        except (OSError, subprocess.TimeoutExpired):
             node_version = "unavailable"
         checks.append(("Node.js", "ok", node_version or node))
 

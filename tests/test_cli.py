@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -326,6 +327,23 @@ def test_doctor_reports_environment(tmp_path: Path, monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Python" in result.output
     assert "database directory" in result.output
+
+
+def test_doctor_survives_a_node_timeout(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("trace2rules.labels._wrangler_ready", lambda: False)
+    monkeypatch.setattr("trace2rules.cli.shutil.which", lambda _: "/usr/local/bin/node")
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(["node", "--version"], 5)
+
+    monkeypatch.setattr("trace2rules.cli.subprocess.run", timeout)
+    result = runner.invoke(
+        app,
+        ["doctor", "--db", str(tmp_path / "pending.duckdb")],
+    )
+    assert result.exit_code == 0
+    assert "Node.js" in result.output
+    assert "unavailable" in result.output
 
 
 def test_ingest_continues_after_a_bad_source(monkeypatch) -> None:

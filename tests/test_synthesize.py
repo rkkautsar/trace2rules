@@ -161,6 +161,7 @@ def test_prompt_omits_detector_recommendations() -> None:
     )
     prompt = _prompt([finding], "acme/repo", [])
     assert "ADD A TEST-ONE TARGET" not in prompt
+    assert '"confidence": "medium"' in prompt
 
 
 def test_rule_provenance_is_attached_from_evidence() -> None:

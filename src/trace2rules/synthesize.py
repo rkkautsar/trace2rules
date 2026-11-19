@@ -337,6 +337,14 @@ def _make_client(key: str, base: str | None, model: str):
     return client, model
 
 
+def _finding_confidence(finding: Finding) -> str:
+    if finding.sessions >= 10 and finding.paired_instances >= 2:
+        return "high"
+    if finding.sessions >= 3:
+        return "medium"
+    return "low"
+
+
 def _prompt(
     findings: list[Finding],
     repo: str,
@@ -350,6 +358,8 @@ def _prompt(
         {
             "kind": finding.kind,
             "sessions": finding.sessions,
+            "instances": finding.paired_instances,
+            "confidence": _finding_confidence(finding),
             "cost": finding.cost or finding.tokens,
             "setup_tax": finding.setup_tax,
             "rework": finding.rework,
@@ -394,6 +404,7 @@ Write AGENTS.md rules for this repository. Requirements:
 - No generic platitudes ("be careful", "read the docs").
 - Ignore task-specific verifier scripts, one-off filenames, and normal edit -> test-fail loops.
 - For `recovery` findings, use the representative window from failure through success to explain the failed -> successful transition; cite the support count. Do not infer intent not shown by the tool calls.
+- Prefer `confidence: high` or `medium` findings; `low` findings need corroboration or should be omitted.
 - A window is one illustrative occurrence, not proof of intent. Never encode an identifier that appears in fewer than two sessions.
 - Do not use resolution labels or infer success from them. Use `validated_sessions` and `unvalidated_sessions` only.
 - `outcomes`/audit `rate: null` means fewer than 20 opportunities; do not describe it as a failure.

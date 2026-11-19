@@ -176,6 +176,38 @@ def test_discover_enforcement_marks_make_target_available(tmp_path: Path) -> Non
     assert "Makefile" in source
 
 
+def test_discover_enforcement_finds_gitlab_ci(tmp_path: Path) -> None:
+    from trace2rules.agents import discover_enforcement
+
+    (tmp_path / ".gitlab-ci.yml").write_text("test:\n  script:\n    - uv run pytest -q\n")
+    rule = parse_agents_text("- Run `uv run pytest -q` after editing.")[0]
+    status, source = discover_enforcement(tmp_path, rule)
+    assert status == "configured"
+    assert ".gitlab-ci.yml" in source
+
+
+def test_discover_enforcement_finds_local_git_hook(tmp_path: Path) -> None:
+    from trace2rules.agents import discover_enforcement
+
+    hook = tmp_path / ".git" / "hooks" / "pre-commit"
+    hook.parent.mkdir(parents=True)
+    hook.write_text("#!/bin/sh\nuv run pytest -q\n")
+    rule = parse_agents_text("- Run `uv run pytest -q` after editing.")[0]
+    status, source = discover_enforcement(tmp_path, rule)
+    assert status == "configured"
+    assert "pre-commit" in source
+
+
+def test_discover_enforcement_marks_tox_available(tmp_path: Path) -> None:
+    from trace2rules.agents import discover_enforcement
+
+    (tmp_path / "tox.ini").write_text("[tox]\nenvlist = py312\n")
+    rule = parse_agents_text("- Run `tox` after editing.")[0]
+    status, source = discover_enforcement(tmp_path, rule)
+    assert status == "available"
+    assert "tox.ini" in source
+
+
 def test_parse_agents_accepts_document_title_sections() -> None:
     rules = parse_agents_text("# AGENTS.md\n- Run `pytest` before committing.\n")
     assert [rule.text for rule in rules] == ["Run `pytest` before committing."]

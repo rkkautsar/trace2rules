@@ -117,6 +117,19 @@ def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:
             if _command_in_text(command, block):
                 available.append(f"Makefile: {target}")
                 break
+    for command in commands:
+        if command == "tox" or command.startswith("tox "):
+            if (root / "tox.ini").is_file():
+                available.append("tox.ini")
+        if command == "nox" or command.startswith("nox "):
+            if (root / "noxfile.py").is_file():
+                available.append("noxfile.py")
+        if command == "just" or command.startswith("just "):
+            if (root / "justfile").is_file() or (root / "Justfile").is_file():
+                available.append("justfile")
+        if command == "task" or command.startswith("task "):
+            if (root / "Taskfile.yml").is_file() or (root / "Taskfile.yaml").is_file():
+                available.append("Taskfile")
     package = root / "package.json"
     if package.exists():
         try:
@@ -131,6 +144,18 @@ def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:
     is_commit_rule = bool(re.search(r"(?i)pr title|commit message|conventional commits", rule_text))
     configured: list[str] = []
     config_files = [
+        root / ".gitlab-ci.yml",
+        root / ".circleci" / "config.yml",
+        root / "azure-pipelines.yml",
+        root / ".travis.yml",
+        root / ".buildkite" / "pipeline.yml",
+        root / ".buildkite" / "pipeline.yaml",
+        root / "Jenkinsfile",
+        root / ".drone.yml",
+        root / "lefthook.yml",
+        root / ".husky" / "pre-commit",
+        root / ".git" / "hooks" / "pre-commit",
+        root / ".git" / "hooks" / "pre-push",
         root / ".pre-commit-config.yaml",
         root / ".pre-commit-config.yml",
         root / "commitlint.config.js",
@@ -152,7 +177,8 @@ def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:
         ):
             configured.append(str(config.relative_to(root)))
             continue
-        execution = "\n".join(_execution_blocks(content))
+        is_github_workflow = ".github/workflows" in config.as_posix()
+        execution = "\n".join(_execution_blocks(content)) if is_github_workflow else content
         if not execution:
             continue
         if any(_command_in_text(command, execution) for command in commands):

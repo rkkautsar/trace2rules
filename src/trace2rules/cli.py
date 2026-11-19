@@ -303,6 +303,7 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
     signal_rows = []
     for key, label in (
         ("edit_rejection", "rejected edit"),
+        ("generated_edit", "generated edit"),
         ("blind_edit", "blind edit"),
         ("environment_thrash", "environment thrash"),
         ("destructive_command", "destructive command"),

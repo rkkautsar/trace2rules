@@ -184,3 +184,46 @@ def blind_edits(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> lis
         )
         for repo, edits, sessions, tokens, example_target, example_session, example_step in con.execute(query).fetchall()
     ]
+
+
+def generated_edits(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = r"""
+        SELECT repo,
+               count(DISTINCT session_id) AS sessions,
+               count(*) AS edits,
+               sum(approx_out_tokens) AS tokens,
+               arg_max(target, approx_out_tokens) AS example_target,
+               arg_min(session_id, step_idx) AS example_session,
+               arg_min(step_idx, step_idx) AS example_step
+        FROM tool_events
+        WHERE action_type = 'edit'
+          AND target NOT IN ('', '.')
+          AND target NOT LIKE '<%'
+          AND regexp_matches(
+              target,
+              '(?i)(^|/)(dist|node_modules|vendor|site-packages|target|generated|out|coverage)(/|$)|^build/'
+              '|\.min\.(js|css)$|\.generated\.'
+          )
+        GROUP BY 1
+        HAVING count(DISTINCT session_id) >= 2
+        ORDER BY sessions DESC, edits DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="generated_edit",
+            repo=repo,
+            title="edits under generated or vendored paths",
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{edits} edits across {sessions} sessions; example {example_target[:120]}",
+            side="agent",
+            recommendation=(
+                "Edit the source that generates the artifact, not the generated copy. "
+                "Add a CI or pre-commit forbidden-path check for generated/vendored directories."
+            ),
+            window=_representative_window(con, example_session, example_step),
+        )
+        for repo, sessions, edits, tokens, example_target, example_session, example_step in con.execute(query).fetchall()
+    ]

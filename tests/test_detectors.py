@@ -6,6 +6,7 @@ import duckdb
 
 from trace2rules.mining import (
     blind_edits,
+    correction_loops,
     destructive_commands,
     edit_rejections,
     environment_thrash,
@@ -251,6 +252,31 @@ def test_false_completion_requires_a_green_test_after_the_last_edit(monkeypatch)
     finding = false_completions(con)[0]
     assert finding.sessions == 2
     assert "completion claim" in finding.title
+
+
+def test_correction_loop_detects_repeated_action_after_feedback() -> None:
+    con = duckdb.connect()
+    con.execute("CREATE TABLE feedback_events (session_id VARCHAR, repo VARCHAR, step_idx INTEGER, text VARCHAR)")
+    con.execute(
+        "CREATE TABLE tool_events (session_id VARCHAR, repo VARCHAR, step_idx INTEGER, "
+        "action_type VARCHAR, target VARCHAR, raw_target VARCHAR)"
+    )
+    for session in ("s0", "s1"):
+        con.execute(
+            "INSERT INTO feedback_events VALUES (?, 'acme/repo', 2, 'no, do not use that command')",
+            [session],
+        )
+        con.execute(
+            "INSERT INTO tool_events VALUES (?, 'acme/repo', 1, 'exec', 'pytest', 'pytest')",
+            [session],
+        )
+        con.execute(
+            "INSERT INTO tool_events VALUES (?, 'acme/repo', 3, 'exec', 'pytest', 'pytest')",
+            [session],
+        )
+    finding = correction_loops(con)[0]
+    assert finding.sessions == 2
+    assert "repeated action" in finding.detail
 
 
 def test_context_advice_distinguishes_test_output_from_repo_entrypoint() -> None:

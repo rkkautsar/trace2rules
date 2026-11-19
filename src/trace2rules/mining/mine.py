@@ -9,6 +9,7 @@ from .heuristics import (
     blind_edits,
     command_errors,
     context_blasts,
+    correction_loops,
     destructive_commands,
     edit_churn,
     edit_rejections,
@@ -64,6 +65,7 @@ def mine(
         "destructive_command": destructive_commands,
         "no_reproduction": no_reproduction,
         "false_completion": false_completions,
+        "correction_loop": correction_loops,
     }
     workers = workers or min(8, len(jobs), os.cpu_count() or 1)
     if workers <= 1:

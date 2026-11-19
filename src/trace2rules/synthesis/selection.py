@@ -76,6 +76,7 @@ def _candidate_score(finding: Finding) -> float:
         "destructive_command": 2.0,
         "no_reproduction": 1.3,
         "false_completion": 1.8,
+        "correction_loop": 1.8,
     }
     support = max(finding.sessions, 1)
     impact = max(finding.tokens, finding.cost, 1)
@@ -113,6 +114,7 @@ def select_findings(
         "destructive_command",
         "no_reproduction",
         "false_completion",
+        "correction_loop",
     ):
         candidates.extend(
             finding

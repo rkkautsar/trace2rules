@@ -308,6 +308,7 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
         ("destructive_command", "destructive command"),
         ("no_reproduction", "no reproduction"),
         ("false_completion", "false completion"),
+        ("correction_loop", "correction loop"),
     ):
         for finding in mined.get(key, [])[:limit]:
             signal_rows.append((label, finding))

@@ -3,7 +3,7 @@ from .context import prompt_context
 from .edit_churn import edit_churn
 from .editing import blind_edits, edit_rejections, site_edit_mismatch, stuck_loops
 from .environment import environment_thrash
-from .feedback_loops import feedback_loops
+from .feedback_loops import correction_loops, feedback_loops
 from .global_patterns import global_patterns
 from .hotspots import context_blasts, hotspots, orientation
 from .permission_denials import permission_denials
@@ -17,6 +17,7 @@ __all__ = [
     "blind_edits",
     "command_errors",
     "context_blasts",
+    "correction_loops",
     "destructive_commands",
     "edit_churn",
     "edit_rejections",

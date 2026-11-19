@@ -6,6 +6,17 @@ Mine and audit coding-agent sessions into evidence-backed `AGENTS.md` rules.
 
 Status: beta. The output is a proposal, not an automatically applied `AGENTS.md`.
 
+## Scope
+
+`trace2rules` proposes **durable, normative `AGENTS.md` rules**, not memories.
+
+It targets two destinations:
+
+- **Enforceable rules**: a CI check, pre-commit hook, lint rule, or test can observe and enforce them.
+- **Stable AGENTS rules**: durable repo or global policy that future agents should follow even though it is not mechanically checkable.
+
+It deliberately does not mine memories, historical decisions, ownership, dates, task state, or "what happened" summaries. Those are contextual and belong in a memory system, not in `AGENTS.md`. If evidence is descriptive rather than prescriptive, the tool should omit it.
+
 ## Quick start: audit existing rules
 
 Run from the target checkout. `AGENTS.md` and `CLAUDE.md` are auto-detected.

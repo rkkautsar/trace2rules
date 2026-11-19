@@ -101,6 +101,8 @@ Existing AGENTS.md rules and audit (JSON):
 
 Write AGENTS.md rules for this repository. Requirements:
 - Emit 0-{max_rules} declarative rules. Do not fill the quota: fewer rules are better, and zero is valid when the evidence does not support a rule. Do not emit task-specific issue descriptions.
+- Emit only durable, normative policy. Do not encode memories, historical facts, decisions, dates, owners, task state, or "what happened" summaries. If the evidence is descriptive rather than prescriptive, omit it.
+- A valid rule is either enforceable by a CI/pre-commit/lint check or stable policy that should apply to future agents in the same repo. If neither is true, omit it.
 - Categories: test_command, architecture_map, context_hygiene, convention.
 - Do not repeat an existing AGENTS.md rule. If an existing rule is violated or unenforced, propose the concrete enforcement (CI/pre-commit/lint) instead.
 - Set `enforceable` to true only when a repository CI/pre-commit/lint check can actually observe and enforce the rule. Put that exact check in `enforcement`.

@@ -103,7 +103,8 @@ Write AGENTS.md rules for this repository. Requirements:
 - Emit 0-{max_rules} declarative rules. Do not fill the quota: fewer rules are better, and zero is valid when the evidence does not support a rule. Do not emit task-specific issue descriptions.
 - Categories: test_command, architecture_map, context_hygiene, convention.
 - Do not repeat an existing AGENTS.md rule. If an existing rule is violated or unenforced, propose the concrete enforcement (CI/pre-commit/lint) instead.
-- Set `enforceable` to true when a rule can be checked mechanically. Put the exact CI/pre-commit/lint check in `enforcement`; do not leave an enforceable rule as a soft instruction.
+- Set `enforceable` to true only when a repository CI/pre-commit/lint check can actually observe and enforce the rule. Put that exact check in `enforcement`.
+- Rules about agent read behavior, tool-call ordering, or context usage are guidance-only: set `enforceable` false and `enforcement` to `"guidance only"`.
 - rule_markdown: 1-2 imperative sentences, concrete command or file names.
 - evidence_summary: sessions affected and approximate setup/rework token cost.
 - No generic platitudes ("be careful", "read the docs").

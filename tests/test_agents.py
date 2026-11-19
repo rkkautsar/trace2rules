@@ -691,3 +691,30 @@ def test_alternate_form_requires_same_command_family(tmp_path: Path) -> None:
     finally:
         con.close()
     assert audit.test_outcomes == {"no_test": 1}
+
+
+def test_read_before_edit_detects_missing_reads(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Reading\n\n- Read source before editing so assumptions are verified.\n")
+    db = tmp_path / "readfirst.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "good",
+                "acme/repo",
+                calls=[
+                    ToolCall("Read", "src/api.py", action_type="read"),
+                    ToolCall("Edit", "src/api.py", action_type="edit"),
+                ],
+            ),
+            Session("bad", "acme/repo", calls=[ToolCall("Edit", "src/api.py", action_type="edit")]),
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.category == "read_before_edit"
+    assert (audit.opportunities, audit.followed, audit.violation_sessions) == (2, 1, 1)

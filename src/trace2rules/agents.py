@@ -147,6 +147,11 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
         lower,
     ):
         return "read_hygiene"
+    if re.search(
+        r"(?i)(?:read (?:the )?codebase|read (?:lots of |more )?source|verify assumptions.*read|read(?:ing)? (?:source|fixtures))",
+        lower,
+    ):
+        return "read_before_edit"
     if SCRATCH_RE.search(lower) and any(
         token in lower for token in ("do not", "don't", "never", "keep", "outside")
     ):
@@ -386,6 +391,8 @@ def _enforcement(rule: AgentRule) -> str:
         return "Pre-commit hook plus a CI check rejecting `--no-verify` commits."
     if rule.category == "read_hygiene":
         return "A context-budget hook or CI check rejecting whole-file reads of large sources."
+    if rule.category == "read_before_edit":
+        return "A pre-edit hook requiring source reads before edits."
     if rule.category == "architecture_map":
         return "Import-boundary lint, CODEOWNERS, or a CI forbidden-path check."
     if rule.category == "context_hygiene":
@@ -660,6 +667,24 @@ def _scoped_test_edits(rule: AgentRule, edit_events: list[tuple[str, str]]) -> l
     return edit_events
 
 
+def _is_source_read(action: str, raw: str, target: str, edited: str) -> bool:
+    candidates = [target, *re.findall(r"[\w./-]+\.(?:py|ts|tsx|js|jsx|rs|go|java|kt|cs|rb|php|swift)", raw)]
+    edited_path = Path(_read_candidate(edited))
+    has_source = any(
+        Path(_read_candidate(path)).suffix in _READ_SUFFIXES
+        and (
+            Path(_read_candidate(path)) == edited_path
+            or Path(_read_candidate(path)).name == edited_path.name
+        )
+        for path in candidates
+    )
+    if not has_source:
+        return False
+    if action == "read":
+        return True
+    return action == "exec" and bool(re.search(r"\b(?:cat|sed|nl|head|tail)\b", raw))
+
+
 def _read_hygiene(events: list[tuple], root: Path | None, rule: AgentRule) -> tuple[list[str], bool]:
     names = {
         Path(name).name
@@ -837,6 +862,21 @@ def audit_agents(
                     outcome = "no_test"
                 test_outcomes[outcome] = test_outcomes.get(outcome, 0) + 1
                 examples.extend(event[3][:240] for event in (post_exact or post_any or pre_any)[:2])
+            elif rule.category == "read_before_edit":
+                if not edit_events:
+                    continue
+                first_edit, first_target = min(edit_events, key=lambda item: item[0])
+                reads = [
+                    raw for _sid, step, action, raw, target, _object, _outcome in events
+                    if step < first_edit and _is_source_read(action, raw, target, first_target)
+                ]
+                applicable += 1
+                observed += 1
+                examples.extend(reads[:2])
+                if reads:
+                    compliant += 1
+                else:
+                    violations += 1
             elif rule.category == "read_hygiene":
                 reads, whole = _read_hygiene(events, root, rule)
                 if not reads:
@@ -906,14 +946,16 @@ def audit_agents(
             "context_hygiene": "scratch-file-hygiene",
             "architecture_map": "path-ownership",
         }.get(rule.category, "generic")
-        measurable = rule.category in {"test_command", "hook_bypass", "read_hygiene", "context_hygiene"}
+        measurable = rule.category in {
+            "test_command", "hook_bypass", "read_hygiene", "read_before_edit", "context_hygiene",
+        }
         opportunities = applicable if measurable else 0
         undecided = 0
         if rule.category == "test_command":
             followed = compliant
             undecided = undecided_count
             violations = max(applicable - followed - undecided, 0)
-        elif rule.category in {"hook_bypass", "read_hygiene"}:
+        elif rule.category in {"hook_bypass", "read_hygiene", "read_before_edit"}:
             followed = compliant
             undecided = max(applicable - followed - violations, 0)
         elif rule.category == "context_hygiene":

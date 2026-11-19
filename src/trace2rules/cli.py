@@ -585,6 +585,10 @@ def _run_command(
         typer.Option("--source", help="Local agent session directory."),
     ] = Path.home(),
     limit: Annotated[int, typer.Option(help="Sessions to ingest if the database is empty.")] = 200,
+    agents: Annotated[
+        Path | None,
+        typer.Option("--agents", help="Existing AGENTS.md to audit and include in the prompt."),
+    ] = None,
     out_dir: Annotated[
         Path | None,
         typer.Option("--out-dir", help="Write one prompt per detected repo."),
@@ -596,7 +600,7 @@ def _run_command(
         top=25,
         repo=None,
         prompt=True,
-        agents=None,
+        agents=agents,
         out_dir=out_dir,
         db=db,
     )

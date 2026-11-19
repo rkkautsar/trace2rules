@@ -35,6 +35,12 @@ uv tool install trace2rules
 trace2rules run --out-dir reports/
 ```
 
+To include an existing `AGENTS.md` audit in the prompt:
+
+```bash
+trace2rules run --out-dir reports/ --agents AGENTS.md
+```
+
 Then give `reports/*.md` to your agent to synthesize the rules. `run` ingests local sessions automatically when the database is empty.
 
 ## Example finding
@@ -234,6 +240,7 @@ trace2rules audit --agents AGENTS.md
 trace2rules audit --agents AGENTS.md --commit HEAD --json
 trace2rules audit --agents AGENTS.md --prompt
 trace2rules report --prompt --agents AGENTS.md
+trace2rules run --out-dir reports/ --agents AGENTS.md
 ```
 
 ## Agentic workflow

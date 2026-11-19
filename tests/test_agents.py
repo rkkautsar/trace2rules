@@ -896,3 +896,37 @@ def test_edit_churn_is_mined(tmp_path: Path) -> None:
     assert len(findings) == 1
     assert findings[0].kind == "edit_churn"
     assert findings[0].sessions == 2
+
+
+def test_command_errors_are_mined(tmp_path: Path) -> None:
+    from trace2rules.detectors import command_errors
+
+    db = tmp_path / "command-errors.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                f"s{index}",
+                "acme/repo",
+                calls=[
+                    ToolCall(
+                        "Bash",
+                        "tool --bad-flag",
+                        observation="error: unknown option '--bad-flag'\nusage: tool [options]",
+                        action_type="exec",
+                        target="tool --bad-flag",
+                        is_error=True,
+                    )
+                ],
+            )
+            for index in range(2)
+        ],
+    )
+    con = connect(db)
+    try:
+        findings = command_errors(con)
+    finally:
+        con.close()
+    assert len(findings) == 1
+    assert findings[0].kind == "command_error"
+    assert findings[0].sessions == 2

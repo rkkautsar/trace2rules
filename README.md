@@ -6,6 +6,17 @@ Mine and audit coding-agent sessions into evidence-backed `AGENTS.md` rules.
 
 Status: beta. The output is a proposal, not an automatically applied `AGENTS.md`.
 
+## Project layout
+
+- `mining/heuristics/`: one focused detector per file, such as `repeated_reads.py`.
+- `detectors_core.py`: shared `Finding` model, session summary, and evidence-window helpers.
+- `detectors.py`: stable facade for detector imports and the aggregate `all_findings`.
+- `session_signals.py`: compatibility facade for the session-signal heuristics.
+- `agents.py`: auditing, rule parsing, enforcement, and audit payloads.
+- `synthesize.py`: optional built-in synthesis; the main workflow remains `run`/`report`.
+
+New heuristics should live in `mining/heuristics/<name>.py` and be exported from `mining/heuristics/__init__.py`.
+
 ## Quick start: audit existing rules
 
 Run from the target checkout. `AGENTS.md` and `CLAUDE.md` are auto-detected.

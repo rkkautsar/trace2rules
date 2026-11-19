@@ -618,6 +618,79 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
     }
 
 
+def failure_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = """
+        WITH failures AS (
+            SELECT session_id, repo, error_signature,
+                   coalesce(nullif(error_site, ''), nullif(object_id, ''), error_signature) AS site,
+                   step_idx, approx_out_tokens,
+                   coalesce(nullif(error_detail, ''), nullif(obs_cause, ''), error_signature) AS cause
+            FROM tool_events
+            WHERE is_error AND action_type = 'exec'
+              AND error_signature NOT LIKE 'exit:%'
+              AND error_signature NOT IN ('text_error', 'timeout', 'err:unknown')
+              AND error_signature NOT LIKE 'exception:ModuleNotFoundError'
+              AND error_signature NOT LIKE 'exception:ImportError'
+        ),
+        per_session AS (
+            SELECT repo, session_id, error_signature, site,
+                   count(*) AS failures,
+                   sum(approx_out_tokens) AS tokens,
+                   min(step_idx) AS first_step,
+                   max(step_idx) AS last_step,
+                   arg_max(cause, step_idx) AS cause
+            FROM failures
+            GROUP BY 1, 2, 3, 4
+            HAVING count(*) >= 3
+        ),
+        with_edits AS (
+            SELECT p.*,
+                   (
+                       SELECT count(*)
+                       FROM tool_events e
+                       WHERE e.session_id = p.session_id
+                         AND e.action_type = 'edit'
+                         AND e.step_idx BETWEEN p.first_step AND p.last_step
+                   ) AS edits
+            FROM per_session p
+        )
+        SELECT repo, error_signature, site,
+               count(*) AS sessions,
+               sum(failures) AS occurrences,
+               sum(tokens) AS tokens,
+               sum(edits) AS edits,
+               arg_max(session_id, failures) AS example_session,
+               arg_max(first_step, failures) AS example_step,
+               arg_max(cause, failures) AS cause
+        FROM with_edits
+        WHERE edits >= 2
+        GROUP BY 1, 2, 3
+        HAVING count(*) >= 2
+        ORDER BY sessions DESC, tokens DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="failure_loop",
+            repo=repo,
+            title=f"{signature} at {site}",
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{occurrences} repeats with {edits} intervening edits in {sessions} sessions",
+            cause=(cause or "")[:240],
+            failure_family=signature,
+            side="agent",
+            recommendation=(
+                "The same failure survived multiple edits. Stop patching; read the full traceback or failing assertion, "
+                "identify the root cause, and change the test or input before the next edit."
+            ),
+            window=_representative_window(con, example_session, example_step),
+        )
+        for repo, signature, site, sessions, occurrences, tokens, edits, example_session, example_step, cause in con.execute(query).fetchall()
+    ]
+
+
 def context_blasts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     query = """
         SELECT repo, target, tool_name, action_type,

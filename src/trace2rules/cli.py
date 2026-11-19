@@ -282,6 +282,24 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
             )
         console.print(table)
 
+    failure_loops = mined.get("failure_loop", [])[:limit]
+    if failure_loops:
+        table = Table(title="Failure loops (same failure after edits)", header_style="bold", expand=True)
+        table.add_column("Repo")
+        table.add_column("Failure")
+        table.add_column("Cause")
+        table.add_column("Sessions", justify="right")
+        table.add_column("Tokens", justify="right")
+        for finding in failure_loops:
+            table.add_row(
+                escape(finding.repo),
+                escape(finding.title),
+                escape(finding.cause or finding.detail),
+                str(finding.sessions),
+                f"{finding.tokens:,}",
+            )
+        console.print(table)
+
     feedback = mined.get("feedback", [])[:limit]
     if feedback:
         table = Table(title="Repeated human steering", header_style="bold", expand=True)

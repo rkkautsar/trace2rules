@@ -69,6 +69,7 @@ def _candidate_score(finding: Finding) -> float:
         "reread": 1.1,
         "edit_churn": 1.2,
         "command_error": 1.4,
+        "failure_loop": 1.6,
     }
     support = max(finding.sessions, 1)
     impact = max(finding.tokens, finding.cost, 1)
@@ -99,6 +100,7 @@ def select_findings(
         "reread",
         "edit_churn",
         "command_error",
+        "failure_loop",
     ):
         candidates.extend(
             finding

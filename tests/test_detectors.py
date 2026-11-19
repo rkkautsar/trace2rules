@@ -4,6 +4,7 @@ import duckdb
 
 from trace2rules.detectors import (
     _context_advice,
+    failure_loops,
     hotspots,
     low_validation,
     orientation,
@@ -85,6 +86,42 @@ def test_validation_and_site_metrics_use_sessions_and_tokens(monkeypatch) -> Non
     assert finding.sessions == 1
     assert finding.tokens == 12
     assert "2 traceback sites" in finding.detail
+
+
+def test_failure_loops_require_repeated_failures_and_intervening_edits(monkeypatch) -> None:
+    import trace2rules.detectors as detectors_module
+
+    monkeypatch.setattr(detectors_module, "_representative_window", lambda *args, **kwargs: ())
+    con = duckdb.connect()
+    con.execute(
+        "CREATE TABLE tool_events (session_id VARCHAR, repo VARCHAR, step_idx INTEGER, "
+        "action_type VARCHAR, object_id VARCHAR, is_error BOOLEAN, error_signature VARCHAR, "
+        "error_site VARCHAR, error_detail VARCHAR, obs_cause VARCHAR, approx_out_tokens INTEGER)"
+    )
+    rows = []
+    for session in ("s1", "s2"):
+        for step, action, is_error in ((1, "exec", True), (2, "edit", False), (3, "exec", True), (4, "edit", False), (5, "exec", True)):
+            rows.append(
+                (
+                    session,
+                    "acme/repo",
+                    step,
+                    action,
+                    "src/a.py" if action == "edit" else "",
+                    is_error,
+                    "exception:AssertionError" if is_error else "",
+                    "src/a.py:1" if is_error else "",
+                    "assert 1 == 2" if is_error else "",
+                    "",
+                    10 if is_error else 1,
+                )
+            )
+    con.executemany("INSERT INTO tool_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    finding = failure_loops(con)[0]
+    assert finding.sessions == 2
+    assert finding.tokens == 60
+    assert "6 repeats" in finding.detail
+    assert "4 intervening edits" in finding.detail
 
 
 def test_context_advice_distinguishes_test_output_from_repo_entrypoint() -> None:

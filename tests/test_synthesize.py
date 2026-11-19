@@ -192,3 +192,21 @@ def test_rule_provenance_is_attached_from_evidence() -> None:
     assert result.rules[0].support_instances == 3
     assert result.rules[0].confidence == "high"
     assert result.rules[0].finding_kinds == ["recovery"]
+
+
+def test_llm_rules_require_sources() -> None:
+    from trace2rules.synthesize import Rule, Synthesis, _validate_sources
+
+    synthesis = Synthesis(
+        repo="acme/repo",
+        rules=[
+            Rule(
+                category="convention",
+                rule_markdown="Do a.",
+                evidence_summary="evidence",
+                estimated_tokens_saved_per_session=1,
+            )
+        ],
+    )
+    assert _validate_sources(synthesis, [], require_sources=True).rules == []
+    assert len(_validate_sources(synthesis, []).rules) == 1

@@ -43,6 +43,7 @@ class Rule(BaseModel):
     support_instances: int = 0
     confidence: Literal["low", "medium", "high"] = "low"
     finding_kinds: list[str] = Field(default_factory=list)
+    evidence_quotes: list[str] = Field(default_factory=list)
 
 
 class Synthesis(BaseModel):
@@ -451,6 +452,18 @@ def _is_doc_target(title: str) -> bool:
     return bool(DOC_TARGET_RE.search(title))
 
 
+def _evidence_quotes(finding: Finding) -> list[str]:
+    quotes: list[str] = []
+    for event in finding.window:
+        if event.get("outcome") not in {"err", "timeout"} and not event.get("recovered"):
+            continue
+        text = event.get("error_message") or ""
+        text = " ".join(str(text).split())[:240]
+        if text and text not in quotes:
+            quotes.append(text)
+    return quotes[:2]
+
+
 def _source_refs(finding: Finding) -> list[str]:
     refs: list[str] = []
     for event in finding.window:
@@ -506,6 +519,7 @@ def _offline_synthesis(
                 support_instances=instances,
                 confidence=confidence,
                 finding_kinds=[finding.kind] if finding else [],
+                evidence_quotes=_evidence_quotes(finding)[:2] if finding else [],
             )
         )
 
@@ -662,7 +676,12 @@ def _allowed_sources(findings: list[Finding]) -> set[str]:
     return allowed
 
 
-def _validate_sources(synthesis: Synthesis, findings: list[Finding]) -> Synthesis:
+def _validate_sources(
+    synthesis: Synthesis,
+    findings: list[Finding],
+    *,
+    require_sources: bool = False,
+) -> Synthesis:
     allowed = _allowed_sources(findings)
     rules = []
     for rule in synthesis.rules:
@@ -673,6 +692,8 @@ def _validate_sources(synthesis: Synthesis, findings: list[Finding]) -> Synthesi
             ]
             if len(valid) != len(rule.sources):
                 continue
+        elif require_sources:
+            continue
         rules.append(rule)
     return Synthesis(repo=synthesis.repo, rules=rules)
 
@@ -708,6 +729,11 @@ def _attach_rule_provenance(synthesis: Synthesis, findings: list[Finding]) -> Sy
                     "support_instances": instances,
                     "confidence": confidence,
                     "finding_kinds": sorted({finding.kind for finding in matched}),
+                    "evidence_quotes": list(dict.fromkeys(
+                        quote
+                        for finding in matched
+                        for quote in _evidence_quotes(finding)
+                    ))[:2],
                 }
             )
         )
@@ -758,6 +784,8 @@ def render(synthesis: Synthesis, repo: str, sessions: int) -> str:
             )
         if rule.finding_kinds:
             lines.append(f"  **Finding types:** {', '.join(rule.finding_kinds)}")
+        for quote in rule.evidence_quotes:
+            lines.append(f"  **Evidence quote:** {quote}")
         if rule.sources:
             lines.append(f"  **Sources:** {'; '.join(rule.sources)}")
         lines.append("")
@@ -828,6 +856,7 @@ def synthesize(
 
         synthesis: Synthesis | None = None
         llm_failed = False
+        llm_used = False
         existing = None
         if agents:
             from .agents import audit_payload
@@ -841,6 +870,7 @@ def synthesize(
                     synthesis = _llm_synthesis(
                         findings, repo_name, labels, max_rules=max_rules, existing=existing
                     )
+                    llm_used = synthesis is not None
             except Exception as error:  # noqa: BLE001 - degrade to deterministic output
                 llm_failed = True
                 console.print(f"[yellow]LLM synthesis unavailable: {escape(str(error))}[/yellow]")
@@ -867,7 +897,9 @@ def synthesize(
                     )
             synthesis = Synthesis(repo=synthesis.repo, rules=kept)
 
-        synthesis = _validate_sources(synthesis, findings)
+        synthesis = _validate_sources(
+            synthesis, findings, require_sources=llm_used
+        )
         synthesis = _attach_rule_provenance(synthesis, findings)
         synthesis = _filter_junk_rules(synthesis)
         synthesis, text = enforce_caps(

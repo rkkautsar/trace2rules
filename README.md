@@ -140,7 +140,7 @@ source: .github/workflows/package-test.yml
 
 `trace2rules synthesize --agents AGENTS.md` reconciles proposed rules against the audit: duplicates are dropped, configured enforcement is reused, and soft rules are upgraded with concrete enforcement. When run from the target checkout, `--agents` is optional.
 
-Use `trace2rules synthesize --json` for machine-readable proposals. Each rule carries `support_sessions`, `support_instances`, `confidence`, `finding_kinds`, and source references; the deterministic path also labels non-window evidence as `finding:<kind>:<title>`.
+Use `trace2rules synthesize --json` for machine-readable proposals. Each rule carries `support_sessions`, `support_instances`, `confidence`, `finding_kinds`, `evidence_quotes`, and source references; the deterministic path also labels non-window evidence as `finding:<kind>:<title>`.
 
 ## Synthesis
 

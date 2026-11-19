@@ -718,3 +718,34 @@ def test_read_before_edit_detects_missing_reads(tmp_path: Path) -> None:
         con.close()
     assert audit.category == "read_before_edit"
     assert (audit.opportunities, audit.followed, audit.violation_sessions) == (2, 1, 1)
+
+
+def test_ordering_rule_checks_prerequisite_before_commit(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Git\n\n- Run `git commit` only after `git add`.\n")
+    db = tmp_path / "order.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "good",
+                "acme/repo",
+                calls=[
+                    ToolCall("Bash", "git add src/api.py", action_type="exec", is_error=False),
+                    ToolCall("Bash", "git commit -m ok", action_type="exec", is_error=False),
+                ],
+            ),
+            Session(
+                "bad",
+                "acme/repo",
+                calls=[ToolCall("Bash", "git commit -m bad", action_type="exec", is_error=False)],
+            ),
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.category == "ordering"
+    assert (audit.opportunities, audit.followed, audit.violation_sessions) == (2, 1, 1)

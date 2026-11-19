@@ -152,6 +152,9 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
         lower,
     ):
         return "read_before_edit"
+    commands = COMMAND_RE.findall(text)
+    if len(commands) >= 2 and re.search(r"(?i)\bonly after\b", lower):
+        return "ordering"
     if SCRATCH_RE.search(lower) and any(
         token in lower for token in ("do not", "don't", "never", "keep", "outside")
     ):
@@ -393,6 +396,8 @@ def _enforcement(rule: AgentRule) -> str:
         return "A context-budget hook or CI check rejecting whole-file reads of large sources."
     if rule.category == "read_before_edit":
         return "A pre-edit hook requiring source reads before edits."
+    if rule.category == "ordering":
+        return "A pre-commit hook or CI check enforcing command order."
     if rule.category == "architecture_map":
         return "Import-boundary lint, CODEOWNERS, or a CI forbidden-path check."
     if rule.category == "context_hygiene":
@@ -862,6 +867,38 @@ def audit_agents(
                     outcome = "no_test"
                 test_outcomes[outcome] = test_outcomes.get(outcome, 0) + 1
                 examples.extend(event[3][:240] for event in (post_exact or post_any or pre_any)[:2])
+            elif rule.category == "ordering":
+                if len(rule.commands) < 2:
+                    continue
+                action_command, prerequisite = rule.commands[0], rule.commands[1]
+                commits = [
+                    (step, raw) for _sid, step, action, raw, _target, _object, _outcome in events
+                    if action == "exec" and _argv_match(
+                        _normalize_command(action_command), _normalize_command(raw)
+                    )
+                ]
+                if not commits:
+                    continue
+                applicable += 1
+                observed += 1
+                first_commit, first_commit_raw = commits[0]
+                prerequisite_events = [
+                    step for _sid, step, action, raw, _target, _object, _outcome in events
+                    if action == "exec"
+                    and (
+                        step < first_commit
+                        or (
+                            step == first_commit
+                            and raw.find(prerequisite) < raw.find(action_command)
+                        )
+                    )
+                    and _argv_match(_normalize_command(prerequisite), _normalize_command(raw))
+                ]
+                examples.extend(raw[:240] for _step, raw in commits[:2])
+                if prerequisite_events:
+                    compliant += 1
+                else:
+                    violations += 1
             elif rule.category == "read_before_edit":
                 if not edit_events:
                     continue
@@ -947,7 +984,7 @@ def audit_agents(
             "architecture_map": "path-ownership",
         }.get(rule.category, "generic")
         measurable = rule.category in {
-            "test_command", "hook_bypass", "read_hygiene", "read_before_edit", "context_hygiene",
+            "test_command", "hook_bypass", "read_hygiene", "read_before_edit", "ordering", "context_hygiene",
         }
         opportunities = applicable if measurable else 0
         undecided = 0
@@ -955,7 +992,7 @@ def audit_agents(
             followed = compliant
             undecided = undecided_count
             violations = max(applicable - followed - undecided, 0)
-        elif rule.category in {"hook_bypass", "read_hygiene", "read_before_edit"}:
+        elif rule.category in {"hook_bypass", "read_hygiene", "read_before_edit", "ordering"}:
             followed = compliant
             undecided = max(applicable - followed - violations, 0)
         elif rule.category == "context_hygiene":

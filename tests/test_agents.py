@@ -839,3 +839,32 @@ def test_permission_denials_are_mined(tmp_path: Path) -> None:
     assert len(findings) == 1
     assert findings[0].kind == "permission_denied"
     assert findings[0].sessions == 2
+
+
+def test_repeated_reads_are_mined(tmp_path: Path) -> None:
+    from trace2rules.detectors import repeated_reads
+
+    db = tmp_path / "reread.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                f"s{index}",
+                "acme/repo",
+                calls=[
+                    ToolCall("Read", "src/a.py", action_type="read", target="src/a.py"),
+                    ToolCall("Read", "src/a.py", action_type="read", target="src/a.py"),
+                ],
+            )
+            for index in range(2)
+        ],
+    )
+    con = connect(db)
+    try:
+        findings = repeated_reads(con)
+    finally:
+        con.close()
+    assert len(findings) == 1
+    assert findings[0].kind == "reread"
+    assert findings[0].sessions == 2
+    assert findings[0].detail.startswith("2 extra reads")

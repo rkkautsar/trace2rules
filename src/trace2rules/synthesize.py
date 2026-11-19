@@ -101,6 +101,7 @@ def _candidate_score(finding: Finding) -> float:
         "site_edit_mismatch": 1.1,
         "feedback_loop": 1.3,
         "permission_denied": 1.5,
+        "reread": 1.1,
     }
     support = max(finding.sessions, 1)
     impact = max(finding.tokens, finding.cost, 1)
@@ -128,6 +129,7 @@ def select_findings(
         "site_edit_mismatch",
         "feedback",
         "permission",
+        "reread",
     ):
         candidates.extend(
             finding
@@ -678,6 +680,7 @@ def _offline_synthesis(
             "low_validation",
             "site_edit_mismatch",
             "permission_denied",
+            "reread",
         }:
             add(
                 "convention",

@@ -19,7 +19,10 @@ Status: beta. The output is a proposal, not an automatically applied `AGENTS.md`
 - `detectors.py`: stable facade for detector imports and the aggregate `all_findings`.
 - `session_signals.py`: compatibility facade for the session-signal heuristics.
 - `agents.py`: auditing, rule parsing, enforcement, and audit payloads.
-- `synthesize.py`: optional built-in synthesis; the main workflow remains `run`/`report`.
+- `synthesis_models.py`: `Rule` and `Synthesis` schemas.
+- `synthesis_selection.py`: finding ranking, labeling, and selection.
+- `synthesis_prompt.py`: prompt rendering and LLM client.
+- `synthesize.py`: offline synthesis, caps, and runtime; the main workflow remains `run`/`report`.
 
 New heuristics should live in `mining/heuristics/<name>.py` and be exported from `mining/heuristics/__init__.py`.
 

@@ -49,9 +49,9 @@ On SWC (Rust), auditing the repository’s real `AGENTS.md` against 188 local se
 
 | Rule | Coverage | Followed | Violations | Confidence | Enforcement |
 |---|---|---:|---|---|---|
-| Read source before editing | measured | 121 | 64/185 (35%) | high | missing |
-| `git commit` only after `git add` | measured | 8 | 6/14 (43%) | low | harness plugin only |
-| Submodule update before tests | measured | 0 | 32/32 (100%) | low | missing |
+| Read source before editing | measured | 121 | 64/185 (35%) | high | guidance only |
+| `git commit` only after `git add` | measured | 8 | 6/14 (43%) | low | guidance only |
+| Submodule update before tests | measured | 0 | 32/32 (100%) | low | guidance only |
 | `cargo test -p <crate>` | measured | 5 | 158/171 (92%) | high | missing |
 | `cargo fmt` / `cargo clippy` | measured | 0 | 185/185 (100%) | high | CI configured |
 | `--no-verify` guard | partial | 13 | 1/14 (7%) | low | missing |
@@ -67,35 +67,31 @@ exact_form:          5
 
 `cargo fmt` and `cargo clippy` are CI-configured but were never run locally. `configured` does not mean required: the branch rulesets do not define required status checks.
 
-The same sessions produce suggested rules:
+Fresh agent synthesis from the actual report prompts:
 
 **`swc-project/swc`**
 
-- Build and validate the touched crate offline with the pinned toolchain, e.g. `RUSTUP_TOOLCHAIN=1.84.1 cargo test -p swc_ecma_codegen --offline`; bare `cargo` attempts to download the nightly channel and fails in this sandbox.
-- In large sources such as crates/swc_ecma_codegen/src/lib.rs and crates/swc_ecma_minifier/src/compress/optimize/{mod,sequences}.rs, locate symbols with `grep -n` and read `sed -n` line ranges instead of whole-file reads or repeated full re-reads.
-
-### Local examples
+- Validate with `RUSTUP_TOOLCHAIN=1.84.1 cargo test -p <crate> --offline`; bare `cargo` tried to download nightly and failed in 21 sessions. Add a required CI wrapper that sets the toolchain.
+- Locate symbols with `rg -n` and read only the enclosing range in `crates/swc_ecma_codegen/src/lib.rs` and `crates/swc/src/config/mod.rs`; they were re-read 112 times across 27 sessions and 60 times across 25 sessions. Harness-only.
+- Enforce the snapshot rule: 11/171 sessions used `UPDATE=1 cargo test`; 124 ran no test. Run it in pre-commit/CI and fail on uncommitted fixture outputs.
+- Run the touched crate’s tests after the first edit, not only at the end; 26 sessions had no test/lint after their first edit.
 
 **`rkkautsar/trace2rules`**
 
-- For a large or repeatedly read file, use `rg -n` to locate the symbol and read the enclosing line range; a single whole-file read is fine for small files.
-  - 4 sessions, medium confidence, `selector_miss`.
-- When a selector reports 0 selected/deselected, inspect the runner's collection output and use the printed node ID; selectors match test names, not arbitrary file text.
-  - 4 sessions, medium confidence, `selector_miss`.
-- Edit the file named by the traceback or failing assertion; do not patch a different layer or the reproducer.
-  - 3 sessions, medium confidence, `site_edit_mismatch`.
+- Trace the pipeline `cli.py -> ingest.py -> detectors.py/patterns.py -> cluster.py -> synthesize.py`; confirm command flags with `uv run trace2rules <subcommand> --help`. There were 13 selector misses across 5 sessions.
+- Read `ingest.py` and `cli.py` by symbol with `rg -n` and enclosing ranges; `ingest.py` had 60 extra reads across 13 sessions and `cli.py` 41 across 9. Harness-only.
+- Make `uv run pytest -q` a required check; only 1 of 4 edit sessions ran it after the final edit. Add a CI required check.
 
 **`rkkautsar/louibot`**
 
-- Validate source changes from the repo root with `npm test && npm run build`, the pair used in the recorded validation runs. Do not spend turns on one-off `npx tsc --noEmit ... | head` variants that add no coverage beyond the build.
-- `src/agent.ts` is the ~2.7k-line core holding model prompts, controller validation, and thread compaction, while `src/benchmark.ts` runs benchmarks and `benchmarks/README.md` documents them. Locate a symbol with `grep -n` and read a narrow `sed -n` range instead of re-reading the whole file.
-- Extract benchmark state by filtering `.event` with `jq` or Python from `.louibot/benchmarks/runs/<run>/louibot-state-*/<n>.jsonl`, and read the run's `report.json` for pass/fail status. Never `grep` or dump whole state JSONL files or `.louibot/benchmarks/runs` trees into context.
-- Run scripts that import the vendored Mini-SWE-Agent environment under `.louibot/benchmarks/*/miniswe-agent-env` with `python3.10`. The default `python3` is 3.15 and fails with `ImportError: cannot import name 'ArgsKwargs' from 'pydantic_core._pydantic_core'`.
+- Validate with `npx tsc --noEmit && npm test` followed by `npm run build`; 5 of 7 edit sessions were validated. Add a CI required check.
+- Never whole-read `src/agent.ts`; use `rg -n` and 40–80 line windows. It had 225 reads across 9 sessions and 216 extra re-reads across 6. Harness-only.
+- Inspect one benchmark run’s manifest/log by path instead of listing and re-reading the artifact tree; it was read-only in 7/23 sessions. Harness warning only.
 
 **`rkkautsar/personal-website`**
 
-- After editing `scripts/generate-blog.mjs` or `scripts/og-image.mjs`, regenerate with `node scripts/generate-blog.mjs` and confirm the affected `dist/blog/<slug>/index.html` contains the expected `<meta property="og:image">`/`og:image:width` tags before reporting done.
-- Read `scripts/generate-blog.mjs` and `scripts/og-image.mjs` with targeted line ranges (`sed -n '1,40p'`) around the function under change instead of dumping the whole file in one call.
+- Replace copied `trace2rules` rules: all four audited rules reference paths that do not exist here, and 5/5 editing sessions ended unvalidated. Add a repo-specific validation command and a CI guard against copying `src/trace2rules`/`uv run pytest` rules.
+- Read `scripts/generate-blog.mjs` by targeted range instead of whole-file bash reads; 3 sessions showed ~7.4k read tokens. Harness warning only.
 
 Rules are capped at 5 rules, 160 lines, and 12,000 characters per repo.
 

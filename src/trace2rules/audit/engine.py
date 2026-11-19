@@ -390,7 +390,22 @@ def audit_agents(
             else "medium" if opportunities < 50
             else "high"
         )
-        status, existing = discover_enforcement(root, rule)
+        harness_only = {"read_before_edit", "read_hygiene", "ordering"}
+        if rule.category in harness_only:
+            status, existing = "n/a", ""
+            if violations:
+                suggestion = (
+                    f"{violations} of {applicable} applicable sessions did not satisfy the rule; "
+                    "keep it as AGENTS.md guidance"
+                    + (
+                        ", or fold the prerequisite into one test/Makefile command."
+                        if rule.category == "ordering" else "."
+                    )
+                )
+            elif observed == 0:
+                suggestion = "Guidance-only rule; no matching tool calls were observed."
+        else:
+            status, existing = discover_enforcement(root, rule)
         if status == "configured":
             suggestion = (
                 f"Enforcement is already configured at {existing}; verify it runs as a required check."
@@ -435,7 +450,10 @@ def audit_agents(
         audit.stale_paths = stale_paths
         audit.test_outcomes = test_outcomes
         audit.examples = tuple(dict.fromkeys(examples))[:3]
-        if status == "configured":
+        if rule.category in {"read_before_edit", "read_hygiene", "ordering"}:
+            audit.required = False
+            audit.required_reason = "guidance only; not enforceable by repository checks"
+        elif status == "configured":
             audit.required = None
             audit.required_reason = "CI presence only; required checks need branch protection or rulesets"
         elif status == "missing":

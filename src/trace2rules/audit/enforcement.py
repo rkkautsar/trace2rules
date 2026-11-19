@@ -15,11 +15,11 @@ def enforcement_for(rule: AgentRule) -> str:
     if rule.category == "hook_bypass":
         return "Pre-commit hook plus a CI check rejecting `--no-verify` commits."
     if rule.category == "read_hygiene":
-        return "A context-budget hook or CI check rejecting whole-file reads of large sources."
+        return "No mechanical enforcement; harness/context-budget hooks can observe reads."
     if rule.category == "read_before_edit":
-        return "A pre-edit hook requiring source reads before edits."
+        return "No mechanical enforcement; harness hooks can observe reads before edits."
     if rule.category == "ordering":
-        return "A harness/tool-use hook enforcing agent command order; pre-commit and CI cannot enforce it."
+        return "No mechanical enforcement; command order is harness-only guidance."
     if rule.category == "architecture_map":
         return "Import-boundary lint, CODEOWNERS, or a CI forbidden-path check."
     if rule.category == "context_hygiene":

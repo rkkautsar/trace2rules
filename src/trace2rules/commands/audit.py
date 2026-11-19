@@ -23,8 +23,8 @@ def _violations(rule: dict) -> str:
 
 
 def _enforcement(rule: dict) -> str:
-    if rule.get("category") == "ordering":
-        return "harness plugin"
+    if rule.get("category") in {"read_before_edit", "read_hygiene", "ordering"}:
+        return "guidance only"
     if rule.get("existing_enforcement"):
         return rule["existing_enforcement"]
     return rule.get("enforcement_status", "unknown")

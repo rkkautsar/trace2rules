@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import platform
@@ -1050,7 +1051,12 @@ def _synthesize_command(
         int,
         typer.Option("--max-rules", min=1, max=20, help="Maximum rules per repo."),
     ] = 5,
+    min_support: Annotated[
+        int,
+        typer.Option("--min-support", min=1, max=100, help="Minimum sessions per rule."),
+    ] = 3,
     offline: Annotated[bool, typer.Option("--offline", help="Skip the LLM and use deterministic rules.")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Emit proposed rules with provenance as JSON.")] = False,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     cmd_console = Console(stderr=True)
@@ -1068,8 +1074,10 @@ def _synthesize_command(
                 repo=repo,
                 top=top,
                 max_rules=max_rules,
+                min_support=min_support,
                 offline=offline,
-                console=cmd_console,
+                emit=not json_output,
+                console=Console(file=io.StringIO()) if json_output else cmd_console,
                 agents=(
                     resolve_agents(agents)
                     if agents
@@ -1081,6 +1089,11 @@ def _synthesize_command(
         except ValueError as error:
             cmd_console.print(f"[red]{escape(str(error))}[/red]")
             raise typer.Exit(1) from None
+        if json_output:
+            import json as _json
+
+            typer.echo(_json.dumps([item.model_dump() for item in results], indent=2))
+            return
         for synthesis in results:
             cmd_console.print(
                 f"[dim]{len(synthesis.rules)} rules for {synthesis.repo}.[/dim]"

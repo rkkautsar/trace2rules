@@ -161,3 +161,34 @@ def test_prompt_omits_detector_recommendations() -> None:
     )
     prompt = _prompt([finding], "acme/repo", [])
     assert "ADD A TEST-ONE TARGET" not in prompt
+
+
+def test_rule_provenance_is_attached_from_evidence() -> None:
+    from trace2rules.synthesize import Rule, Synthesis, _attach_rule_provenance
+
+    finding = Finding(
+        kind="recovery",
+        repo="acme/repo",
+        title="a -> b",
+        sessions=12,
+        tokens=100,
+        paired_instances=3,
+        window=({"session_ref": "session.jsonl", "step": 4},),
+    )
+    synthesis = Synthesis(
+        repo="acme/repo",
+        rules=[
+            Rule(
+                category="convention",
+                rule_markdown="Do a.",
+                evidence_summary="12 sessions",
+                estimated_tokens_saved_per_session=1,
+                sources=["session.jsonl (step 4)"],
+            )
+        ],
+    )
+    result = _attach_rule_provenance(synthesis, [finding])
+    assert result.rules[0].support_sessions == 12
+    assert result.rules[0].support_instances == 3
+    assert result.rules[0].confidence == "high"
+    assert result.rules[0].finding_kinds == ["recovery"]

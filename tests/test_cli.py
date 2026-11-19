@@ -379,3 +379,22 @@ def test_synthesize_defaults_to_stdout(tmp_path: Path, monkeypatch) -> None:
     result = runner.invoke(app, ["synthesize", "--db", str(db), "--offline"])
     assert result.exit_code == 0
     assert "No rules for acme/repo" in result.output
+
+
+def test_synthesize_json_emits_only_json(tmp_path: Path, monkeypatch) -> None:
+    db = tmp_path / "synth-json.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s1",
+                "acme/empty",
+                source="test",
+                calls=[ToolCall("Read", "src/a.py", action_type="read", target="src/a.py")],
+            )
+        ],
+    )
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["synthesize", "--db", str(db), "--offline", "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.output) == []

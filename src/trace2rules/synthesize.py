@@ -39,6 +39,10 @@ class Rule(BaseModel):
     sources: list[str] = Field(default_factory=list)
     enforceable: bool = False
     enforcement: str = ""
+    support_sessions: int = 0
+    support_instances: int = 0
+    confidence: Literal["low", "medium", "high"] = "low"
+    finding_kinds: list[str] = Field(default_factory=list)
 
 
 class Synthesis(BaseModel):
@@ -106,6 +110,7 @@ def select_findings(
     mined: dict[str, list[Finding]],
     repo: str,
     limit: int = 20,
+    min_sessions: int = 3,
 ) -> list[Finding]:
     candidates: list[Finding] = []
     for key in (
@@ -125,7 +130,7 @@ def select_findings(
             finding
             for finding in mined.get(key, [])
             if finding.repo == repo
-            and (finding.sessions >= 3 or finding.kind == "feedback_loop")
+            and (finding.sessions >= min_sessions or finding.kind == "feedback_loop")
             and not GENERATED_VERIFIER_RE.search(finding.title)
             and (finding.recommendation or finding.kind != "context")
             and (
@@ -463,7 +468,7 @@ def _source_refs(finding: Finding) -> list[str]:
 
 
 def _offline_synthesis(
-    findings: list[Finding], repo: str, max_rules: int = MAX_RULES
+    findings: list[Finding], repo: str, max_rules: int = MAX_RULES, min_support: int = 3
 ) -> Synthesis:
     rules: list[Rule] = []
     seen: set[tuple[str, str]] = set()
@@ -474,18 +479,33 @@ def _offline_synthesis(
         evidence: str,
         tokens: int,
         sources: list[str] | None = None,
+        finding: Finding | None = None,
     ) -> None:
         key = (category, subject)
         if key in seen:
             return
         seen.add(key)
+        sessions = finding.sessions if finding else 0
+        instances = finding.paired_instances if finding else 0
+        confidence: Literal["low", "medium", "high"] = (
+            "high" if sessions >= 10 and instances >= 2
+            else "medium" if sessions >= 3
+            else "low"
+        )
+        provenance = list(sources or [])
+        if not provenance and finding is not None:
+            provenance = [f"finding:{finding.kind}:{_truncate(finding.title, 80)}"]
         rules.append(
             Rule(
                 category=category,
                 rule_markdown=markdown,
                 evidence_summary=evidence,
                 estimated_tokens_saved_per_session=max(tokens, 0),
-                sources=(sources or [])[:2],
+                sources=provenance[:2],
+                support_sessions=sessions,
+                support_instances=instances,
+                confidence=confidence,
+                finding_kinds=[finding.kind] if finding else [],
             )
         )
 
@@ -503,7 +523,7 @@ def _offline_synthesis(
         return 5
 
     for finding in findings:
-        if finding.sessions < 3:
+        if finding.sessions < min_support:
             continue
         if finding.intent and finding.intent_confidence < 0.4:
             continue
@@ -517,6 +537,7 @@ def _offline_synthesis(
                 "Install the project and its test extras in development mode before import or test probes; treat pre-install failures as setup failures, not code failures.",
                 f"{finding.sessions} sessions; {finding.setup_tax:,} setup tokens; {finding.tokens:,} window tokens.",
                 finding.setup_tax // max(finding.sessions, 1),
+                finding=finding,
             )
 
         elif finding.kind == "orientation":
@@ -531,6 +552,7 @@ def _offline_synthesis(
                     "Install the project and its test extras in development mode before import or test probes; treat pre-install failures as setup failures, not code failures.",
                     f"{finding.detail}; {finding.tokens:,} tokens.",
                     finding.tokens // max(finding.sessions, 1),
+                    finding=finding,
                 )
             elif finding.cause and finding.sessions >= 2:
                 cause = finding.cause.splitlines()[0].strip()
@@ -542,6 +564,7 @@ def _offline_synthesis(
                     f"{finding.sessions} sessions; {finding.detail}.",
                     finding.tokens // max(finding.sessions, 1),
                     sources=_source_refs(finding),
+                    finding=finding,
                 )
 
         elif finding.kind == "cluster":
@@ -561,6 +584,7 @@ def _offline_synthesis(
                 f"A scripted `{_truncate(example, 120)}` loop appears across {finding.sessions} sessions. Inspect the error before editing or re-running the script.",
                 f"{finding.sessions} sessions; {finding.tokens:,} tokens.",
                 finding.tokens // max(finding.sessions, 1),
+                finding=finding,
             )
 
         elif finding.kind == "hotspot":
@@ -581,6 +605,7 @@ def _offline_synthesis(
                 f"Read-only in {finding.sessions} sessions; {finding.tokens:,} tokens spent.",
                 finding.tokens // max(finding.sessions, 1),
                 sources=_source_refs(finding),
+                finding=finding,
             )
 
         elif finding.kind in {
@@ -599,6 +624,7 @@ def _offline_synthesis(
                 finding.detail,
                 finding.tokens // max(finding.sessions, 1),
                 sources=_source_refs(finding),
+                finding=finding,
             )
 
         elif finding.kind == "context":
@@ -616,6 +642,7 @@ def _offline_synthesis(
                 finding.detail,
                 finding.tokens // max(finding.sessions, 1),
                 sources=_source_refs(finding),
+                finding=finding,
             )
 
     return Synthesis(repo=repo, rules=rules)
@@ -640,10 +667,50 @@ def _validate_sources(synthesis: Synthesis, findings: list[Finding]) -> Synthesi
     rules = []
     for rule in synthesis.rules:
         if rule.sources:
-            valid = [source for source in rule.sources if source in allowed]
+            valid = [
+                source for source in rule.sources
+                if source in allowed or source.startswith("finding:")
+            ]
             if len(valid) != len(rule.sources):
                 continue
         rules.append(rule)
+    return Synthesis(repo=synthesis.repo, rules=rules)
+
+
+def _attach_rule_provenance(synthesis: Synthesis, findings: list[Finding]) -> Synthesis:
+    by_ref: dict[str, Finding] = {}
+    for finding in findings:
+        for event in finding.window:
+            ref = event.get("session_ref")
+            if ref:
+                by_ref[ref] = finding
+    rules = []
+    for rule in synthesis.rules:
+        matched = [
+            by_ref[ref.split(" (step ", 1)[0]]
+            for ref in rule.sources
+            if ref.split(" (step ", 1)[0] in by_ref
+        ]
+        if not matched:
+            rules.append(rule)
+            continue
+        sessions = max(finding.sessions for finding in matched)
+        instances = max((finding.paired_instances for finding in matched), default=0)
+        confidence: Literal["low", "medium", "high"] = (
+            "high" if sessions >= 10 and instances >= 2
+            else "medium" if sessions >= 3
+            else "low"
+        )
+        rules.append(
+            rule.model_copy(
+                update={
+                    "support_sessions": sessions,
+                    "support_instances": instances,
+                    "confidence": confidence,
+                    "finding_kinds": sorted({finding.kind for finding in matched}),
+                }
+            )
+        )
     return Synthesis(repo=synthesis.repo, rules=rules)
 
 
@@ -684,6 +751,13 @@ def render(synthesis: Synthesis, repo: str, sessions: int) -> str:
         lines.append(f"  **Evidence:** {rule.evidence_summary}")
         if rule.enforceable and rule.enforcement:
             lines.append(f"  **Enforcement:** {rule.enforcement}")
+        if rule.support_sessions:
+            lines.append(
+                f"  **Support:** {rule.support_sessions} sessions, "
+                f"{rule.support_instances} instances ({rule.confidence})"
+            )
+        if rule.finding_kinds:
+            lines.append(f"  **Finding types:** {', '.join(rule.finding_kinds)}")
         if rule.sources:
             lines.append(f"  **Sources:** {'; '.join(rule.sources)}")
         lines.append("")
@@ -711,6 +785,7 @@ def synthesize(
     top: int = 25,
     offline: bool = False,
     max_rules: int = MAX_RULES,
+    min_support: int = 3,
     console: Console | None = None,
     emit: bool = True,
     agents: str | Path | list[str | Path] | None = None,
@@ -731,7 +806,7 @@ def synthesize(
                 exact_sequences(
                     con,
                     length=length,
-                    min_sessions=3,
+                    min_sessions=min_support,
                     top=500,
                     min_instances=2,
                     min_lift=1.5,
@@ -743,7 +818,7 @@ def synthesize(
     for row in repo_rows:
         repo_name = row["repo"]
         findings = annotate_findings(
-            con, select_findings(exact, mined, repo_name)
+            con, select_findings(exact, mined, repo_name, min_sessions=min_support)
         )
         labels = label_summary(con, repo_name)
         print_findings(findings, console)
@@ -770,7 +845,9 @@ def synthesize(
                 llm_failed = True
                 console.print(f"[yellow]LLM synthesis unavailable: {escape(str(error))}[/yellow]")
         if synthesis is None:
-            synthesis = _offline_synthesis(findings, repo_name, max_rules=max_rules)
+            synthesis = _offline_synthesis(
+                findings, repo_name, max_rules=max_rules, min_support=min_support
+            )
             if offline:
                 reason = "--offline"
             elif llm_failed:
@@ -791,6 +868,7 @@ def synthesize(
             synthesis = Synthesis(repo=synthesis.repo, rules=kept)
 
         synthesis = _validate_sources(synthesis, findings)
+        synthesis = _attach_rule_provenance(synthesis, findings)
         synthesis = _filter_junk_rules(synthesis)
         synthesis, text = enforce_caps(
             synthesis, repo_name, row["sessions"], max_rules=max_rules

@@ -74,9 +74,12 @@ The same sessions produce suggested rules:
 
 **`rkkautsar/trace2rules`**
 
-- Keep stage ownership explicit in `src/trace2rules/`: source adapters in `sources/`, normalization in `ingest.py`, schema access in `db.py`, findings in `detectors.py`, grouping in `cluster.py`/`patterns.py`, rule and prompt assembly in `synthesize.py`, scoring in `evaluate.py`, and command wiring only in `cli.py`. Add pipeline behavior to its owning module rather than duplicating queries or formatting in `cli.py`.
-- Before reading `src/trace2rules/synthesize.py` or `src/trace2rules/cli.py`, index their symbols with `rg -n '^(def|class) ' <file>` and open only the matching ranges instead of re-reading the whole 500+-line module.
-- Run DuckDB queries and CLI checks through the project environment: `.venv/bin/python` for scripts and `.venv/bin/trace2rules` for subcommands. Do not invoke the system `python`, which lacks the `duckdb` package.
+- For a large or repeatedly read file, use `rg -n` to locate the symbol and read the enclosing line range; a single whole-file read is fine for small files.
+  - 4 sessions, medium confidence, `selector_miss`.
+- When a selector reports 0 selected/deselected, inspect the runner's collection output and use the printed node ID; selectors match test names, not arbitrary file text.
+  - 4 sessions, medium confidence, `selector_miss`.
+- Edit the file named by the traceback or failing assertion; do not patch a different layer or the reproducer.
+  - 3 sessions, medium confidence, `site_edit_mismatch`.
 
 **`rkkautsar/louibot`**
 
@@ -136,6 +139,8 @@ source: .github/workflows/package-test.yml
 `available` means a Makefile/package target exists but is not wired into CI. `missing` means no mechanism was found. `--prompt` emits a self-contained review prompt for a fresh-context agent.
 
 `trace2rules synthesize --agents AGENTS.md` reconciles proposed rules against the audit: duplicates are dropped, configured enforcement is reused, and soft rules are upgraded with concrete enforcement. When run from the target checkout, `--agents` is optional.
+
+Use `trace2rules synthesize --json` for machine-readable proposals. Each rule carries `support_sessions`, `support_instances`, `confidence`, `finding_kinds`, and source references; the deterministic path also labels non-window evidence as `finding:<kind>:<title>`.
 
 ## Synthesis
 
@@ -223,6 +228,7 @@ trace2rules ingest --source PATH --limit 200
 trace2rules synthesize
 trace2rules synthesize --offline
 trace2rules synthesize --max-rules 10
+trace2rules synthesize --min-support 5 --json
 trace2rules synthesize
 trace2rules audit --agents AGENTS.md
 trace2rules audit --agents AGENTS.md --commit HEAD --json

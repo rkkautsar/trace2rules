@@ -553,7 +553,6 @@ def _patterns_command(
             con,
             min_sessions=min_sessions,
             max_len=max_len,
-            top=top,
         )
         table = Table(title="Semantic friction sequences", header_style="bold", expand=True)
         table.add_column("#", width=3)
@@ -588,6 +587,7 @@ def _exact_command(
     min_lift: Annotated[float, typer.Option(help="Minimum lift over token marginals.")] = 1.5,
     retry_weight: Annotated[int, typer.Option(help="Token cost assigned per rework retry.")] = 1000,
     top: Annotated[int, typer.Option(help="Sequences to show.")] = 25,
+    per_repo: Annotated[int, typer.Option(help="Maximum sequences per repo; 0 disables balancing.")] = 3,
     include_ok: Annotated[bool, typer.Option("--include-ok", help="Include windows without an error.")] = False,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
@@ -599,13 +599,24 @@ def _exact_command(
             con,
             length=length,
             min_sessions=min_sessions,
-            top=top,
             require_error=not include_ok,
             min_instances=min_instances,
             min_rework=min_rework,
             min_lift=min_lift,
             retry_weight=retry_weight,
+            top=None if per_repo else top,
         )
+        if per_repo:
+            counts: dict[str, int] = {}
+            balanced = []
+            for finding in findings:
+                if counts.get(finding.repo, 0) >= per_repo:
+                    continue
+                counts[finding.repo] = counts.get(finding.repo, 0) + 1
+                balanced.append(finding)
+                if len(balanced) >= top:
+                    break
+            findings = balanced
         table = Table(title=f"Exact {length}-step sequences", header_style="bold", expand=True)
         table.add_column("#", width=3)
         table.add_column("Repo", width=22)

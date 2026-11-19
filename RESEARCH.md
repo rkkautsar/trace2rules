@@ -257,6 +257,28 @@ Deliberately not implemented yet:
 - `blast_radius`: needs diff stats and task-localization metadata.
 - `coherence_collapse`: needs per-edit snapshots or diff hashes.
 
+## Sequence mining
+
+Raw 3-5 gram mining is sparse because tool commands, URLs, temp paths, line
+ranges, and generated filenames make almost every window unique. AgentTAC
+([paper](https://aclanthology.org/2026.emnlp-main.1637.pdf)) avoids this by
+representing traces as temporal **action + context attributes** and anchoring
+patterns at localized errors, then ranking candidates by failure rate and
+coverage. Its patterns are interpretable action-context sequences, not literal
+command strings.
+
+`trace2rules` now normalizes sequence tokens before mining:
+
+- `exec` -> command family (`pytest`, `cargo:test`, `git:status`, `shell`,
+  `network`, ...)
+- `read`/`search`/`edit` -> path class (`source`, `test`, `docs`, `config`,
+  `generated`, `scratch`, `dir`)
+- outcome -> `ok` / `err` / `timeout`
+
+The n-gram miner is anchored at error-ending windows and exact-sequence output
+is balanced per repository to prevent one large transcript from monopolizing the
+view.
+
 ## Caveats
 
 - These are **prioritization heuristics**, not claims about production rates.

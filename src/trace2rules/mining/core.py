@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import duckdb
 
@@ -26,6 +27,62 @@ _INSTALL_TARGET_RE = re.compile(
 )
 _HELP_TARGET_RE = re.compile(r"(?:^|\s)(?:--help|-h)(?:\s|$)")
 _BOUNDED_RE = re.compile(r"(?:\|\s*(?:head|tail)\b|\s(?:-q|--quiet|-qq|--tb=short)\b)")
+
+
+
+_PATH_CLASSES = (
+    ("test", r"(?i)(^|/)(tests?|specs?|__tests__)(/|$)|(^|/)(test_|conftest\.|.*_test\.|.*\.spec\.)"),
+    ("docs", r"(?i)(^|/)(readme|docs?|changelog|contributing|license)(\.|/|$)"),
+    ("config", r"(?i)(^|/)(pyproject\.toml|package\.json|.*\.ya?ml|.*\.toml|Makefile|Dockerfile|.*\.ini|.*\.cfg|.*\.lock)$"),
+    ("generated", r"(?i)(^|/)(dist|node_modules|vendor|site-packages|target|generated|out|coverage)(/|$)"),
+    ("scratch", r"(?i)(^|/)(reproduce|repro|scratch|debug|verify|comprehensive|final|test_fix|test_repro)"),
+    ("source", r"(?i)\.(py|pyi|ts|tsx|js|jsx|rs|go|java|kt|c|cc|cpp|h|hpp|rb|php|swift|scala|cs|sh)$"),
+)
+
+
+def _path_class(path: str) -> str:
+    value = (path or "").split(":", 1)[0].split(";", 1)[0].strip()
+    for label, pattern in _PATH_CLASSES:
+        if re.search(pattern, value):
+            return label
+    if value in {"", ".", ".."} or not Path(value).suffix:
+        return "dir"
+    return "file"
+
+
+
+def normalize_event_token(
+    action: str,
+    verb: str,
+    object_id: str,
+    target: str,
+    raw_target: str,
+    outcome: str,
+) -> str:
+    """Coarse, shareable token for sequence mining.
+
+    Raw commands and line ranges are too unique to support cross-session
+    patterns. This keeps the action and its semantic context while discarding
+    volatile arguments. Raw values remain available in examples.
+    """
+    action = (action or "other").lower()
+    outcome = (outcome or "unknown").lower()
+    if action == "exec":
+        command = (raw_target or object_id or target or "").strip()
+        command = re.sub(r"^(?:cd\s+[^&]+?&&\s*)+", "", command)
+        command = re.sub(r"^(?:[A-Z_][A-Z0-9_]*=\S*\s+)+", "", command)
+        first = command.split()[0] if command else "command"
+        second = command.split()[1] if len(command.split()) > 1 else ""
+        if first in {"python", "python3"} and second == "-m" and len(command.split()) > 2:
+            first = command.split()[2]
+        if first in {"git", "cargo", "go", "npm", "pnpm", "yarn", "docker", "kubectl"} and second:
+            first = f"{first}:{second}"
+        if first in {"curl", "wget"}:
+            first = "network"
+        return f"exec:{first}:{outcome}"
+    if action in {"read", "search", "edit"}:
+        return f"{action}:{_path_class(object_id or target)}:{outcome}"
+    return f"{action}:{(verb or 'unknown').lower()}:{outcome}"
 
 
 def session_summary(con: duckdb.DuckDBPyConnection) -> list[dict]:

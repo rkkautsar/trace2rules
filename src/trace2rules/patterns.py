@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 import duckdb
 
+from .mining.core import normalize_event_token
+
 
 @dataclass(frozen=True)
 class SequencePattern:
@@ -14,14 +16,21 @@ class SequencePattern:
     tokens: int
     repos: tuple[str, ...]
     example: str
+    anchored_sessions: int = 0
+    failure_rate: float = 0.0
 
 
-def _token(action: str, object_id: str, outcome: str) -> str:
-    obj = object_id or "?"
-    obj = " ".join(obj.split())
-    if len(obj) > 140:
-        obj = obj[:137] + "..."
-    return f"{action}:{obj}:{outcome}"
+def _token(
+    action: str,
+    verb: str,
+    object_id: str,
+    target: str,
+    raw_target: str,
+    outcome: str,
+) -> str:
+    return normalize_event_token(
+        action, verb, object_id, target, raw_target, outcome
+    )
 
 def mine_sequences(
     con: duckdb.DuckDBPyConnection,
@@ -33,7 +42,7 @@ def mine_sequences(
         """
         SELECT e.session_id, e.step_idx, e.segment_idx, e.repo,
                e.action_type, e.object_id, e.outcome, e.approx_out_tokens,
-               e.raw_target
+               e.raw_target, e.verb, e.target
         FROM tool_events e
         WHERE e.tool_name NOT IN ('think', 'finish', 'task_tracker')
           AND e.action_type <> 'other'
@@ -50,9 +59,10 @@ def mine_sequences(
         tokens = [
             _token(
                 event[4],
-                event[5]
-                if event[5] not in {"", "<path>", "unknown", "?"}
-                else (event[8] or "?"),
+                event[9],
+                event[5],
+                event[10],
+                event[8],
                 event[6],
             )
             for event in events
@@ -73,7 +83,9 @@ def mine_sequences(
                     window_tokens,
                     {
                         "sessions": set(),
+                        "anchored_sessions": set(),
                         "occurrences": 0,
+                        "anchored": 0,
                         "tokens": 0,
                         "repos": set(),
                         "example": "",
@@ -82,6 +94,9 @@ def mine_sequences(
                 agg["sessions"].add(session_id)
                 agg["repos"].update(event[3] for event in window)
                 agg["occurrences"] += 1
+                if window[-1][6] == "err":
+                    agg["anchored_sessions"].add(session_id)
+                    agg["anchored"] += 1
                 agg["tokens"] += sum(
                     event[7] for event in window if event[6] == "err"
                 )
@@ -99,9 +114,14 @@ def mine_sequences(
             tokens=value["tokens"],
             repos=tuple(sorted(value["repos"])),
             example=value["example"],
+            anchored_sessions=len(value["anchored_sessions"]),
+            failure_rate=(
+                value["anchored"] / value["occurrences"] if value["occurrences"] else 0.0
+            ),
         )
         for tokens, value in aggregates.items()
         if len(value["sessions"]) >= min_sessions
+        and len(value["anchored_sessions"]) >= min_sessions
     ]
 
     # Prefer maximal windows; a shorter prefix with the same support is redundant.
@@ -114,13 +134,15 @@ def mine_sequences(
             for longer in kept
         ):
             continue
-        object_ids = {
-            token.rsplit(":", 2)[1]
-            for token in pattern.sequence.split(" -> ")
-        }
-        if len(object_ids) == 1 and pattern.sessions < 5:
-            continue
         kept.append(pattern)
 
-    kept.sort(key=lambda pattern: (pattern.sessions, pattern.tokens), reverse=True)
+    kept.sort(
+        key=lambda pattern: (
+            pattern.anchored_sessions,
+            pattern.failure_rate,
+            pattern.sessions,
+            pattern.tokens,
+        ),
+        reverse=True,
+    )
     return kept[:top]

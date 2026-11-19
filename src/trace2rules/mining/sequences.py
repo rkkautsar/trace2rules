@@ -8,6 +8,7 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_distances
 
+from .core import normalize_event_token
 from .heuristics.hotspots import context_blasts, hotspots
 from .models import Finding
 
@@ -27,13 +28,19 @@ def _encode(window: list[tuple]) -> str:
     parts = []
     for position, event in enumerate(window, start=1):
         _session, _repo, _step, _tool, action, verb, object_id, outcome = event[:8]
-        parts.append(f"s{position}:{action}:{verb}:{object_id}:{outcome}")
+        token = normalize_event_token(
+            action, verb, object_id, event[10], event[11], outcome
+        )
+        parts.append(f"s{position}:{token}")
     return " | ".join(parts)
 
 
 def _tokens(window: list[tuple]) -> tuple[str, ...]:
     return tuple(
-        f"{event[4]}:{event[5]}:{event[6]}:{event[7]}" for event in window
+        normalize_event_token(
+            event[4], event[5], event[6], event[10], event[11], event[7]
+        )
+        for event in window
     )
 
 
@@ -174,14 +181,17 @@ def exact_sequences(
                 break
         session_setup[session_id] = setup
     token_sessions: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
-    for session_id, repo, action, verb, object_id, outcome in con.execute(
+    for session_id, repo, action, verb, object_id, target, raw_target, outcome in con.execute(
         """
-        SELECT session_id, repo, action_type, verb, object_id, outcome
+        SELECT session_id, repo, action_type, verb, object_id, target,
+               raw_target, outcome
         FROM tool_events
         WHERE target <> '' AND action_type <> 'other'
         """
     ).fetchall():
-        token_sessions[repo][f"{action}:{verb}:{object_id}:{outcome}"].add(session_id)
+        token_sessions[repo][
+            normalize_event_token(action, verb, object_id, target, raw_target, outcome)
+        ].add(session_id)
 
     scored: list[tuple[float, Finding]] = []
     for window in friction_windows(con, lengths=(length,)):

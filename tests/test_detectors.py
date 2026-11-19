@@ -23,7 +23,7 @@ from trace2rules.mining import (
     regressions_after_green,
     shrinking_test_suites,
 )
-from trace2rules.mining.core import _context_advice
+from trace2rules.mining.core import _context_advice, normalize_event_token
 
 
 def _patch_windows(monkeypatch) -> None:
@@ -351,6 +351,13 @@ def test_shrinking_test_suites_requires_a_test_edit() -> None:
     finding = shrinking_test_suites(con)[0]
     assert finding.sessions == 2
     assert "test count" in finding.title
+
+
+def test_sequence_tokens_normalize_commands_and_paths() -> None:
+    assert normalize_event_token("exec", "pytest", "x", "x", "cd /repo && pytest tests/a.py", "err") == "exec:pytest:err"
+    assert normalize_event_token("exec", "cat", "README.md", "README.md", "cat README.md", "ok") == "exec:cat:ok"
+    assert normalize_event_token("edit", "edit", "tests/test_a.py", "x", "x", "ok") == "edit:test:ok"
+    assert normalize_event_token("read", "read", "src/a.py:1-20", "x", "x", "ok") == "read:source:ok"
 
 
 def test_context_advice_distinguishes_test_output_from_repo_entrypoint() -> None:

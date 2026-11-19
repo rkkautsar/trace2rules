@@ -38,7 +38,7 @@ def test_patterns_on_fresh_db_is_friendly(tmp_path: Path) -> None:
     assert "No sessions" in result.output
 
 
-def test_patterns_without_labels_uses_object_identity(tmp_path: Path) -> None:
+def test_patterns_use_normalized_action_tokens(tmp_path: Path) -> None:
     db = tmp_path / "patterns.duckdb"
     sessions = []
     for index in range(3):
@@ -70,11 +70,12 @@ def test_patterns_without_labels_uses_object_identity(tmp_path: Path) -> None:
                     ToolCall(
                         "Bash",
                         "make test",
-                        observation="ok",
+                        observation="error",
                         action_type="exec",
                         target="make test",
                         verb="make",
                         object_id="make test",
+                        is_error=True,
                     ),
                 ],
             )
@@ -85,9 +86,11 @@ def test_patterns_without_labels_uses_object_identity(tmp_path: Path) -> None:
         patterns = mine_sequences(con, top=5)
     finally:
         con.close()
-    assert len(patterns) == 1
-    assert "exec:make test:err" in patterns[0].sequence
-    assert "read:src/a.py:ok" in patterns[0].sequence
+    assert patterns
+    assert any(
+        "exec:make:err" in pattern.sequence and "read:source:ok" in pattern.sequence
+        for pattern in patterns
+    )
 
 
 def test_mine_accepts_bracket_targets(tmp_path: Path) -> None:

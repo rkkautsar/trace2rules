@@ -13,12 +13,13 @@ import duckdb
 TEST_RUN_RE = re.compile(
     r"(?i)\b(pytest|unittest|cargo test|go test|npm test|npm run test|pnpm test|"
     r"yarn test|mvn test|gradle test|dotnet test|rspec|phpunit|mix test|"
-    r"swift test|make (?:test|check)|python -m (?:pytest|unittest))\b"
+    r"swift test|make (?:test|check)|python -m (?:pytest|unittest)|"
+    r"cargo (?:fmt|clippy))\b"
 )
 NEGATIVE_RULE_RE = re.compile(r"(?i)\b(never|do not|don't|avoid)\b")
 VALIDATION_RE = re.compile(
     r"(?i)\b(test|tests|lint|typecheck|validate|validation|pytest|cargo test|go test|"
-    r"npm test|vitest|jest|make (?:unit|test)|check)\b"
+    r"npm test|vitest|jest|make (?:unit|test)|check|cargo (?:fmt|clippy))\b"
 )
 SCRATCH_RE = re.compile(
     r"(?i)\b(?:reproduce|repro|scratch|debug|artifact)[\w.-]*\b"
@@ -32,7 +33,7 @@ ACTIONABLE_SECTION_RE = re.compile(
     r"development|contribut|requirement|check|performance|convention)"
 )
 COMMAND_SECTION_RE = re.compile(
-    r"(?i)(command|test|lint|type|quality|check|install|benchmark|setup|validation|verify|build|run)"
+    r"(?i)(command|test|lint|type|quality|check|install|benchmark|setup|validation|verification|verify|build|run)"
 )
 NON_ACTIONABLE_SECTION_RE = re.compile(
     r"(?i)(about|overview|architecture|key concepts|common usage|important files|"
@@ -138,6 +139,11 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
     lower = text.lower()
     if re.search(r"(?i)(?:--no-verify|skip(?:ping)? (?:the )?pre-commit|pre-commit hook)", lower):
         return "hook_bypass"
+    if re.search(
+        r"(?i)(?:whole[- ]file|cat -n|nl -ba|read only.*range|context blast|line ranges|full re-read)",
+        lower,
+    ):
+        return "read_hygiene"
     if SCRATCH_RE.search(lower) and any(
         token in lower for token in ("do not", "don't", "never", "keep", "outside")
     ):
@@ -276,7 +282,11 @@ def parse_agents_text(text: str, source: str = "AGENTS.md") -> list[AgentRule]:
                 text = stripped
         if not text or len(text) < 12:
             continue
-        if not IMPERATIVE_RE.search(text) and not RULE_CUE_RE.search(text):
+        if (
+            not IMPERATIVE_RE.search(text)
+            and not RULE_CUE_RE.search(text)
+            and not COMMAND_RE.search(text)
+        ):
             continue
         rule = _make_rule(text, source, line_no, section)
         key = _dedupe_key(rule)
@@ -362,6 +372,8 @@ def _enforcement(rule: AgentRule) -> str:
         return f"CI required check / pre-commit hook running `{command}`."
     if rule.category == "hook_bypass":
         return "Pre-commit hook plus a CI check rejecting `--no-verify` commits."
+    if rule.category == "read_hygiene":
+        return "A context-budget hook or CI check rejecting whole-file reads of large sources."
     if rule.category == "architecture_map":
         return "Import-boundary lint, CODEOWNERS, or a CI forbidden-path check."
     if rule.category == "context_hygiene":
@@ -577,6 +589,66 @@ def _infer_scope(rule: AgentRule, root: Path | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(inferred))
 
 
+_READ_SUFFIXES = {
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".go", ".java",
+    ".kt", ".cs", ".rb", ".php", ".swift",
+}
+_LARGE_SOURCE_BYTES = 12_000
+
+
+def _read_candidate(path: str) -> str:
+    return re.sub(r":\d+(?:-\d+)?$", "", path.strip().strip("`"))
+
+
+def _large_source(path: str, root: Path | None, names: set[str]) -> bool:
+    candidate = _read_candidate(path)
+    if not candidate or Path(candidate).suffix not in _READ_SUFFIXES:
+        return False
+    if Path(candidate).name in names:
+        return True
+    if root is None:
+        return False
+    file_path = Path(candidate)
+    if file_path.is_absolute():
+        try:
+            file_path = file_path.relative_to(root)
+        except ValueError:
+            return False
+    file_path = root / file_path
+    try:
+        return file_path.is_file() and file_path.stat().st_size >= _LARGE_SOURCE_BYTES
+    except OSError:
+        return False
+
+
+def _read_hygiene(events: list[tuple], root: Path | None, rule: AgentRule) -> tuple[list[str], bool]:
+    names = {
+        Path(name).name
+        for name in re.findall(r"\b[\w./-]+\.(?:py|ts|tsx|js|jsx|rs|go|java|kt|cs|rb|php|swift)\b", rule.text)
+        if not re.search(r"[*<>]", name)
+    }
+    reads: list[str] = []
+    whole = False
+    for _sid, _step, action, raw, target, _object, _outcome in events:
+        if action not in {"read", "exec"}:
+            continue
+        if action == "exec" and re.search(r"\b(?:rg|grep)\b", raw) and not re.search(
+            r"\b(?:cat|nl|sed|head|tail)\b", raw
+        ):
+            continue
+        candidates = [target, *re.findall(r"[\w./-]+\.(?:py|ts|tsx|js|jsx|rs|go|java|kt|cs|rb|php|swift)", raw)]
+        if not any(_large_source(path, root, names) for path in candidates):
+            continue
+        reads.append(raw)
+        bounded = bool(
+            re.search(r"\b(?:sed\s+-n|head|tail)\b|:\d+(?:-\d+)?\b", f"{raw} {target}")
+        )
+        shell_read = bool(re.search(r"\b(?:cat|nl\s+-ba)\b", raw))
+        if not bounded and (action == "read" or shell_read):
+            whole = True
+    return reads, whole
+
+
 def _stale_paths(rule: AgentRule, root: Path | None) -> tuple[str, ...]:
     if root is None or not root.is_dir():
         return ()
@@ -709,6 +781,17 @@ def audit_agents(
                     violations += 1
                     if any(outcome in ("err", "timeout") for _step, outcome, *_rest in matching):
                         failed_validation += 1
+            elif rule.category == "read_hygiene":
+                reads, whole = _read_hygiene(events, root, rule)
+                if not reads:
+                    continue
+                applicable += 1
+                observed += 1
+                examples.extend(reads[:2])
+                if whole:
+                    violations += 1
+                else:
+                    compliant += 1
             elif rule.category == "hook_bypass":
                 commit_events = [
                     raw for _sid, _step, action, raw, _target, _object, _outcome in events
@@ -767,13 +850,13 @@ def audit_agents(
             "context_hygiene": "scratch-file-hygiene",
             "architecture_map": "path-ownership",
         }.get(rule.category, "generic")
-        measurable = rule.category in {"test_command", "hook_bypass", "context_hygiene"}
+        measurable = rule.category in {"test_command", "hook_bypass", "read_hygiene", "context_hygiene"}
         opportunities = applicable if measurable else 0
         undecided = 0
         if rule.category == "test_command":
             followed = compliant
             violations = max(applicable - compliant, 0)
-        elif rule.category == "hook_bypass":
+        elif rule.category in {"hook_bypass", "read_hygiene"}:
             followed = compliant
             undecided = max(applicable - followed - violations, 0)
         elif rule.category == "context_hygiene":

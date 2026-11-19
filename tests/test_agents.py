@@ -533,3 +533,45 @@ def test_hook_bypass_detector_counts_commits(tmp_path: Path) -> None:
     assert audit.category == "hook_bypass"
     assert audit.coverage == "partial"
     assert (audit.opportunities, audit.followed, audit.violation_sessions) == (2, 1, 1)
+
+
+def test_read_hygiene_detects_whole_file_reads(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text(
+        "## Reading code\n\n"
+        "- Locate the symbol with `rg -n 'def ' src/big.py`, then read only the enclosing range. "
+        "Avoid whole-file `cat -n src/big.py`.\n"
+    )
+    db = tmp_path / "reads.duckdb"
+    write_sessions(
+        db,
+        [
+            Session("a", "acme/repo", calls=[ToolCall("Bash", "cat -n src/big.py", action_type="read")]),
+            Session("b", "acme/repo", calls=[ToolCall("Bash", "sed -n '1,20p' src/big.py", action_type="read")]),
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.category == "read_hygiene"
+    assert audit.coverage == "measured"
+    assert (audit.opportunities, audit.followed, audit.violation_sessions) == (2, 1, 1)
+
+
+def test_parse_agents_keeps_command_bearing_nonimperative_bullets(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text(
+        "## Testing\n\n"
+        "- For each touched crate, run `cargo test -p <crate>`.\n\n"
+        "## Verification\n\n"
+        "```bash\n"
+        "cargo fmt --all\n"
+        "cargo clippy --all --all-targets -- -D warnings\n"
+        "```\n"
+    )
+    rules = parse_agents(path)
+    assert len(rules) == 3
+    assert any("cargo test -p <crate>" in rule.commands for rule in rules)
+    assert any(any("cargo clippy" in command for command in rule.commands) for rule in rules)

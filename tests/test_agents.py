@@ -609,3 +609,19 @@ def test_crate_test_rule_is_scoped_to_crate_edits(tmp_path: Path) -> None:
         con.close()
     assert audit.opportunities == 2
     assert audit.followed == 1
+
+
+def test_enforcement_accepts_extra_args_and_runner_wrappers(tmp_path: Path) -> None:
+    from trace2rules.agents import discover_enforcement
+
+    workflow = tmp_path / ".github" / "workflows"
+    workflow.mkdir(parents=True)
+    (workflow / "ci.yml").write_text(
+        "jobs:\n  test:\n    steps:\n"
+        "      - run: cargo fmt --all -- --check\n"
+        "      - run: mbx clippy --all --all-targets -- -D warnings\n"
+    )
+    fmt_rule = parse_agents_text("## Validation\n\n- Run `cargo fmt --all` before finishing.\n")[0]
+    clippy_rule = parse_agents_text("## Validation\n\n- Run `cargo clippy --all --all-targets -- -D warnings` before finishing.\n")[0]
+    assert discover_enforcement(tmp_path, fmt_rule)[0] == "configured"
+    assert discover_enforcement(tmp_path, clippy_rule)[0] == "configured"

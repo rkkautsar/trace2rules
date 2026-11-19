@@ -423,12 +423,16 @@ def _command_in_text(command: str, text: str) -> bool:
     command = command.strip().lower()
     if not command:
         return False
-    return bool(
-        re.search(
-            r"(?<![\w.-])" + re.escape(command) + r"(?![\w.-])",
-            text.lower(),
-        )
-    )
+    text = text.lower()
+    tokens = command.split()
+    patterns = [tokens]
+    if len(tokens) > 1 and tokens[0] in {"cargo", "uv", "npm", "pnpm", "yarn", "bun"}:
+        patterns.append(tokens[1:])
+    for pattern in patterns:
+        expression = r"(?<![\w.-])" + r"\s+".join(map(re.escape, pattern)) + r"(?![\w.-])"
+        if re.search(expression, text):
+            return True
+    return False
 
 
 def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:

@@ -21,6 +21,7 @@ from trace2rules.mining import (
     premature_completion,
     site_edit_mismatch,
     regressions_after_green,
+    shrinking_test_suites,
 )
 from trace2rules.mining.core import _context_advice
 
@@ -321,6 +322,35 @@ def test_test_regressions_require_a_green_baseline() -> None:
     finding = regressions_after_green(con)[0]
     assert finding.sessions == 2
     assert "regression" in finding.title
+
+
+def test_shrinking_test_suites_requires_a_test_edit() -> None:
+    con = duckdb.connect()
+    con.execute(
+        "CREATE TABLE test_results (session_id VARCHAR, repo VARCHAR, step_idx INTEGER, "
+        "command VARCHAR, total INTEGER, passed INTEGER, failed INTEGER, errors INTEGER, "
+        "skipped INTEGER, outcome VARCHAR, approx_out_tokens INTEGER)"
+    )
+    con.execute(
+        "CREATE TABLE tool_events (session_id VARCHAR, repo VARCHAR, step_idx INTEGER, "
+        "action_type VARCHAR, target VARCHAR)"
+    )
+    for session in ("s0", "s1"):
+        con.execute(
+            "INSERT INTO test_results VALUES (?, 'acme/repo', 1, 'pytest', 5, 5, 0, 0, 0, 'ok', 10)",
+            [session],
+        )
+        con.execute(
+            "INSERT INTO tool_events VALUES (?, 'acme/repo', 2, 'edit', 'tests/test_a.py')",
+            [session],
+        )
+        con.execute(
+            "INSERT INTO test_results VALUES (?, 'acme/repo', 3, 'pytest', 4, 4, 0, 0, 0, 'ok', 10)",
+            [session],
+        )
+    finding = shrinking_test_suites(con)[0]
+    assert finding.sessions == 2
+    assert "test count" in finding.title
 
 
 def test_context_advice_distinguishes_test_output_from_repo_entrypoint() -> None:

@@ -280,3 +280,52 @@ def regressions_after_green(con: duckdb.DuckDBPyConnection, limit: int | None = 
         )
         for repo, sessions, regressions, tokens, example_session, example_step, example_command in con.execute(query).fetchall()
     ]
+
+
+def shrinking_test_suites(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = r"""
+        WITH runs AS (
+            SELECT session_id, repo, step_idx, total, failed, command,
+                   lag(total) OVER (PARTITION BY session_id ORDER BY step_idx) AS previous_total,
+                   lag(step_idx) OVER (PARTITION BY session_id ORDER BY step_idx) AS previous_step,
+                   approx_out_tokens
+            FROM test_results
+            WHERE total > 0
+        )
+        SELECT r.repo, count(DISTINCT r.session_id) AS sessions,
+               count(*) AS drops, sum(r.approx_out_tokens) AS tokens,
+               arg_min(r.session_id, r.step_idx) AS example_session,
+               arg_min(r.step_idx, r.step_idx) AS example_step,
+               arg_max(r.command, r.step_idx) AS example_command
+        FROM runs r
+        WHERE r.total < r.previous_total
+          AND EXISTS (
+              SELECT 1 FROM tool_events e
+              WHERE e.session_id = r.session_id
+                AND e.action_type = 'edit'
+                AND e.step_idx > r.previous_step
+                AND e.step_idx < r.step_idx
+                AND regexp_matches(
+                    e.target,
+                    '(?i)(^|/)(tests?|specs?|__tests__)(/|$)|(^|/)(test_|conftest\.|.*_test\.)'
+                )
+          )
+        GROUP BY 1
+        HAVING count(DISTINCT r.session_id) >= 2
+        ORDER BY sessions DESC, drops DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="test_shrink",
+            repo=repo,
+            title="test count dropped after a test edit",
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{drops} test-count drops across {sessions} sessions; example {example_command[:100]}",
+            side="agent",
+            recommendation="Do not reduce the test count to make a suite pass. Restore the test or disclose the intentional removal.",
+        )
+        for repo, sessions, drops, tokens, example_session, example_step, example_command in con.execute(query).fetchall()
+    ]

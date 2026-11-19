@@ -32,6 +32,7 @@ from .heuristics import (
     selector_misses,
     site_edit_mismatch,
     regressions_after_green,
+    shrinking_test_suites,
     stuck_loops,
     workaround_scripts,
 )
@@ -71,6 +72,7 @@ def mine(
         "no_reproduction": no_reproduction,
         "false_completion": false_completions,
         "test_regression": regressions_after_green,
+        "test_shrink": shrinking_test_suites,
         "correction_loop": correction_loops,
     }
     workers = workers or min(8, len(jobs), os.cpu_count() or 1)

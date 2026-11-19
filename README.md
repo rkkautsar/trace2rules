@@ -48,7 +48,7 @@ Then give `reports/*.md` to your agent to synthesize the rules. `run` ingests lo
 On SWC (Rust), auditing the repository’s real `AGENTS.md` against 188 local sessions found 66 rules, 9 measured, 1 partial, and 56 unmeasured:
 
 | Rule | Coverage | Followed | Violations | Confidence | Enforcement |
-|---|---|---:|---|---|---|---|
+|---|---|---:|---|---|---|
 | Read source before editing | measured | 121 | 64/185 (35%) | high | missing |
 | `git commit` only after `git add` | measured | 8 | 6/14 (43%) | low | harness plugin only |
 | Submodule update before tests | measured | 0 | 32/32 (100%) | low | missing |

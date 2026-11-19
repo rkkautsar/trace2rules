@@ -14,6 +14,22 @@ from ..agents import audit_commit, audit_payload, latest_agents_commit, resolve_
 from ..cli_common import _resolve_repo_label, console
 from ..db import DB_PATH, connect
 
+def _violations(rule: dict) -> str:
+    opportunities = rule.get("opportunities", 0)
+    if not opportunities:
+        return "-"
+    violations = rule.get("violation_sessions", 0)
+    return f"{violations}/{opportunities} ({violations / opportunities:.0%})"
+
+
+def _enforcement(rule: dict) -> str:
+    if rule.get("category") == "ordering":
+        return "harness plugin"
+    if rule.get("existing_enforcement"):
+        return rule["existing_enforcement"]
+    return rule.get("enforcement_status", "unknown")
+
+
 def _audit_command(
     repo: Annotated[
         str | None,
@@ -134,45 +150,30 @@ def _audit_command(
         console.print(f"Added rules: {len(payload['added'])}; removed: {len(payload['removed'])}")
         for label, key in (("After", "after"), ("Before", "before")):
             table = Table(title=f"{label} commit audit: {repo}")
-            for column in (
-                "Rule", "Coverage", "Opportunities", "Followed",
-                "Violations", "Rate",
-            ):
+            for column in ("Rule", "Coverage", "Followed", "Violations", "Confidence", "Enforcement"):
                 table.add_column(column)
             for rule in payload[key]:
                 table.add_row(
                     rule["text"][:90],
                     rule.get("coverage", "unmeasured"),
-                    str(rule.get("opportunities", 0)),
                     str(rule.get("followed", 0)),
-                    str(rule["violation_sessions"]),
-                    "-" if rule.get("rate") is None else f"{rule['rate']:.0%}",
+                    _violations(rule),
+                    rule.get("confidence", "none"),
+                    _enforcement(rule),
                 )
             console.print(table)
         return
     table = Table(title=f"AGENTS.md audit: {repo}")
-    for column in (
-        "Rule", "Category", "Observed", "Applicable", "Compliant",
-        "Violations", "Not observed", "Coverage", "Confidence", "Opportunities", "Followed", "Rate", "Existing enforcement", "Status", "Required",
-    ):
+    for column in ("Rule", "Coverage", "Followed", "Violations", "Confidence", "Enforcement"):
         table.add_column(column)
     for rule in payload["rules"]:
         table.add_row(
             rule["text"][:90],
-            rule["category"],
-            str(rule["exercised_sessions"]),
-            str(rule["applicable_sessions"]),
-            str(rule["compliant_sessions"]),
-            str(rule["violation_sessions"]),
-            str(rule["not_observed_sessions"]),
             rule.get("coverage", "unmeasured"),
-            rule.get("confidence", "none"),
-            str(rule.get("opportunities", 0)),
             str(rule.get("followed", 0)),
-            "-" if rule.get("rate") is None else f"{rule['rate']:.0%}",
-            rule.get("existing_enforcement", "") or "-",
-            rule.get("enforcement_status", "unknown"),
-            "unknown" if rule.get("required") is None else str(rule["required"]).lower(),
+            _violations(rule),
+            rule.get("confidence", "none"),
+            _enforcement(rule),
         )
     console.print(table)
     for conflict in payload.get("conflicts", []):

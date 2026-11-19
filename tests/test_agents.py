@@ -512,3 +512,24 @@ def test_stale_paths_ignore_markdown_links(tmp_path: Path) -> None:
     finally:
         con.close()
     assert audit.stale_paths == ()
+
+
+def test_hook_bypass_detector_counts_commits(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Git\n\n- Do NOT use `--no-verify` when committing.\n")
+    db = tmp_path / "hooks.duckdb"
+    write_sessions(
+        db,
+        [
+            Session("a", "acme/repo", calls=[ToolCall("Bash", "git commit -m ok", action_type="exec")]),
+            Session("b", "acme/repo", calls=[ToolCall("Bash", "git commit --no-verify -m bad", action_type="exec")]),
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.category == "hook_bypass"
+    assert audit.coverage == "partial"
+    assert (audit.opportunities, audit.followed, audit.violation_sessions) == (2, 1, 1)

@@ -136,6 +136,8 @@ def _utc_naive(value: datetime | None) -> datetime | None:
 
 def _category(text: str, paths: tuple[str, ...]) -> str:
     lower = text.lower()
+    if re.search(r"(?i)(?:--no-verify|skip(?:ping)? (?:the )?pre-commit|pre-commit hook)", lower):
+        return "hook_bypass"
     if SCRATCH_RE.search(lower) and any(
         token in lower for token in ("do not", "don't", "never", "keep", "outside")
     ):
@@ -358,6 +360,8 @@ def _enforcement(rule: AgentRule) -> str:
     if rule.category == "test_command":
         command = rule.commands[0] if rule.commands else "the documented validation command"
         return f"CI required check / pre-commit hook running `{command}`."
+    if rule.category == "hook_bypass":
+        return "Pre-commit hook plus a CI check rejecting `--no-verify` commits."
     if rule.category == "architecture_map":
         return "Import-boundary lint, CODEOWNERS, or a CI forbidden-path check."
     if rule.category == "context_hygiene":
@@ -705,6 +709,20 @@ def audit_agents(
                     violations += 1
                     if any(outcome in ("err", "timeout") for _step, outcome, *_rest in matching):
                         failed_validation += 1
+            elif rule.category == "hook_bypass":
+                commit_events = [
+                    raw for _sid, _step, action, raw, _target, _object, _outcome in events
+                    if action == "exec" and re.search(r"\bgit\s+commit\b", raw)
+                ]
+                if not commit_events:
+                    continue
+                applicable += 1
+                observed += 1
+                examples.extend(commit_events[:2])
+                if any("--no-verify" in raw for raw in commit_events):
+                    violations += 1
+                else:
+                    compliant += 1
             elif rule.category == "context_hygiene":
                 if not edit_events and not matched:
                     continue
@@ -749,17 +767,23 @@ def audit_agents(
             "context_hygiene": "scratch-file-hygiene",
             "architecture_map": "path-ownership",
         }.get(rule.category, "generic")
-        measurable = rule.category in {"test_command", "context_hygiene"}
+        measurable = rule.category in {"test_command", "hook_bypass", "context_hygiene"}
         opportunities = applicable if measurable else 0
         undecided = 0
         if rule.category == "test_command":
             followed = compliant
             violations = max(applicable - compliant, 0)
+        elif rule.category == "hook_bypass":
+            followed = compliant
+            undecided = max(applicable - followed - violations, 0)
         elif rule.category == "context_hygiene":
             followed = max(applicable - violations, 0)
         else:
             followed = 0
-        if measurable:
+        if rule.category == "hook_bypass":
+            coverage = "partial"
+            coverage_reason = "observable pre-commit bypass; other clauses are not scored"
+        elif measurable:
             coverage = "measured"
             coverage_reason = "observable command or path evidence"
         elif rule.commands or rule.paths:
@@ -987,7 +1011,7 @@ Existing AGENTS.md audit (JSON):
 {json.dumps(payload, indent=2)}
 
 Definitions:
-- `coverage=measured` means the rule has transcript evidence; `unmeasured` means no detector is implemented; `dark` means the policy is not observable from tool logs.
+- `coverage=measured` means the rule has transcript evidence; `partial` means only one clause is measured; `unmeasured` means no detector is implemented; `dark` means the policy is not observable from tool logs.
 - `opportunities` are applicable sessions; `followed` and `violations` partition them. `rate` is null below 20 opportunities.
 
 Review these existing rules and return a JSON object with:

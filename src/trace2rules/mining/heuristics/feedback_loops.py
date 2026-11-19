@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import duckdb
 
-from ...detectors_core import Finding
+from ..models import Finding
 
 
 def feedback_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:

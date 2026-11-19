@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import duckdb
 
-from ...detectors_core import Finding, _representative_window
+from ..core import _representative_window
+from ..models import Finding
 
 
 def repeated_reads(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:

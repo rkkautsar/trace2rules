@@ -4,7 +4,8 @@ import re
 
 import duckdb
 
-from ...detectors_core import Finding, _representative_window
+from ..core import _representative_window
+from ..models import Finding
 
 
 def edit_churn(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:

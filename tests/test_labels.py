@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from trace2rules.db import connect
-from trace2rules.detectors import Finding
+from trace2rules.mining import Finding
 from trace2rules.ingest import write_sessions
 from trace2rules.labels import (
     _openai_answers,

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import duckdb
 
-from ...detectors_core import Finding, _representative_window
+from ..core import _representative_window
+from ..models import Finding
 
 COMMAND_ERROR_RE = r"(?i)(unrecognized arguments|unrecognized command|unknown option|invalid option|command not found|usage: )"
 

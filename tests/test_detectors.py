@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import importlib
+
 import duckdb
 
-from trace2rules.detectors import (
-    _context_advice,
+from trace2rules.mining import (
     blind_edits,
     destructive_commands,
     edit_rejections,
@@ -17,6 +18,14 @@ from trace2rules.detectors import (
     premature_completion,
     site_edit_mismatch,
 )
+from trace2rules.mining.core import _context_advice
+
+
+def _patch_windows(monkeypatch) -> None:
+    for module_name in ("validation", "editing", "recovery", "environment", "safety"):
+        module = importlib.import_module(f"trace2rules.mining.heuristics.{module_name}")
+        monkeypatch.setattr(module, "_representative_window", lambda *args, **kwargs: ())
+        monkeypatch.setattr(module, "_repo_window", lambda *args, **kwargs: ())
 
 
 def test_hotspots_ignore_readme_and_docs() -> None:
@@ -58,9 +67,7 @@ def test_orientation_is_repo_side_not_agent_friction() -> None:
 
 
 def test_validation_and_site_metrics_use_sessions_and_tokens(monkeypatch) -> None:
-    import trace2rules.detectors as detectors_module
-
-    monkeypatch.setattr(detectors_module, "_repo_window", lambda *args, **kwargs: ())
+    _patch_windows(monkeypatch)
     con = duckdb.connect()
     con.execute("CREATE TABLE sessions (repo VARCHAR, session_id VARCHAR)")
     con.execute(
@@ -95,9 +102,7 @@ def test_validation_and_site_metrics_use_sessions_and_tokens(monkeypatch) -> Non
 
 
 def test_failure_loops_require_repeated_failures_and_intervening_edits(monkeypatch) -> None:
-    import trace2rules.detectors as detectors_module
-
-    monkeypatch.setattr(detectors_module, "_representative_window", lambda *args, **kwargs: ())
+    _patch_windows(monkeypatch)
     con = duckdb.connect()
     con.execute(
         "CREATE TABLE tool_events (session_id VARCHAR, repo VARCHAR, step_idx INTEGER, "
@@ -131,10 +136,7 @@ def test_failure_loops_require_repeated_failures_and_intervening_edits(monkeypat
 
 
 def _detector_db(monkeypatch):
-    import trace2rules.detectors as detectors_module
-
-    monkeypatch.setattr(detectors_module, "_representative_window", lambda *args, **kwargs: ())
-    monkeypatch.setattr(detectors_module, "_repo_window", lambda *args, **kwargs: ())
+    _patch_windows(monkeypatch)
     con = duckdb.connect()
     con.execute("CREATE TABLE sessions (repo VARCHAR, session_id VARCHAR)")
     con.execute(
@@ -221,9 +223,7 @@ def test_no_reproduction_flags_edits_before_a_failing_exec(monkeypatch) -> None:
 
 
 def test_false_completion_requires_a_green_test_after_the_last_edit(monkeypatch) -> None:
-    import trace2rules.detectors as detectors_module
-
-    monkeypatch.setattr(detectors_module, "_repo_window", lambda *args, **kwargs: ())
+    _patch_windows(monkeypatch)
     con = duckdb.connect()
     con.execute("CREATE TABLE sessions (repo VARCHAR, session_id VARCHAR)")
     con.execute(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from trace2rules.db import connect
-from trace2rules.detectors import Finding
+from trace2rules.mining import Finding
 from trace2rules.ingest import write_sessions
 from trace2rules.models import Session
 from trace2rules.synthesize import _client, _sequence_tokens, select_findings, synthesize
@@ -111,7 +111,7 @@ def test_repo_without_findings_is_skipped(tmp_path, monkeypatch) -> None:
 
 
 def test_rule_with_unknown_source_is_dropped() -> None:
-    from trace2rules.detectors import Finding
+    from trace2rules.mining import Finding
     from trace2rules.synthesize import Rule, Synthesis, _validate_sources
 
     finding = Finding(
@@ -146,7 +146,7 @@ def test_rule_with_unknown_source_is_dropped() -> None:
 
 
 def test_prompt_omits_detector_recommendations() -> None:
-    from trace2rules.detectors import Finding
+    from trace2rules.mining import Finding
     from trace2rules.synthesize import _prompt
 
     finding = Finding(

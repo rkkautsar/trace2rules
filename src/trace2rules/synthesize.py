@@ -7,7 +7,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.markup import escape
 
-from .detectors import Finding
+from .mining.models import Finding
 from .synthesis_models import MAX_CHARS, MAX_LINES, MAX_RULES, EXACT_LENGTHS, Rule, Synthesis
 from .synthesis_prompt import _client, _finding_confidence, _llm_synthesis, _make_client, _prompt
 from .synthesis_selection import (
@@ -89,7 +89,8 @@ def synthesize(
     emit: bool = True,
     agents: str | Path | list[str | Path] | None = None,
 ) -> list[Synthesis]:
-    from .cluster import exact_sequences, mine
+    from .mining.sequences import exact_sequences
+    from .mining.mine import mine
 
     console = console or Console()
     repo_rows = _repos_with_sessions(con)

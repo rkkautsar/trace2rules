@@ -1,1 +1,67 @@
-"""Mining heuristics and shared detector primitives."""
+"""Mining heuristics, models, and orchestration."""
+
+from .core import session_summary
+from .heuristics import (
+    blind_edits,
+    command_errors,
+    context_blasts,
+    destructive_commands,
+    edit_churn,
+    edit_rejections,
+    environment_thrash,
+    failure_loops,
+    false_completions,
+    feedback_loops,
+    global_patterns,
+    hotspots,
+    low_validation,
+    no_reproduction,
+    noop_retries,
+    orientation,
+    permission_denials,
+    premature_completion,
+    prompt_context,
+    recovery_loops,
+    repeated_reads,
+    selector_misses,
+    site_edit_mismatch,
+    stuck_loops,
+    workaround_scripts,
+)
+from .mine import mine
+from .models import Finding
+from .sequences import cluster_friction, exact_sequences, friction_windows
+
+__all__ = [
+    "Finding",
+    "cluster_friction",
+    "blind_edits",
+    "command_errors",
+    "context_blasts",
+    "destructive_commands",
+    "edit_churn",
+    "edit_rejections",
+    "environment_thrash",
+    "exact_sequences",
+    "friction_windows",
+    "failure_loops",
+    "false_completions",
+    "feedback_loops",
+    "global_patterns",
+    "hotspots",
+    "low_validation",
+    "mine",
+    "no_reproduction",
+    "noop_retries",
+    "orientation",
+    "permission_denials",
+    "premature_completion",
+    "prompt_context",
+    "recovery_loops",
+    "repeated_reads",
+    "selector_misses",
+    "session_summary",
+    "site_edit_mismatch",
+    "stuck_loops",
+    "workaround_scripts",
+]

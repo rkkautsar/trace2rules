@@ -53,7 +53,8 @@ def _report_command(
             "SELECT repo, count(*) FROM sessions GROUP BY repo ORDER BY repo"
         ).fetchall()
 
-        from ..cluster import exact_sequences, mine as mine_friction
+        from ..mining.sequences import exact_sequences
+        from ..mining.mine import mine as mine_friction
         from ..synthesize import (
             EXACT_LENGTHS,
             _finding_confidence,
@@ -87,7 +88,7 @@ def _report_command(
             repo_rows = [row for row in repo_rows if row[0] == repo]
             exact = [finding for finding in exact if finding.repo == repo]
         if prompt:
-            from ..detectors import prompt_context
+            from ..mining import prompt_context
 
             explicit_agents = agents is not None
             agent_paths = resolve_agents(agents)

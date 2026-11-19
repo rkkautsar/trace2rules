@@ -66,7 +66,7 @@ def test_audit_counts_exercised_and_violated_sessions(tmp_path: Path) -> None:
 
 
 def test_workaround_detector_is_not_cancelled(tmp_path: Path) -> None:
-    from trace2rules.detectors import workaround_scripts
+    from trace2rules.mining import workaround_scripts
 
     db = tmp_path / "workaround.duckdb"
     write_sessions(
@@ -808,7 +808,7 @@ def test_required_status_is_not_inferred_from_ci_presence(tmp_path: Path) -> Non
 
 
 def test_permission_denials_are_mined(tmp_path: Path) -> None:
-    from trace2rules.detectors import permission_denials
+    from trace2rules.mining import permission_denials
 
     db = tmp_path / "permission.duckdb"
     write_sessions(
@@ -842,7 +842,7 @@ def test_permission_denials_are_mined(tmp_path: Path) -> None:
 
 
 def test_repeated_reads_are_mined(tmp_path: Path) -> None:
-    from trace2rules.detectors import repeated_reads
+    from trace2rules.mining import repeated_reads
 
     db = tmp_path / "reread.duckdb"
     write_sessions(
@@ -871,7 +871,7 @@ def test_repeated_reads_are_mined(tmp_path: Path) -> None:
 
 
 def test_edit_churn_is_mined(tmp_path: Path) -> None:
-    from trace2rules.detectors import edit_churn
+    from trace2rules.mining import edit_churn
 
     db = tmp_path / "churn.duckdb"
     write_sessions(
@@ -899,7 +899,7 @@ def test_edit_churn_is_mined(tmp_path: Path) -> None:
 
 
 def test_command_errors_are_mined(tmp_path: Path) -> None:
-    from trace2rules.detectors import command_errors
+    from trace2rules.mining import command_errors
 
     db = tmp_path / "command-errors.duckdb"
     write_sessions(

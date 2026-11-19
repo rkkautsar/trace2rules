@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
 
 import duckdb
+
+_TEST_OR_SCRATCH_RE = re.compile(
+    r"(?i)(^|/)(tests?|specs?|__tests__)(/|$)"
+    r"|(^|/)(test_|conftest\.|.*_test\.|.*\.spec\.)"
+    r"|(^|/)(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)"
+    r"|/(site-packages|dist-packages)/"
+)
+
 
 _DOC_TARGET_RE = re.compile(
     r"(?i)(^|/)(readme|docs?|changelog|contributing|license)([.]|/|$)"
@@ -19,41 +26,6 @@ _INSTALL_TARGET_RE = re.compile(
 )
 _HELP_TARGET_RE = re.compile(r"(?:^|\s)(?:--help|-h)(?:\s|$)")
 _BOUNDED_RE = re.compile(r"(?:\|\s*(?:head|tail)\b|\s(?:-q|--quiet|-qq|--tb=short)\b)")
-
-
-@dataclass(frozen=True)
-class Finding:
-    kind: str
-    repo: str
-    title: str
-    sessions: int
-    tokens: int
-    detail: str = ""
-    sequence: str = ""
-    variants: tuple[str, ...] = field(default_factory=tuple)
-    lift: float = 0.0
-    rework: int = 0
-    setup_tax: int = 0
-    cost: int = 0
-    paired_instances: int = 0
-    delta_rework: float = 0.0
-    delta_setup: float = 0.0
-    intent: str = ""
-    object_type: str = ""
-    intent_confidence: float = 0.0
-    object_confidence: float = 0.0
-    event_keys: tuple[tuple[str, str, str], ...] = field(default_factory=tuple)
-    cause: str = ""
-    failure_family: str = ""
-    cause_support_sessions: int = 0
-    side: str = ""
-    recommendation: str = ""
-    window: tuple[dict, ...] = field(default_factory=tuple)
-    edit_sessions: int = 0
-
-    @property
-    def evidence(self) -> str:
-        return f"{self.detail}; ~{self.tokens:,} tokens"
 
 
 def session_summary(con: duckdb.DuckDBPyConnection) -> list[dict]:

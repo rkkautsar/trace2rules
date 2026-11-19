@@ -4,7 +4,7 @@ import json
 import os
 import re
 
-from .detectors import Finding
+from .mining.models import Finding
 from .redact import redact_value
 from .synthesis_models import MAX_CHARS, MAX_LINES, MAX_RULES, Synthesis
 

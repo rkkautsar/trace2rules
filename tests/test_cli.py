@@ -8,7 +8,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from trace2rules.cli import app
-from trace2rules.cluster import friction_windows
+from trace2rules.mining.sequences import friction_windows
 from trace2rules.db import connect
 from trace2rules.ingest import IngestStats, write_sessions
 from trace2rules.models import Session, ToolCall

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from .detectors import Finding
+from .mining.models import Finding
 from .synthesis_models import MAX_RULES, Rule, Synthesis
 from .synthesis_selection import _is_path_target, _truncate
 

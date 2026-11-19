@@ -409,8 +409,8 @@ def _mine_command(
         if session_count == 0:
             console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
             raise typer.Exit(1)
-        from .detectors import session_summary
-        from .cluster import mine as mine_friction
+        from .mining.core import session_summary
+        from .mining.mine import mine as mine_friction
 
         _print_summary(session_summary(con))
         mined = mine_friction(con, top=top)
@@ -667,7 +667,7 @@ def _exact_command(
 ) -> None:
     con = connect(db)
     try:
-        from .cluster import exact_sequences
+        from .mining.sequences import exact_sequences
 
         findings = exact_sequences(
             con,

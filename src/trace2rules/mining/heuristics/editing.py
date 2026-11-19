@@ -1,0 +1,186 @@
+from __future__ import annotations
+
+import re
+
+import duckdb
+
+from ..core import (
+    _BOUNDED_RE,
+    _DOC_TARGET_RE,
+    _TEST_OR_SCRATCH_RE,
+    _context_advice,
+    _is_orientation,
+    _representative_window,
+    _repo_window,
+)
+from ..models import Finding
+
+def stuck_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = """
+        SELECT repo, target, count(*) AS edits, count(DISTINCT session_id) AS sessions,
+               sum(approx_out_tokens) AS tokens, any_value(error_family) AS family
+        FROM tool_events
+        WHERE action_type = 'edit' AND target <> '' AND target NOT LIKE '<%'
+        GROUP BY 1, 2
+        HAVING count(*) >= 3 AND count(DISTINCT session_id) >= 2
+        ORDER BY edits DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="stuck_loop",
+            repo=repo,
+            title=object_id,
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{edits} edits across {sessions} sessions; recurring family {family or 'unknown'}",
+            side="agent",
+            recommendation="After two edits leave the same failure family unchanged, stop editing and read the traceback site or failing test before another patch.",
+            window=_repo_window(con, repo, "action_type = 'edit' AND object_id = ?", (object_id,)),
+        )
+        for repo, object_id, edits, sessions, tokens, family in con.execute(query).fetchall()
+    ]
+
+def site_edit_mismatch(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    rows = con.execute(
+        """
+        SELECT repo, session_id, step_idx, error_site, approx_out_tokens,
+               next_action, next_object
+        FROM (
+            SELECT e.repo, e.session_id, e.step_idx, e.error_site, e.approx_out_tokens,
+                   lead(e.action_type) OVER (PARTITION BY e.session_id ORDER BY e.step_idx) AS next_action,
+                   lead(e.object_id) OVER (PARTITION BY e.session_id ORDER BY e.step_idx) AS next_object
+            FROM tool_events e
+        ) e
+        WHERE error_site <> ''
+        """
+    ).fetchall()
+    counts: dict[str, int] = {}
+    sessions_by_repo: dict[str, set[str]] = {}
+    tokens_by_repo: dict[str, int] = {}
+    examples: dict[str, str] = {}
+    for repo, session, step, site, tokens, next_action, next_object in rows:
+        if next_action != "edit" or not next_object:
+            continue
+        site_file = site.rsplit(":", 1)[0]
+        if _TEST_OR_SCRATCH_RE.search(site_file):
+            continue
+        if site_file.rsplit("/", 1)[-1] == next_object.rsplit("/", 1)[-1]:
+            continue
+        counts[repo] = counts.get(repo, 0) + 1
+        sessions_by_repo.setdefault(repo, set()).add(session)
+        tokens_by_repo[repo] = tokens_by_repo.get(repo, 0) + int(tokens or 0)
+        examples.setdefault(repo, f"{site} -> {next_object}")
+    findings = [
+        Finding(
+            kind="site_edit_mismatch",
+            repo=repo,
+            title=examples.get(repo, "traceback site differs from edited file"),
+            sessions=len(sessions_by_repo.get(repo, set())),
+            tokens=tokens_by_repo.get(repo, 0),
+            detail=(
+                f"{counts[repo]} traceback sites in "
+                f"{len(sessions_by_repo.get(repo, set()))} sessions followed by an edit to a different file"
+            ),
+            side="agent",
+            recommendation="Edit the file named by the traceback or failing assertion; do not patch a different layer or the reproducer.",
+        )
+        for repo in sorted(
+            counts,
+            key=lambda key: (len(sessions_by_repo.get(key, set())), tokens_by_repo.get(key, 0)),
+            reverse=True,
+        )
+    ]
+    return findings[:limit] if limit is not None else findings
+
+def edit_rejections(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = """
+        SELECT repo, target,
+               count(DISTINCT session_id) AS sessions,
+               count(*) AS rejects,
+               sum(approx_out_tokens) AS tokens,
+               arg_min(session_id, step_idx) AS example_session,
+               arg_min(step_idx, step_idx) AS example_step,
+               arg_min(coalesce(nullif(error_message, ''), obs_cause), step_idx) AS cause
+        FROM tool_events
+        WHERE action_type = 'edit' AND outcome = 'err'
+          AND target NOT IN ('', '.')
+          AND target NOT LIKE '<%'
+        GROUP BY 1, 2
+        HAVING count(DISTINCT session_id) >= 2
+        ORDER BY sessions DESC, rejects DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="edit_rejection",
+            repo=repo,
+            title=target,
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{rejects} rejected edits across {sessions} sessions",
+            cause=(cause or "")[:240],
+            side="agent",
+            recommendation="After an edit is rejected, re-read the target and recompute the anchor; do not retry the same stale patch.",
+            window=_representative_window(con, example_session, example_step),
+        )
+        for repo, target, sessions, rejects, tokens, example_session, example_step, cause in con.execute(query).fetchall()
+    ]
+
+def blind_edits(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = """
+        WITH edits AS (
+            SELECT session_id, repo, step_idx, target, approx_out_tokens
+            FROM tool_events
+            WHERE action_type = 'edit'
+              AND target NOT IN ('', '.')
+              AND target NOT LIKE '<%'
+              AND target NOT LIKE '% %'
+              AND target NOT LIKE '%>%'
+              AND raw_target NOT LIKE 'create%'
+        )
+        SELECT repo,
+               count(*) AS edits,
+               count(DISTINCT session_id) AS sessions,
+               sum(approx_out_tokens) AS tokens,
+               arg_max(target, approx_out_tokens) AS example_target,
+               arg_min(session_id, step_idx) AS example_session,
+               arg_min(step_idx, step_idx) AS example_step
+        FROM edits e
+        WHERE NOT EXISTS (
+            SELECT 1 FROM tool_events r
+            WHERE r.session_id = e.session_id
+              AND r.action_type = 'read'
+              AND r.target = e.target
+              AND r.step_idx < e.step_idx
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM tool_events c
+            WHERE c.session_id = e.session_id
+              AND c.action_type = 'edit'
+              AND c.raw_target LIKE 'create%'
+              AND c.target = e.target
+              AND c.step_idx < e.step_idx
+        )
+        GROUP BY 1
+        HAVING count(DISTINCT session_id) >= 2
+        ORDER BY sessions DESC, edits DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="blind_edit",
+            repo=repo,
+            title="edits without a preceding read",
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{edits} edits with no prior read of the target; example {example_target[:120]}",
+            side="agent",
+            recommendation="Read the target before editing it. For a new file, state that it is new and avoid patching unseen existing content.",
+            window=_representative_window(con, example_session, example_step),
+        )
+        for repo, edits, sessions, tokens, example_target, example_session, example_step in con.execute(query).fetchall()
+    ]

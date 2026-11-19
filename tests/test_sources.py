@@ -9,7 +9,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from trace2rules.detectors import Finding
+from trace2rules.mining import Finding
 from trace2rules.ingest import write_sessions
 from trace2rules.models import Session, ToolCall
 from trace2rules.sources.agent_trajectory import (

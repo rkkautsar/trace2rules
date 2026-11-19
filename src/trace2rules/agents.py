@@ -10,6 +10,14 @@ from typing import Any, Sequence
 
 import duckdb
 
+from .audit.heuristics.context_hygiene import evaluate as evaluate_context_hygiene
+from .audit.heuristics.generic import evaluate as evaluate_generic
+from .audit.heuristics.hook_bypass import evaluate as evaluate_hook_bypass
+from .audit.heuristics.ordering import evaluate as evaluate_ordering
+from .audit.heuristics.read_before_edit import evaluate as evaluate_read_before_edit
+from .audit.heuristics.read_hygiene import evaluate as evaluate_read_hygiene
+from .audit.heuristics.test_command import evaluate as evaluate_test_command
+
 TEST_RUN_RE = re.compile(
     r"(?i)\b(pytest|unittest|cargo test|go test|npm test|npm run test|pnpm test|"
     r"yarn test|mvn test|gradle test|dotnet test|rspec|phpunit|mix test|"
@@ -811,158 +819,57 @@ def audit_agents(
             if matched and rule.category != "test_command":
                 observed += 1
             if rule.category == "test_command":
-                # Documentation-only edits do not create a validation opportunity.
-                edit_events = [
-                    (step, target) for step, target in edit_events
-                    if scope or not DOC_TARGET_RE.search(target or "")
-                ]
-                edit_events = _scoped_test_edits(rule, edit_events)
-                if not edit_events:
+                outcome = evaluate_test_command(
+                    rule,
+                    events,
+                    edit_events,
+                    scope,
+                    doc_target_re=DOC_TARGET_RE,
+                    scoped_test_edits=_scoped_test_edits,
+                    matches=_matches,
+                    normalize=_normalize_command,
+                    argv_match=_argv_match,
+                    validation_re=VALIDATION_RE,
+                )
+                if outcome is None:
                     continue
-                edit_steps = [step for step, _target in edit_events]
-                last_edit = max(edit_steps)
-
-                def exact(event: tuple) -> bool:
-                    _sid, _step, action, raw, target, object_id, _outcome = event
-                    return action == "exec" and (
-                        _matches(rule, raw, target, object_id)
-                        if rule.commands
-                        else bool(VALIDATION_RE.search(raw))
-                    )
-
-                def family(event: tuple) -> bool:
-                    if event[2] != "exec":
-                        return False
-                    raw = _normalize_command(event[3])
-                    if not rule.commands:
-                        return bool(VALIDATION_RE.search(raw))
-                    for command in rule.commands:
-                        tokens = _normalize_command(command).split()
-                        if not tokens:
-                            continue
-                        prefix = tokens[:2] if tokens[0] in {"cargo", "git", "uv", "npm", "pnpm"} else tokens[:1]
-                        if _argv_match(" ".join(prefix), raw):
-                            return True
-                    return False
-
-                post_exact = [event for event in events if event[1] > last_edit and exact(event)]
-                post_any = [event for event in events if event[1] > last_edit and family(event)]
-                pre_any = [event for event in events if event[1] <= last_edit and (exact(event) or family(event))]
-                matched = any(exact(event) for event in events)
-                if matched:
-                    observed += 1
-                applicable += 1
-                if not matched:
-                    not_observed += 1
-                if post_exact:
-                    if any(event[6] == "ok" for event in post_exact):
-                        compliant += 1
-                        outcome = "exact_form"
-                    else:
-                        violations += 1
-                        outcome = "failed_test"
-                        failed_validation += 1
-                elif post_any:
-                    undecided_count += 1
-                    outcome = "alternate_form"
-                elif pre_any:
-                    violations += 1
-                    outcome = "before_final_edit"
-                else:
-                    violations += 1
-                    outcome = "no_test"
-                test_outcomes[outcome] = test_outcomes.get(outcome, 0) + 1
-                examples.extend(event[3][:240] for event in (post_exact or post_any or pre_any)[:2])
+                applicable += outcome.applicable
+                observed += outcome.observed
+                not_observed += outcome.not_observed
+                compliant += outcome.compliant
+                violations += outcome.violations
+                failed_validation += outcome.failed_validation
+                undecided_count += outcome.undecided
+                for key, count in outcome.test_outcomes.items():
+                    test_outcomes[key] = test_outcomes.get(key, 0) + count
+                examples.extend(outcome.examples)
             elif rule.category == "ordering":
-                if not rule.commands:
+                outcome = evaluate_ordering(
+                    rule, events, _normalize_command, _argv_match, TEST_RUN_RE
+                )
+                if outcome is None:
                     continue
-                before_tests = bool(re.search(r"(?i)\bbefore (?:running |running the )?tests?\b", rule.text))
-                if before_tests:
-                    tests = [
-                        (step, raw) for _sid, step, action, raw, _target, _object, _outcome in events
-                        if action == "exec" and TEST_RUN_RE.search(raw)
-                    ]
-                    if not tests:
-                        continue
-                    first_test, first_test_raw = tests[0]
-                    prerequisite = rule.commands[0]
-                    prerequisite_events = [
-                        step for _sid, step, action, raw, _target, _object, _outcome in events
-                        if action == "exec"
-                        and (
-                            step < first_test
-                            or (
-                                step == first_test
-                                and raw.find(prerequisite) < raw.find(first_test_raw)
-                            )
-                        )
-                        and _argv_match(_normalize_command(prerequisite), _normalize_command(raw))
-                    ]
-                    applicable += 1
-                    observed += 1
-                    examples.extend(raw[:240] for _step, raw in tests[:2])
-                    if prerequisite_events:
-                        compliant += 1
-                    else:
-                        violations += 1
-                    continue
-                if len(rule.commands) < 2:
-                    continue
-                action_command, prerequisite = rule.commands[0], rule.commands[1]
-                commits = [
-                    (step, raw) for _sid, step, action, raw, _target, _object, _outcome in events
-                    if action == "exec" and _argv_match(
-                        _normalize_command(action_command), _normalize_command(raw)
+                applicable += outcome.applicable
+                observed += outcome.observed
+                compliant += outcome.compliant
+                violations += outcome.violations
+                examples.extend(outcome.examples)
+            elif rule.category in {"read_before_edit", "read_hygiene"}:
+                if rule.category == "read_before_edit":
+                    outcome = evaluate_read_before_edit(
+                        rule, events, edit_events, _is_source_read
                     )
-                ]
-                if not commits:
-                    continue
-                applicable += 1
-                observed += 1
-                first_commit, first_commit_raw = commits[0]
-                prerequisite_events = [
-                    step for _sid, step, action, raw, _target, _object, _outcome in events
-                    if action == "exec"
-                    and (
-                        step < first_commit
-                        or (
-                            step == first_commit
-                            and raw.find(prerequisite) < raw.find(action_command)
-                        )
+                else:
+                    outcome = evaluate_read_hygiene(
+                        rule, events, root, _read_hygiene
                     )
-                    and _argv_match(_normalize_command(prerequisite), _normalize_command(raw))
-                ]
-                examples.extend(raw[:240] for _step, raw in commits[:2])
-                if prerequisite_events:
-                    compliant += 1
-                else:
-                    violations += 1
-            elif rule.category == "read_before_edit":
-                if not edit_events:
+                if outcome is None:
                     continue
-                first_edit, first_target = min(edit_events, key=lambda item: item[0])
-                reads = [
-                    raw for _sid, step, action, raw, target, _object, _outcome in events
-                    if step < first_edit and _is_source_read(action, raw, target, first_target)
-                ]
-                applicable += 1
-                observed += 1
-                examples.extend(reads[:2])
-                if reads:
-                    compliant += 1
-                else:
-                    violations += 1
-            elif rule.category == "read_hygiene":
-                reads, whole = _read_hygiene(events, root, rule)
-                if not reads:
-                    continue
-                applicable += 1
-                observed += 1
-                examples.extend(reads[:2])
-                if whole:
-                    violations += 1
-                else:
-                    compliant += 1
+                applicable += outcome.applicable
+                observed += outcome.observed
+                compliant += outcome.compliant
+                violations += outcome.violations
+                examples.extend(outcome.examples)
             elif rule.category == "hook_bypass":
                 commit_events = [
                     raw for _sid, _step, action, raw, _target, _object, _outcome in events
@@ -978,25 +885,24 @@ def audit_agents(
                 else:
                     compliant += 1
             elif rule.category == "context_hygiene":
-                if not edit_events and not matched:
+                outcome = evaluate_context_hygiene(
+                    rule,
+                    events,
+                    edit_events,
+                    matched,
+                    matches=_matches,
+                    needles=_needles,
+                    scratch_re=SCRATCH_RE,
+                )
+                if outcome is None:
                     continue
-                applicable += 1
-                if not matched:
-                    not_observed += 1
-                if any(
-                    action == "edit"
-                    and (
-                        _matches(rule, raw, target, object_id)
-                        or (not _needles(rule) and SCRATCH_RE.search(object_id or target))
-                    )
-                    and not target.startswith(("/tmp/", "tmp/"))
-                    for _sid, _step, action, raw, target, object_id, _outcome in events
-                ):
-                    violations += 1
+                applicable += outcome.applicable
+                not_observed += outcome.not_observed
+                violations += outcome.violations
             else:
-                applicable += 1
-                if not matched:
-                    not_observed += 1
+                outcome = evaluate_generic(matched)
+                applicable += outcome.applicable
+                not_observed += outcome.not_observed
 
         wording = "conditional" if re.search(r"(?i)\b(?:if|when|unless)\b", rule.text) else "direct"
         stale_paths = _stale_paths(rule, root)

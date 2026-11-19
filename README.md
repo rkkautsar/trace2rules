@@ -22,7 +22,8 @@ Status: beta. The output is a proposal, not an automatically applied `AGENTS.md`
 - `synthesis_models.py`: `Rule` and `Synthesis` schemas.
 - `synthesis_selection.py`: finding ranking, labeling, and selection.
 - `synthesis_prompt.py`: prompt rendering and LLM client.
-- `synthesize.py`: offline synthesis, caps, and runtime; the main workflow remains `run`/`report`.
+- `synthesis_offline.py`: deterministic rule construction and validation.
+- `synthesize.py`: runtime orchestration and output caps; the main workflow remains `run`/`report`.
 
 New heuristics should live in `mining/heuristics/<name>.py` and be exported from `mining/heuristics/__init__.py`.
 

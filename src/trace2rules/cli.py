@@ -466,6 +466,10 @@ def _report_command(
         Path | None,
         typer.Option("--out-dir", help="Write one prompt per repo into this directory."),
     ] = None,
+    min_support: Annotated[
+        int,
+        typer.Option("--min-support", min=1, max=100, help="Minimum sessions per prompt finding."),
+    ] = 3,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     if out_dir is not None and not prompt:
@@ -484,7 +488,14 @@ def _report_command(
         ).fetchall()
 
         from .cluster import exact_sequences, mine as mine_friction
-        from .synthesize import EXACT_LENGTHS, _prompt, annotate_findings, label_summary, select_findings
+        from .synthesize import (
+            EXACT_LENGTHS,
+            _finding_confidence,
+            _prompt,
+            annotate_findings,
+            label_summary,
+            select_findings,
+        )
 
         mined = mine_friction(con, top=None if (repo or prompt) else top)
         findings = [
@@ -498,7 +509,7 @@ def _report_command(
                 exact_sequences(
                     con,
                     length=length,
-                    min_sessions=3,
+                    min_sessions=min_support,
                     top=500,
                     min_instances=2,
                     min_lift=1.5,
@@ -516,8 +527,16 @@ def _report_command(
             chunks: list[str] = []
             for repo_name, _count in repo_rows:
                 selected_findings = annotate_findings(
-                    con, select_findings(exact, mined, repo_name)
+                    con,
+                    select_findings(
+                        exact, mined, repo_name, min_sessions=min_support
+                    ),
                 )
+                selected_findings = [
+                    finding
+                    for finding in selected_findings
+                    if _finding_confidence(finding) != "low"
+                ]
                 existing = (
                     audit_payload(con, repo_name, agent_paths)
                     if agent_paths
@@ -593,6 +612,10 @@ def _run_command(
         Path | None,
         typer.Option("--out-dir", help="Write one prompt per detected repo."),
     ] = None,
+    min_support: Annotated[
+        int,
+        typer.Option("--min-support", min=1, max=100, help="Minimum sessions per prompt finding."),
+    ] = 3,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     _ensure_local_sessions(db, source, limit)
@@ -602,6 +625,7 @@ def _run_command(
         prompt=True,
         agents=agents,
         out_dir=out_dir,
+        min_support=min_support,
         db=db,
     )
 

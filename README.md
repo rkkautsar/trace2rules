@@ -240,6 +240,7 @@ trace2rules audit --agents AGENTS.md
 trace2rules audit --agents AGENTS.md --commit HEAD --json
 trace2rules audit --agents AGENTS.md --prompt
 trace2rules report --prompt --agents AGENTS.md
+trace2rules report --prompt --min-support 5
 trace2rules run --out-dir reports/ --agents AGENTS.md
 ```
 
@@ -253,7 +254,7 @@ trace2rules report > /tmp/trace2rules-report.json
 trace2rules report --prompt > /tmp/trace2rules-prompt.txt
 ```
 
-`report` emits JSON with repo/session/instance counts, findings, exact sequences, and patterns. For the main agent workflow, `report --prompt` emits the evidence prompt directly; feed that prompt to a fresh agent and let it write the rules. The prompt includes findings, support, windows, and source references, and excludes orientation/hotspot noise. Each finding carries `sessions`, `instances`, `confidence`, `tokens`, `evidence`, and detector-specific fields such as `lift`, `rework`, `setup_tax`, `cost`, and `paired_instances`. Prefer `high`/`medium` confidence findings; treat `low` as a lead, not proof.
+`report` emits JSON with repo/session/instance counts, findings, exact sequences, and patterns. For the main agent workflow, `report --prompt` emits the evidence prompt directly; feed that prompt to a fresh agent and let it write the rules. The prompt includes findings, support, windows, and source references, and excludes orientation/hotspot noise. Each finding carries `sessions`, `instances`, `confidence`, `tokens`, `evidence`, and detector-specific fields such as `lift`, `rework`, `setup_tax`, `cost`, and `paired_instances`. Prefer `high`/`medium` confidence findings; treat `low` as a lead, not proof. The report prompt is bounded to the top 10 findings, 3 window events per finding, and 40 existing rules.
 
 The calling agent can then write `AGENTS.md` rules from that evidence without invoking `trace2rules synthesize` or configuring an LLM key.
 

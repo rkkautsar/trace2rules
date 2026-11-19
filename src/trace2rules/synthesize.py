@@ -337,6 +337,40 @@ def _make_client(key: str, base: str | None, model: str):
     return client, model
 
 
+PROMPT_FINDINGS = 10
+PROMPT_WINDOW_EVENTS = 3
+
+
+def _clip(value: object, width: int = 300) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+def _compact_window(window: tuple[dict, ...]) -> list[dict]:
+    return [
+        {
+            key: _clip(value, 240) if isinstance(value, str) else value
+            for key, value in event.items()
+        }
+        for event in window[:PROMPT_WINDOW_EVENTS]
+    ]
+
+
+def _compact_existing(existing: dict | None) -> dict | None:
+    if not existing:
+        return existing
+    compact = dict(existing)
+    compact["rules"] = [
+        {
+            **rule,
+            "text": _clip(rule.get("text", ""), 240),
+            "examples": rule.get("examples", [])[:1],
+        }
+        for rule in existing.get("rules", [])[:40]
+    ]
+    return compact
+
+
 def _finding_confidence(finding: Finding) -> str:
     if finding.sessions >= 10 and finding.paired_instances >= 2:
         return "high"
@@ -375,9 +409,9 @@ def _prompt(
             "cause": finding.cause,
             "cause_support_sessions": finding.cause_support_sessions,
             "side": finding.side,
-            "window": list(finding.window),
+            "window": _compact_window(finding.window),
         }
-        for index, finding in enumerate(findings)
+        for finding in findings[:PROMPT_FINDINGS]
         ]
     )
     return f"""Repo: {repo}
@@ -392,7 +426,7 @@ Command/bootstrap evidence (JSON):
 {json.dumps(redact_value(context or {}), indent=2)}
 
 Existing AGENTS.md rules and audit (JSON):
-{json.dumps(redact_value(existing or {}), indent=2)}
+{json.dumps(redact_value(_compact_existing(existing) or {}), indent=2)}
 
 Write AGENTS.md rules for this repository. Requirements:
 - Emit 0-{max_rules} declarative rules. Do not fill the quota: fewer rules are better, and zero is valid when the evidence does not support a rule. Do not emit task-specific issue descriptions.

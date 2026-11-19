@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
@@ -43,7 +43,7 @@ IMPERATIVE_RE = re.compile(
     r"(?i)^(?:run|use|add|keep|avoid|do not|don't|never|make|update|ensure|"
     r"check|prefer|follow|change|remove|write|read|test|install|validate|set|"
     r"put|create|delete|preserve|scope|inspect|handle|implement|move|rename|"
-    r"include|exclude|split|return|raise|call|refactor|document|maintain|"
+    r"include|exclude|split|return|raise|call|refactor|document|maintain|commit|"
     r"verify|confirm|open|close|edit|format|reduce|simplify)\b"
 )
 RULE_CUE_RE = re.compile(r"(?i)\b(must|should|required|never|avoid|do not|don't)\b")
@@ -92,6 +92,7 @@ class RuleAudit:
     confidence: str = "none"
     wording: str = "direct"
     stale_paths: tuple[str, ...] = ()
+    test_outcomes: dict[str, int] = field(default_factory=dict)
     examples: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
@@ -121,6 +122,7 @@ class RuleAudit:
             "confidence": self.confidence,
             "wording": self.wording,
             "stale_paths": list(self.stale_paths),
+            "test_outcomes": dict(self.test_outcomes),
             "examples": list(self.examples),
             "enforceable": self.enforceable,
             "enforcement": self.enforcement,
@@ -208,6 +210,14 @@ def parse_agents(path: str | Path) -> list[AgentRule]:
     return parse_agents_text(file_path.read_text(encoding="utf-8"), source)
 
 
+def _split_clauses(text: str) -> list[str]:
+    return [
+        clause.strip()
+        for clause in re.split(r"(?<=[.!?])\s+(?=[A-Z`])", text)
+        if len(clause.strip()) >= 12
+    ]
+
+
 def parse_agents_text(text: str, source: str = "AGENTS.md") -> list[AgentRule]:
     rules: list[AgentRule] = []
     seen: set[tuple[str, str]] = set()
@@ -281,20 +291,21 @@ def parse_agents_text(text: str, source: str = "AGENTS.md") -> list[AgentRule]:
                 ):
                     continue
                 text = stripped
-        if not text or len(text) < 12 or OPTIONAL_RULE_RE.search(text):
-            continue
-        if (
-            not IMPERATIVE_RE.search(text)
-            and not RULE_CUE_RE.search(text)
-            and not COMMAND_RE.search(text)
-        ):
-            continue
-        rule = _make_rule(text, source, line_no, section)
-        key = _dedupe_key(rule)
-        if key in seen:
-            continue
-        seen.add(key)
-        rules.append(rule)
+        for clause in _split_clauses(text):
+            if OPTIONAL_RULE_RE.search(clause):
+                continue
+            if (
+                not IMPERATIVE_RE.search(clause)
+                and not RULE_CUE_RE.search(clause)
+                and not COMMAND_RE.search(clause)
+            ):
+                continue
+            rule = _make_rule(clause, source, line_no, section)
+            key = _dedupe_key(rule)
+            if key in seen:
+                continue
+            seen.add(key)
+            rules.append(rule)
     return rules
 
 
@@ -740,6 +751,8 @@ def audit_agents(
         failed_validation = 0
         violations = 0
         not_observed = 0
+        undecided_count = 0
+        test_outcomes: dict[str, int] = {}
         examples: list[str] = []
         scope = _infer_scope(rule, root)
         for events in sessions.values():
@@ -754,6 +767,13 @@ def audit_agents(
                     for step, target in edit_events
                     if any(_path_matches(path, target) for path in scope)
                 ]
+            matched = any(
+                _matches(rule, raw, target, object_id)
+                for _sid, _step, action, raw, target, object_id, _outcome in events
+                if action == "exec"
+            )
+            if matched and rule.category != "test_command":
+                observed += 1
             if rule.category == "test_command":
                 # Documentation-only edits do not create a validation opportunity.
                 edit_events = [
@@ -763,53 +783,60 @@ def audit_agents(
                 edit_events = _scoped_test_edits(rule, edit_events)
                 if not edit_events:
                     continue
-            edit_steps = [step for step, _target in edit_events]
-            matched = any(
-                (
-                    action == "exec"
-                    and _matches(rule, raw, target, object_id)
-                )
-                if rule.category == "test_command" and rule.commands
-                else (
-                    _matches(rule, raw, target, object_id)
-                    or (
-                        rule.category == "test_command"
-                        and not rule.commands
-                        and action == "exec"
-                        and VALIDATION_RE.search(raw)
+                edit_steps = [step for step, _target in edit_events]
+                last_edit = max(edit_steps)
+
+                def exact(event: tuple) -> bool:
+                    _sid, _step, action, raw, target, object_id, _outcome = event
+                    return action == "exec" and (
+                        _matches(rule, raw, target, object_id)
+                        if rule.commands
+                        else bool(VALIDATION_RE.search(raw))
                     )
-                )
-                for _sid, _step, action, raw, target, object_id, _outcome in events
-            )
-            if matched:
-                observed += 1
-                for _sid, _step, action, raw, target, _object, _outcome in events:
-                    if action == "exec" and _matches(rule, raw, target, _object):
-                        examples.append(raw[:240])
-                        break
-            if rule.category == "test_command":
+
+                def family(event: tuple) -> bool:
+                    if event[2] != "exec":
+                        return False
+                    raw = _normalize_command(event[3])
+                    if not rule.commands:
+                        return bool(VALIDATION_RE.search(raw))
+                    for command in rule.commands:
+                        tokens = _normalize_command(command).split()
+                        if not tokens:
+                            continue
+                        prefix = tokens[:2] if tokens[0] in {"cargo", "git", "uv", "npm", "pnpm"} else tokens[:1]
+                        if _argv_match(" ".join(prefix), raw):
+                            return True
+                    return False
+
+                post_exact = [event for event in events if event[1] > last_edit and exact(event)]
+                post_any = [event for event in events if event[1] > last_edit and family(event)]
+                pre_any = [event for event in events if event[1] <= last_edit and (exact(event) or family(event))]
+                matched = any(exact(event) for event in events)
+                if matched:
+                    observed += 1
                 applicable += 1
                 if not matched:
                     not_observed += 1
-                last_edit = max(edit_steps)
-                matching = [
-                    (step, outcome, raw, target, object_id)
-                    for _sid, step, action, raw, target, object_id, outcome in events
-                    if action == "exec"
-                    and step > last_edit
-                    and (
-                        _matches(rule, raw, target, object_id)
-                        if rule.commands
-                        else VALIDATION_RE.search(raw)
-                    )
-                ]
-                examples.extend(raw[:240] for _step, _outcome, raw, _target, _object in matching[:2])
-                if any(outcome == "ok" for _step, outcome, *_rest in matching):
-                    compliant += 1
+                if post_exact:
+                    if any(event[6] == "ok" for event in post_exact):
+                        compliant += 1
+                        outcome = "exact_form"
+                    else:
+                        violations += 1
+                        outcome = "failed_test"
+                        failed_validation += 1
+                elif post_any:
+                    undecided_count += 1
+                    outcome = "alternate_form"
+                elif pre_any:
+                    violations += 1
+                    outcome = "before_final_edit"
                 else:
                     violations += 1
-                    if any(outcome in ("err", "timeout") for _step, outcome, *_rest in matching):
-                        failed_validation += 1
+                    outcome = "no_test"
+                test_outcomes[outcome] = test_outcomes.get(outcome, 0) + 1
+                examples.extend(event[3][:240] for event in (post_exact or post_any or pre_any)[:2])
             elif rule.category == "read_hygiene":
                 reads, whole = _read_hygiene(events, root, rule)
                 if not reads:
@@ -884,7 +911,8 @@ def audit_agents(
         undecided = 0
         if rule.category == "test_command":
             followed = compliant
-            violations = max(applicable - compliant, 0)
+            undecided = undecided_count
+            violations = max(applicable - followed - undecided, 0)
         elif rule.category in {"hook_bypass", "read_hygiene"}:
             followed = compliant
             undecided = max(applicable - followed - violations, 0)
@@ -965,6 +993,7 @@ def audit_agents(
         audit.confidence = confidence
         audit.wording = wording
         audit.stale_paths = stale_paths
+        audit.test_outcomes = test_outcomes
         audit.examples = tuple(dict.fromkeys(examples))[:3]
     return audits
 

@@ -625,3 +625,69 @@ def test_enforcement_accepts_extra_args_and_runner_wrappers(tmp_path: Path) -> N
     clippy_rule = parse_agents_text("## Validation\n\n- Run `cargo clippy --all --all-targets -- -D warnings` before finishing.\n")[0]
     assert discover_enforcement(tmp_path, fmt_rule)[0] == "configured"
     assert discover_enforcement(tmp_path, clippy_rule)[0] == "configured"
+
+
+def test_parse_agents_splits_atomic_clauses(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Git\n\n- Commit frequently. Do NOT use `--no-verify`.\n")
+    rules = parse_agents(path)
+    assert [rule.text for rule in rules] == ["Commit frequently.", "Do NOT use `--no-verify`."]
+
+
+def test_test_outcomes_distinguish_evidence(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("- Run `pytest tests/test_api.py` after editing.\n")
+    db = tmp_path / "outcomes.duckdb"
+
+    def edit() -> ToolCall:
+        return ToolCall("Edit", "src/api.py", action_type="edit", target="src/api.py")
+
+    def run(raw: str) -> ToolCall:
+        return ToolCall("Bash", raw, action_type="exec", is_error=False)
+
+    write_sessions(
+        db,
+        [
+            Session("exact", "acme/repo", calls=[edit(), run("pytest tests/test_api.py")]),
+            Session("early", "acme/repo", calls=[run("pytest tests/test_api.py"), edit()]),
+            Session("alternate", "acme/repo", calls=[edit(), run("pytest -q")]),
+            Session("none", "acme/repo", calls=[edit()]),
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.test_outcomes == {
+        "exact_form": 1,
+        "before_final_edit": 1,
+        "alternate_form": 1,
+        "no_test": 1,
+    }
+    assert (audit.followed, audit.undecided, audit.violation_sessions) == (1, 1, 2)
+
+
+def test_alternate_form_requires_same_command_family(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Validation\n\n- Run `cargo fmt --all` before finishing.\n")
+    db = tmp_path / "family.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[
+                    ToolCall("Edit", "src/lib.rs", action_type="edit"),
+                    ToolCall("Bash", "cargo test -p x", action_type="exec", is_error=False),
+                ],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.test_outcomes == {"no_test": 1}

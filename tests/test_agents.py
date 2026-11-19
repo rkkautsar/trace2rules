@@ -780,3 +780,28 @@ def test_ordering_checks_submodules_before_tests(tmp_path: Path) -> None:
         con.close()
     assert audit.category == "ordering"
     assert (audit.opportunities, audit.followed, audit.violation_sessions) == (2, 1, 1)
+
+
+def test_rule_conflicts_detect_opposite_commands() -> None:
+    from trace2rules.agents import _rule_conflicts
+
+    rules = parse_agents_text(
+        "## Commands\n\n- Use `gh pr view` for pull requests.\n- Never use `gh pr view` in this repository.\n"
+    )
+    conflicts = _rule_conflicts(rules)
+    assert conflicts
+    assert "contradictory command usage" in conflicts[0]["reason"]
+
+
+def test_required_status_is_not_inferred_from_ci_presence(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Validation\n\n- Run `cargo fmt --all`.\n")
+    workflow = tmp_path / ".github" / "workflows"
+    workflow.mkdir(parents=True)
+    (workflow / "ci.yml").write_text(
+        "jobs:\n  test:\n    steps:\n      - run: cargo fmt --all -- --check\n"
+    )
+    audit = audit_agents(connect(tmp_path / "req.duckdb"), "acme/repo", parse_agents(path), root=tmp_path)[0]
+    assert audit.enforcement_status == "configured"
+    assert audit.required is None
+    assert "branch protection" in audit.required_reason

@@ -81,6 +81,8 @@ class RuleAudit:
     scope: str = "repository"
     existing_enforcement: str = ""
     enforcement_status: str = "unknown"
+    required: bool | None = None
+    required_reason: str = "not checked"
     detector: str = ""
     measurable: bool = False
     coverage: str = "unmeasured"
@@ -111,6 +113,8 @@ class RuleAudit:
             "scope": self.scope,
             "existing_enforcement": self.existing_enforcement,
             "enforcement_status": self.enforcement_status,
+            "required": self.required,
+            "required_reason": self.required_reason,
             "detector": self.detector,
             "measurable": self.measurable,
             "coverage": self.coverage,
@@ -1108,7 +1112,73 @@ def audit_agents(
         audit.stale_paths = stale_paths
         audit.test_outcomes = test_outcomes
         audit.examples = tuple(dict.fromkeys(examples))[:3]
+        if status == "configured":
+            audit.required = None
+            audit.required_reason = "CI presence only; required checks need branch protection or rulesets"
+        elif status == "missing":
+            audit.required = False
+            audit.required_reason = "no enforcement found"
+        else:
+            audit.required = None
+            audit.required_reason = "not enough repository evidence"
     return audits
+
+
+def _positive_commands(text: str) -> set[str]:
+    return {
+        _normalize_command(command)
+        for command in re.findall(r"(?i)\b(?:use|run|prefer)\s+`([^`]+)`", text)
+    }
+
+
+def _negative_commands(text: str) -> set[str]:
+    return {
+        _normalize_command(command)
+        for command in re.findall(
+            r"(?i)\b(?:never|do not|don't|avoid)\s+(?:use\s+)?`([^`]+)`",
+            text,
+        )
+    }
+
+
+def _rule_conflicts(rules: list[AgentRule]) -> list[dict[str, str]]:
+    conflicts: list[dict[str, str]] = []
+    for index, rule in enumerate(rules):
+        positive = _positive_commands(rule.text)
+        negative = _negative_commands(rule.text)
+        if positive:
+            for other in rules[index + 1:]:
+                overlap = positive & _negative_commands(other.text)
+                if overlap:
+                    conflicts.append(
+                        {
+                            "a": rule.text,
+                            "b": other.text,
+                            "reason": f"contradictory command usage: {sorted(overlap)[0]}",
+                        }
+                    )
+        if negative:
+            for other in rules[index + 1:]:
+                overlap = negative & _positive_commands(other.text)
+                if overlap:
+                    conflicts.append(
+                        {
+                            "a": rule.text,
+                            "b": other.text,
+                            "reason": f"contradictory command usage: {sorted(overlap)[0]}",
+                        }
+                    )
+        if re.search(r"(?i)\b(?:read lots|read more|prefer reading|read the codebase)\b", rule.text):
+            for other in rules[index + 1:]:
+                if other.category == "read_hygiene" and re.search(r"(?i)\b(?:avoid|do not|never|whole[- ]file)\b", other.text):
+                    conflicts.append(
+                        {
+                            "a": rule.text,
+                            "b": other.text,
+                            "reason": "read-more vs read-restriction",
+                        }
+                    )
+    return conflicts
 
 
 def available_text(existing: str) -> str:
@@ -1177,6 +1247,7 @@ def audit_payload(
         "sessions_with_timestamps": coverage[1],
         "sessions": coverage[0],
         "filtered_sessions": filtered_sessions,
+        "conflicts": _rule_conflicts(rules),
         "rules": [
             audit.as_dict()
             for audit in audit_agents(

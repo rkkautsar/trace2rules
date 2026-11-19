@@ -39,15 +39,29 @@ Then give `reports/*.md` to your agent to synthesize the rules. `run` ingests lo
 
 ## Example finding
 
-On SWC (Rust), auditing the repository’s real `AGENTS.md` against 188 local sessions found 30 rules. The audit separates opportunities from unmeasured policies:
+On SWC (Rust), auditing the repository’s real `AGENTS.md` against 188 local sessions found 66 rules, 9 measured, 1 partial, and 56 unmeasured:
 
-| Rule | Coverage | Opportunities | Followed | Violations | Undecided | Confidence | Enforcement |
-|---|---|---:|---:|---:|---:|---|---|
-| `Commit your work ... Do NOT use --no-verify` | partial | 14 | 13 | 1 | 0 | low | missing |
-| `Prefer fixture tests over inline (#[test]) tests` | unmeasured | 0 | 0 | 0 | 0 | none | missing |
-| `Use gh CLI for github.com data` | unmeasured | 0 | 0 | 0 | 0 | none | configured in `.github/workflows/CI.yml` |
+| Rule | Coverage | Opportunities | Followed | Violations | Undecided | Confidence | Enforcement | Required |
+|---|---|---:|---:|---:|---:|---|---|---|
+| Read source before editing | measured | 185 | 121 | 64 | 0 | high | unknown | unknown |
+| Verify assumptions by reading source | measured | 185 | 121 | 64 | 0 | high | unknown | unknown |
+| `git commit` only after `git add` | measured | 14 | 8 | 6 | 0 | low | missing | no |
+| Submodule update before tests | measured | 32 | 0 | 32 | 0 | low | missing | no |
+| `cargo test -p <crate>` | measured | 171 | 5 | 158 | 8 | high | missing | no |
+| `cargo fmt --all` | measured | 185 | 0 | 185 | 0 | high | configured | unknown |
+| `cargo clippy ...` | measured | 185 | 0 | 185 | 0 | high | configured | unknown |
+| `--no-verify` guard | partial | 14 | 13 | 1 | 0 | low | missing | no |
 
-The commit rule is only partially measurable: 14 sessions ran `git commit`, 13 avoided `--no-verify`, and one bypassed the hook. The fixture rule needs test-content classification, which the tool-event schema does not expose; path shape alone is not enough to distinguish fixture tests from inline tests. The `gh` rule has no compliance detector, so its 32 observed mentions cannot be scored as compliance. The other 29 SWC rules remain unmeasured; the audit reports that gap instead of treating every unobserved session as a violation.
+Test evidence is also reported per rule, so `cargo test -p <crate>` is not just “5 followed”:
+
+```text
+no_test:           147
+before_final_edit:  11
+alternate_form:      8
+exact_form:          5
+```
+
+`cargo fmt` and `cargo clippy` are CI-configured but were never run locally. `configured` does not mean required: the branch rulesets do not define required status checks, so those two rules remain `required: unknown`.
 
 The same sessions produce suggested rules:
 

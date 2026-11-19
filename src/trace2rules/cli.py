@@ -743,7 +743,7 @@ def _audit_command(
     table = Table(title=f"AGENTS.md audit: {repo}")
     for column in (
         "Rule", "Category", "Observed", "Applicable", "Compliant",
-        "Violations", "Not observed", "Coverage", "Confidence", "Opportunities", "Followed", "Rate", "Existing enforcement", "Status",
+        "Violations", "Not observed", "Coverage", "Confidence", "Opportunities", "Followed", "Rate", "Existing enforcement", "Status", "Required",
     ):
         table.add_column(column)
     for rule in payload["rules"]:
@@ -762,8 +762,14 @@ def _audit_command(
             "-" if rule.get("rate") is None else f"{rule['rate']:.0%}",
             rule.get("existing_enforcement", "") or "-",
             rule.get("enforcement_status", "unknown"),
+            "unknown" if rule.get("required") is None else str(rule["required"]).lower(),
         )
     console.print(table)
+    for conflict in payload.get("conflicts", []):
+        console.print(
+            f"[yellow]Conflict:[/yellow] {conflict['reason']}: "
+            f"{conflict['a'][:80]} <> {conflict['b'][:80]}"
+        )
     if payload.get("warning"):
         console.print(f"[yellow]{payload['warning']}[/yellow]")
     for rule in payload["rules"]:

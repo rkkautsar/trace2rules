@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import duckdb
 
-from trace2rules.detectors import _context_advice, hotspots, orientation
+from trace2rules.detectors import (
+    _context_advice,
+    hotspots,
+    low_validation,
+    orientation,
+    premature_completion,
+    site_edit_mismatch,
+)
 
 
 def test_hotspots_ignore_readme_and_docs() -> None:
@@ -41,6 +48,43 @@ def test_orientation_is_repo_side_not_agent_friction() -> None:
     assert len(findings) == 1
     assert findings[0].side == "repo"
     assert findings[0].recommendation == ""
+
+
+def test_validation_and_site_metrics_use_sessions_and_tokens(monkeypatch) -> None:
+    import trace2rules.detectors as detectors_module
+
+    monkeypatch.setattr(detectors_module, "_repo_window", lambda *args, **kwargs: ())
+    con = duckdb.connect()
+    con.execute("CREATE TABLE sessions (repo VARCHAR, session_id VARCHAR)")
+    con.execute(
+        "CREATE TABLE tool_events (repo VARCHAR, session_id VARCHAR, step_idx INTEGER, "
+        "action_type VARCHAR, raw_target VARCHAR, object_id VARCHAR, outcome VARCHAR, "
+        "approx_out_tokens INTEGER, error_site VARCHAR, segment_idx INTEGER)"
+    )
+    con.executemany(
+        "INSERT INTO sessions VALUES (?, ?)",
+        [("acme/repo", f"s{i}") for i in range(3)],
+    )
+    con.executemany(
+        "INSERT INTO tool_events VALUES ('acme/repo', ?, ?, 'edit', ?, ?, 'ok', 10, '', 0)",
+        [(f"s{i}", 1, "src/a.py", "src/a.py") for i in range(3)],
+    )
+    for fn in (premature_completion, low_validation):
+        finding = fn(con)[0]
+        assert finding.sessions == 3
+        assert finding.tokens == 30
+
+    con.execute(
+        "INSERT INTO tool_events VALUES "
+        "('acme/repo', 's0', 10, 'exec', '', '', 'err', 7, 'src/a.py:1', 0),"
+        "('acme/repo', 's0', 11, 'edit', 'src/b.py', 'src/b.py', 'ok', 11, '', 0),"
+        "('acme/repo', 's0', 12, 'exec', '', '', 'err', 5, 'src/a.py:2', 0),"
+        "('acme/repo', 's0', 13, 'edit', 'src/b.py', 'src/b.py', 'ok', 13, '', 0)"
+    )
+    finding = site_edit_mismatch(con)[0]
+    assert finding.sessions == 1
+    assert finding.tokens == 12
+    assert "2 traceback sites" in finding.detail
 
 
 def test_context_advice_distinguishes_test_output_from_repo_entrypoint() -> None:

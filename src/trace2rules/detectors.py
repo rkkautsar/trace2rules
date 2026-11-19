@@ -22,6 +22,14 @@ from .session_signals import (
     repeated_reads,
 )
 
+_TEST_OR_SCRATCH_RE = re.compile(
+    r"(?i)(^|/)(tests?|specs?|__tests__)(/|$)"
+    r"|(^|/)(test_|conftest\.|.*_test\.|.*\.spec\.)"
+    r"|(^|/)(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)"
+    r"|/(site-packages|dist-packages)/"
+)
+
+
 def hotspots(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     query = """
         WITH per_session AS (
@@ -255,7 +263,7 @@ def noop_retries(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> li
             FROM tool_events
         )
         SELECT repo, count(*) AS occurrences, count(DISTINCT session_id) AS sessions,
-               any_value(raw_target) AS exemplar
+               any_value(raw_target) AS exemplar, sum(approx_out_tokens) AS tokens
         FROM x
         WHERE is_error AND next_action = 'exec' AND next_target = raw_target
         GROUP BY 1
@@ -269,13 +277,13 @@ def noop_retries(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> li
             repo=repo,
             title=exemplar or "repeated failing command",
             sessions=sessions,
-            tokens=occurrences,
-            detail=f"{occurrences} unchanged retries",
+            tokens=int(tokens or 0),
+            detail=f"{occurrences} unchanged retries; ~{int(tokens or 0):,} tokens",
             side="agent",
             recommendation="A failing command repeated unchanged will fail again; change the selector/input or inspect state before rerunning.",
             window=_repo_window(con, repo, "is_error AND raw_target = ?", (exemplar or "",)),
         )
-        for repo, occurrences, sessions, exemplar in con.execute(query).fetchall()
+        for repo, occurrences, sessions, exemplar, tokens in con.execute(query).fetchall()
     ]
 
 
@@ -284,10 +292,16 @@ def premature_completion(con: duckdb.DuckDBPyConnection, limit: int | None = Non
         WITH last_edit AS (
             SELECT session_id, max(step_idx) AS step
             FROM tool_events WHERE action_type = 'edit' GROUP BY 1
+        ),
+        session_tokens AS (
+            SELECT session_id, sum(approx_out_tokens) AS tokens
+            FROM tool_events GROUP BY 1
         )
-        SELECT s.repo, count(*) AS sessions, sum(l.step) AS edit_steps
+        SELECT s.repo, count(*) AS sessions,
+               coalesce(sum(t.tokens), 0) AS tokens
         FROM sessions s
         JOIN last_edit l USING (session_id)
+        LEFT JOIN session_tokens t USING (session_id)
         WHERE NOT EXISTS (
             SELECT 1 FROM tool_events e
             WHERE e.session_id = s.session_id
@@ -305,13 +319,13 @@ def premature_completion(con: duckdb.DuckDBPyConnection, limit: int | None = Non
             repo=repo,
             title="session ends after an edit without validation",
             sessions=sessions,
-            tokens=int(edit_steps or 0),
-            detail=f"{sessions} sessions; no successful exec after last edit",
+            tokens=int(tokens or 0),
+            detail=f"{sessions} sessions; no successful exec after last edit; ~{int(tokens or 0):,} tokens",
             side="agent",
             recommendation="After the final edit, run the narrowest relevant test or lint command and confirm it passes before finishing.",
             window=_repo_window(con, repo, "action_type = 'edit'"),
         )
-        for repo, sessions, edit_steps in con.execute(query).fetchall()
+        for repo, sessions, tokens in con.execute(query).fetchall()
     ]
 
 
@@ -320,10 +334,16 @@ def low_validation(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
         WITH first_edit AS (
             SELECT session_id, min(step_idx) AS step
             FROM tool_events WHERE action_type = 'edit' GROUP BY 1
+        ),
+        session_tokens AS (
+            SELECT session_id, sum(approx_out_tokens) AS tokens
+            FROM tool_events GROUP BY 1
         )
-        SELECT s.repo, count(*) AS sessions, sum(f.step) AS edit_steps
+        SELECT s.repo, count(*) AS sessions,
+               coalesce(sum(t.tokens), 0) AS tokens
         FROM sessions s
         JOIN first_edit f USING (session_id)
+        LEFT JOIN session_tokens t USING (session_id)
         WHERE NOT EXISTS (
             SELECT 1 FROM tool_events e
             WHERE e.session_id = s.session_id
@@ -341,48 +361,65 @@ def low_validation(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
             repo=repo,
             title="edits without a validation command",
             sessions=sessions,
-            tokens=int(edit_steps or 0),
-            detail=f"{sessions} sessions; no test/lint exec after first edit",
+            tokens=int(tokens or 0),
+            detail=f"{sessions} sessions; no test/lint exec after first edit; ~{int(tokens or 0):,} tokens",
             side="agent",
             recommendation="After changing code, run the narrowest test/lint command that exercises the change.",
             window=_repo_window(con, repo, "action_type = 'edit'"),
         )
-        for repo, sessions, edit_steps in con.execute(query).fetchall()
+        for repo, sessions, tokens in con.execute(query).fetchall()
     ]
 
 
 def site_edit_mismatch(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     rows = con.execute(
         """
-        SELECT e.repo, e.session_id, e.step_idx, e.error_site,
-               lead(e.action_type) OVER (PARTITION BY e.session_id ORDER BY e.step_idx) AS next_action,
-               lead(e.object_id) OVER (PARTITION BY e.session_id ORDER BY e.step_idx) AS next_object
-        FROM tool_events e
-        WHERE e.error_site <> ''
+        SELECT repo, session_id, step_idx, error_site, approx_out_tokens,
+               next_action, next_object
+        FROM (
+            SELECT e.repo, e.session_id, e.step_idx, e.error_site, e.approx_out_tokens,
+                   lead(e.action_type) OVER (PARTITION BY e.session_id ORDER BY e.step_idx) AS next_action,
+                   lead(e.object_id) OVER (PARTITION BY e.session_id ORDER BY e.step_idx) AS next_object
+            FROM tool_events e
+        ) e
+        WHERE error_site <> ''
         """
     ).fetchall()
     counts: dict[str, int] = {}
+    sessions_by_repo: dict[str, set[str]] = {}
+    tokens_by_repo: dict[str, int] = {}
     examples: dict[str, str] = {}
-    for repo, session, step, site, next_action, next_object in rows:
+    for repo, session, step, site, tokens, next_action, next_object in rows:
         if next_action != "edit" or not next_object:
             continue
         site_file = site.rsplit(":", 1)[0]
+        if _TEST_OR_SCRATCH_RE.search(site_file):
+            continue
         if site_file.rsplit("/", 1)[-1] == next_object.rsplit("/", 1)[-1]:
             continue
         counts[repo] = counts.get(repo, 0) + 1
+        sessions_by_repo.setdefault(repo, set()).add(session)
+        tokens_by_repo[repo] = tokens_by_repo.get(repo, 0) + int(tokens or 0)
         examples.setdefault(repo, f"{site} -> {next_object}")
     findings = [
         Finding(
             kind="site_edit_mismatch",
             repo=repo,
             title=examples.get(repo, "traceback site differs from edited file"),
-            sessions=count,
-            tokens=count,
-            detail=f"{count} traceback sites followed by an edit to a different file",
+            sessions=len(sessions_by_repo.get(repo, set())),
+            tokens=tokens_by_repo.get(repo, 0),
+            detail=(
+                f"{counts[repo]} traceback sites in "
+                f"{len(sessions_by_repo.get(repo, set()))} sessions followed by an edit to a different file"
+            ),
             side="agent",
             recommendation="Edit the file named by the traceback or failing assertion; do not patch a different layer or the reproducer.",
         )
-        for repo, count in sorted(counts.items(), key=lambda item: item[1], reverse=True)
+        for repo in sorted(
+            counts,
+            key=lambda key: (len(sessions_by_repo.get(key, set())), tokens_by_repo.get(key, 0)),
+            reverse=True,
+        )
     ]
     return findings[:limit] if limit is not None else findings
 

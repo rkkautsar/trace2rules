@@ -20,6 +20,7 @@ from trace2rules.mining import (
     orientation,
     premature_completion,
     site_edit_mismatch,
+    regressions_after_green,
 )
 from trace2rules.mining.core import _context_advice
 
@@ -299,6 +300,27 @@ def test_dependency_drift_flags_manifest_edits_without_install(monkeypatch) -> N
     finding = dependency_drift(con)[0]
     assert finding.sessions == 2
     assert "manifest/lockfile" in finding.detail
+
+
+def test_test_regressions_require_a_green_baseline() -> None:
+    con = duckdb.connect()
+    con.execute(
+        "CREATE TABLE test_results (session_id VARCHAR, repo VARCHAR, step_idx INTEGER, "
+        "command VARCHAR, total INTEGER, passed INTEGER, failed INTEGER, errors INTEGER, "
+        "skipped INTEGER, outcome VARCHAR, approx_out_tokens INTEGER)"
+    )
+    for session in ("s0", "s1"):
+        con.execute(
+            "INSERT INTO test_results VALUES (?, 'acme/repo', 1, 'pytest', 5, 5, 0, 0, 0, 'ok', 10)",
+            [session],
+        )
+        con.execute(
+            "INSERT INTO test_results VALUES (?, 'acme/repo', 2, 'pytest', 5, 4, 1, 0, 0, 'err', 10)",
+            [session],
+        )
+    finding = regressions_after_green(con)[0]
+    assert finding.sessions == 2
+    assert "regression" in finding.title
 
 
 def test_context_advice_distinguishes_test_output_from_repo_entrypoint() -> None:

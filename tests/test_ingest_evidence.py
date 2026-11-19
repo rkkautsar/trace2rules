@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from trace2rules.ingest.test_results import parse_test_result
 from trace2rules.ingest.normalize import (
     _error_detail,
     _error_site,
@@ -7,6 +8,53 @@ from trace2rules.ingest.normalize import (
     _is_control_target,
     _observation_cause,
 )
+
+
+def test_parse_test_result_counts_pytest_and_jest() -> None:
+    assert parse_test_result(
+        "uv run pytest -q", "3 failed, 10 passed, 2 skipped in 1.2s"
+    ) == (15, 10, 3, 0, 2)
+    assert parse_test_result(
+        "npm test", "Tests: 1 failed, 2 skipped, 8 passed, 11 total"
+    ) == (11, 8, 1, 0, 2)
+    assert parse_test_result("ls", "3 passed") is None
+
+
+def test_writer_persists_test_summary(tmp_path) -> None:
+    from trace2rules.ingest import write_sessions
+    from trace2rules.models import Session, ToolCall
+
+    db = tmp_path / "tests.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s1",
+                "acme/repo",
+                calls=[
+                    ToolCall(
+                        "Bash",
+                        "uv run pytest -q",
+                        observation="3 failed, 10 passed, 2 skipped in 1.2s",
+                        action_type="exec",
+                        target="uv run pytest -q",
+                        verb="pytest",
+                        object_id="pytest",
+                        is_error=True,
+                    )
+                ],
+            )
+        ],
+    )
+    from trace2rules.db import connect
+
+    con = connect(db)
+    try:
+        assert con.execute(
+            "SELECT total, passed, failed, errors, skipped FROM test_results"
+        ).fetchone() == (15, 10, 3, 0, 2)
+    finally:
+        con.close()
 
 
 def test_search_exit_one_is_empty_not_error() -> None:

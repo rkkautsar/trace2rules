@@ -3,10 +3,6 @@ from __future__ import annotations
 import math
 import re
 
-from rich.console import Console
-from rich.markup import escape
-from rich.table import Table
-
 from ..mining.models import Finding
 
 GENERATED_VERIFIER_RE = re.compile(
@@ -78,6 +74,7 @@ def _candidate_score(finding: Finding) -> float:
         "no_reproduction": 1.3,
         "false_completion": 1.8,
         "correction_loop": 1.8,
+        "test_regression": 1.9,
     }
     support = max(finding.sessions, 1)
     impact = max(finding.tokens, finding.cost, 1)
@@ -118,6 +115,7 @@ def select_findings(
         "no_reproduction",
         "false_completion",
         "correction_loop",
+        "test_regression",
     ):
         candidates.extend(
             finding
@@ -177,27 +175,6 @@ def select_findings(
 def _truncate(text: str, width: int) -> str:
     text = " ".join(text.split())
     return text if len(text) <= width else text[: width - 1] + "…"
-
-
-def print_findings(findings: list[Finding], console: Console | None = None) -> None:
-    console = console or Console()
-    table = Table(title="Ranked friction findings", header_style="bold", expand=True)
-    table.add_column("#", width=3)
-    table.add_column("Kind", width=9)
-    table.add_column("Repo", width=22)
-    table.add_column("Sessions", justify="right", width=8)
-    table.add_column("Cost", justify="right", width=10)
-    table.add_column("Finding")
-    for rank, finding in enumerate(findings, start=1):
-        table.add_row(
-            str(rank),
-            escape(finding.kind),
-            escape(finding.repo),
-            str(finding.sessions),
-            f"{finding.cost or finding.tokens:,}",
-            escape(_truncate(finding.title, 110)),
-        )
-    console.print(table)
 
 
 def _is_path_target(title: str) -> bool:

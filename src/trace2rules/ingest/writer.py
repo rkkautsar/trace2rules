@@ -22,6 +22,7 @@ from .normalize import (
     _observation_cause,
 )
 from ..models import Session
+from .test_results import parse_test_result
 
 def write_sessions(
     db_path: str | Path,
@@ -45,6 +46,10 @@ def write_sessions(
             )
             con.execute(
                 f"DELETE FROM feedback_events WHERE session_id IN ({placeholders})",
+                session_ids,
+            )
+            con.execute(
+                f"DELETE FROM test_results WHERE session_id IN ({placeholders})",
                 session_ids,
             )
             _insert_rows(
@@ -73,6 +78,7 @@ def write_sessions(
             )
 
         events = []
+        test_rows: list[tuple] = []
         for session in session_list:
             for step_idx, call in enumerate(session.calls):
                 if call.action_type:
@@ -115,6 +121,22 @@ def write_sessions(
                 else:
                     error_signature = ""
                     detail = family = error_message = cause = site = origin = ""
+                parsed = parse_test_result(
+                    call.raw_target or target or "",
+                    observation,
+                )
+                if parsed is not None:
+                    test_rows.append(
+                        (
+                            session.session_id,
+                            session.repo or "unknown",
+                            step_idx,
+                            (call.raw_target or target or "")[:500],
+                            *parsed,
+                            outcome,
+                            (len(observation) + 3) // 4,
+                        )
+                    )
                 events.append(
                     (
                         f"{session.session_id}:{step_idx}",
@@ -165,6 +187,17 @@ def write_sessions(
                 columns=["session_id", "step_idx", "kind", "text", "keys", "repo"],
             )
 
+        if test_rows:
+            _insert_rows(
+                con,
+                "test_results",
+                test_rows,
+                columns=[
+                    "session_id", "repo", "step_idx", "command", "total",
+                    "passed", "failed", "errors", "skipped", "outcome",
+                    "approx_out_tokens",
+                ],
+            )
         if events:
             _insert_rows(
                 con,

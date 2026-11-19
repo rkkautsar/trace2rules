@@ -56,6 +56,20 @@ CREATE TABLE IF NOT EXISTS tool_events (
     event_hash        VARCHAR DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS test_results (
+    session_id        VARCHAR NOT NULL,
+    repo              VARCHAR NOT NULL,
+    step_idx          INTEGER NOT NULL,
+    command           VARCHAR NOT NULL,
+    total             INTEGER NOT NULL,
+    passed            INTEGER NOT NULL,
+    failed            INTEGER NOT NULL,
+    errors            INTEGER NOT NULL,
+    skipped           INTEGER NOT NULL,
+    outcome           VARCHAR NOT NULL,
+    approx_out_tokens INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS feedback_events (
     session_id        VARCHAR NOT NULL,
     step_idx          INTEGER NOT NULL,

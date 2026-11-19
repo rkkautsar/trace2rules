@@ -286,6 +286,7 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
         ("no_reproduction", "no reproduction"),
         ("false_completion", "false completion"),
         ("correction_loop", "correction loop"),
+        ("test_regression", "test regression"),
     ):
         for finding in mined.get(key, [])[:limit]:
             signal_rows.append((label, finding))

@@ -234,3 +234,49 @@ def no_reproduction(con: duckdb.DuckDBPyConnection, limit: int | None = None) ->
         )
         for repo, sessions, tokens, example_session, example_step in con.execute(query).fetchall()
     ]
+
+
+def regressions_after_green(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = """
+        SELECT t.repo,
+               count(DISTINCT t.session_id) AS sessions,
+               count(*) AS regressions,
+               sum(t.approx_out_tokens) AS tokens,
+               arg_min(t.session_id, t.step_idx) AS example_session,
+               arg_min(t.step_idx, t.step_idx) AS example_step,
+               arg_max(t.command, t.step_idx) AS example_command
+        FROM test_results t
+        WHERE t.total > 0 AND t.failed > 0
+          AND EXISTS (
+              SELECT 1 FROM test_results p
+              WHERE p.session_id = t.session_id
+                AND p.step_idx < t.step_idx
+                AND p.total > 0
+                AND p.failed = 0
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM test_results later
+              WHERE later.session_id = t.session_id
+                AND later.step_idx > t.step_idx
+                AND later.total > 0
+                AND later.failed = 0
+          )
+        GROUP BY 1
+        HAVING count(DISTINCT t.session_id) >= 2
+        ORDER BY sessions DESC, tokens DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="test_regression",
+            repo=repo,
+            title="test regression without a later green run",
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{regressions} failing runs after a green baseline across {sessions} sessions; example {example_command[:100]}",
+            side="agent",
+            recommendation="After a green test run, rerun the affected test after every edit; do not finish on a previously green baseline.",
+        )
+        for repo, sessions, regressions, tokens, example_session, example_step, example_command in con.execute(query).fetchall()
+    ]

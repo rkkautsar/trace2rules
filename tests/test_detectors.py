@@ -4,9 +4,15 @@ import duckdb
 
 from trace2rules.detectors import (
     _context_advice,
+    blind_edits,
+    destructive_commands,
+    edit_rejections,
+    environment_thrash,
     failure_loops,
+    false_completions,
     hotspots,
     low_validation,
+    no_reproduction,
     orientation,
     premature_completion,
     site_edit_mismatch,
@@ -122,6 +128,129 @@ def test_failure_loops_require_repeated_failures_and_intervening_edits(monkeypat
     assert finding.tokens == 60
     assert "6 repeats" in finding.detail
     assert "4 intervening edits" in finding.detail
+
+
+def _detector_db(monkeypatch):
+    import trace2rules.detectors as detectors_module
+
+    monkeypatch.setattr(detectors_module, "_representative_window", lambda *args, **kwargs: ())
+    monkeypatch.setattr(detectors_module, "_repo_window", lambda *args, **kwargs: ())
+    con = duckdb.connect()
+    con.execute("CREATE TABLE sessions (repo VARCHAR, session_id VARCHAR)")
+    con.execute(
+        "CREATE TABLE tool_events (repo VARCHAR, session_id VARCHAR, step_idx INTEGER, "
+        "action_type VARCHAR, target VARCHAR, raw_target VARCHAR, outcome VARCHAR, "
+        "approx_out_tokens INTEGER, error_message VARCHAR, obs_cause VARCHAR, is_error BOOLEAN)"
+    )
+    return con
+
+
+def _add_sessions(con, count: int) -> None:
+    con.executemany(
+        "INSERT INTO sessions VALUES ('acme/repo', ?)",
+        [(f"s{i}",) for i in range(count)],
+    )
+
+
+def _add_edit(con, session: str, step: int, target: str = "src/a.py", raw: str = "str_replace") -> None:
+    con.execute(
+        "INSERT INTO tool_events VALUES ('acme/repo', ?, ?, 'edit', ?, ?, 'ok', 10, '', '', false)",
+        [session, step, target, f"{raw}/{target}"],
+    )
+
+
+def test_edit_rejections_reports_rejected_attempts(monkeypatch) -> None:
+    con = _detector_db(monkeypatch)
+    _add_sessions(con, 2)
+    con.executemany(
+        "INSERT INTO tool_events VALUES ('acme/repo', ?, 1, 'edit', 'src/a.py', 'str_replace', 'err', 10, 'anchor not found', '', true)",
+        [("s0",), ("s1",)],
+    )
+    finding = edit_rejections(con)[0]
+    assert finding.sessions == 2
+    assert finding.tokens == 20
+    assert "rejected edits" in finding.detail
+
+
+def test_blind_edits_require_a_prior_read(monkeypatch) -> None:
+    con = _detector_db(monkeypatch)
+    _add_sessions(con, 3)
+    _add_edit(con, "s0", 1)
+    _add_edit(con, "s1", 1)
+    _add_edit(con, "s2", 1)
+    finding = blind_edits(con)[0]
+    assert finding.sessions == 3
+    assert finding.tokens == 30
+
+    con.execute(
+        "INSERT INTO tool_events VALUES ('acme/repo', 's2', 0, 'read', 'src/a.py', 'view', 'ok', 1, '', '', false)"
+    )
+    assert blind_edits(con)[0].sessions == 2
+
+
+def test_environment_thrash_counts_package_manager_calls(monkeypatch) -> None:
+    con = _detector_db(monkeypatch)
+    _add_sessions(con, 2)
+    con.executemany(
+        "INSERT INTO tool_events VALUES ('acme/repo', ?, 1, 'exec', 'pip install foo', 'pip install foo', 'err', 10, '', '', true)",
+        [("s0",), ("s0",), ("s0",), ("s1",), ("s1",), ("s1",)],
+    )
+    finding = environment_thrash(con)[0]
+    assert finding.sessions == 2
+    assert "6 package-manager calls" in finding.detail
+
+
+def test_destructive_commands_flag_git_reset(monkeypatch) -> None:
+    con = _detector_db(monkeypatch)
+    _add_sessions(con, 1)
+    con.execute(
+        "INSERT INTO tool_events VALUES ('acme/repo', 's0', 1, 'exec', 'git reset --hard HEAD', 'git reset --hard HEAD', 'ok', 10, '', '', false)"
+    )
+    finding = destructive_commands(con)[0]
+    assert finding.sessions == 1
+    assert "git reset" in finding.title
+
+
+def test_no_reproduction_flags_edits_before_a_failing_exec(monkeypatch) -> None:
+    con = _detector_db(monkeypatch)
+    _add_sessions(con, 3)
+    for session in ("s0", "s1", "s2"):
+        _add_edit(con, session, 2)
+    finding = no_reproduction(con)[0]
+    assert finding.sessions == 3
+
+
+def test_false_completion_requires_a_green_test_after_the_last_edit(monkeypatch) -> None:
+    import trace2rules.detectors as detectors_module
+
+    monkeypatch.setattr(detectors_module, "_repo_window", lambda *args, **kwargs: ())
+    con = duckdb.connect()
+    con.execute("CREATE TABLE sessions (repo VARCHAR, session_id VARCHAR)")
+    con.execute(
+        "CREATE TABLE tool_events (repo VARCHAR, session_id VARCHAR, step_idx INTEGER, "
+        "action_type VARCHAR, target VARCHAR, raw_target VARCHAR, outcome VARCHAR, "
+        "exit_code INTEGER, approx_out_tokens INTEGER, assistant_context VARCHAR)"
+    )
+    con.executemany(
+        "INSERT INTO sessions VALUES ('acme/repo', ?)",
+        [("s0",), ("s1",), ("s2",)],
+    )
+    con.executemany(
+        "INSERT INTO tool_events VALUES ('acme/repo', ?, 1, 'edit', 'src/a.py', 'str_replace', 'ok', 0, 10, '')",
+        [("s0",), ("s1",), ("s2",)],
+    )
+    con.execute(
+        "INSERT INTO tool_events VALUES ('acme/repo', 's0', 2, 'other', '', '', 'ok', 0, 1, 'All tests pass.')"
+    )
+    con.execute(
+        "INSERT INTO tool_events VALUES ('acme/repo', 's2', 2, 'other', '', '', 'ok', 0, 1, 'Everything works.')"
+    )
+    con.execute(
+        "INSERT INTO tool_events VALUES ('acme/repo', 's1', 2, 'exec', 'pytest tests/test_a.py -q', 'pytest tests/test_a.py -q', 'ok', 0, 10, 'All tests pass.')"
+    )
+    finding = false_completions(con)[0]
+    assert finding.sessions == 2
+    assert "completion claim" in finding.title
 
 
 def test_context_advice_distinguishes_test_output_from_repo_entrypoint() -> None:

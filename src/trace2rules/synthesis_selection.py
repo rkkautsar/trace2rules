@@ -70,6 +70,12 @@ def _candidate_score(finding: Finding) -> float:
         "edit_churn": 1.2,
         "command_error": 1.4,
         "failure_loop": 1.6,
+        "edit_rejection": 1.7,
+        "blind_edit": 1.2,
+        "environment_thrash": 0.7,
+        "destructive_command": 2.0,
+        "no_reproduction": 1.3,
+        "false_completion": 1.8,
     }
     support = max(finding.sessions, 1)
     impact = max(finding.tokens, finding.cost, 1)
@@ -101,12 +107,21 @@ def select_findings(
         "edit_churn",
         "command_error",
         "failure_loop",
+        "edit_rejection",
+        "blind_edit",
+        "environment_thrash",
+        "destructive_command",
+        "no_reproduction",
+        "false_completion",
     ):
         candidates.extend(
             finding
             for finding in mined.get(key, [])
             if finding.repo == repo
-            and (finding.sessions >= min_sessions or finding.kind == "feedback_loop")
+            and (
+                finding.sessions >= min_sessions
+                or finding.kind in {"feedback_loop", "destructive_command"}
+            )
             and not GENERATED_VERIFIER_RE.search(finding.title)
             and (finding.recommendation or finding.kind != "context")
             and (

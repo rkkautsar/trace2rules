@@ -300,6 +300,36 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
             )
         console.print(table)
 
+    signal_rows = []
+    for key, label in (
+        ("edit_rejection", "rejected edit"),
+        ("blind_edit", "blind edit"),
+        ("environment_thrash", "environment thrash"),
+        ("destructive_command", "destructive command"),
+        ("no_reproduction", "no reproduction"),
+        ("false_completion", "false completion"),
+    ):
+        for finding in mined.get(key, [])[:limit]:
+            signal_rows.append((label, finding))
+    if signal_rows:
+        table = Table(title="Agent failure signals", header_style="bold", expand=True)
+        table.add_column("Signal")
+        table.add_column("Repo")
+        table.add_column("Target")
+        table.add_column("Sessions", justify="right")
+        table.add_column("Tokens", justify="right")
+        table.add_column("Detail")
+        for label, finding in signal_rows:
+            table.add_row(
+                label,
+                escape(finding.repo),
+                escape(finding.title[:100]),
+                str(finding.sessions),
+                f"{finding.tokens:,}",
+                escape(finding.detail),
+            )
+        console.print(table)
+
     feedback = mined.get("feedback", [])[:limit]
     if feedback:
         table = Table(title="Repeated human steering", header_style="bold", expand=True)

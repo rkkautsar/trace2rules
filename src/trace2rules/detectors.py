@@ -691,6 +691,317 @@ def failure_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> l
     ]
 
 
+def edit_rejections(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = """
+        SELECT repo, target,
+               count(DISTINCT session_id) AS sessions,
+               count(*) AS rejects,
+               sum(approx_out_tokens) AS tokens,
+               arg_min(session_id, step_idx) AS example_session,
+               arg_min(step_idx, step_idx) AS example_step,
+               arg_min(coalesce(nullif(error_message, ''), obs_cause), step_idx) AS cause
+        FROM tool_events
+        WHERE action_type = 'edit' AND outcome = 'err'
+          AND target NOT IN ('', '.')
+          AND target NOT LIKE '<%'
+        GROUP BY 1, 2
+        HAVING count(DISTINCT session_id) >= 2
+        ORDER BY sessions DESC, rejects DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="edit_rejection",
+            repo=repo,
+            title=target,
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{rejects} rejected edits across {sessions} sessions",
+            cause=(cause or "")[:240],
+            side="agent",
+            recommendation="After an edit is rejected, re-read the target and recompute the anchor; do not retry the same stale patch.",
+            window=_representative_window(con, example_session, example_step),
+        )
+        for repo, target, sessions, rejects, tokens, example_session, example_step, cause in con.execute(query).fetchall()
+    ]
+
+
+def blind_edits(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = """
+        WITH edits AS (
+            SELECT session_id, repo, step_idx, target, approx_out_tokens
+            FROM tool_events
+            WHERE action_type = 'edit'
+              AND target NOT IN ('', '.')
+              AND target NOT LIKE '<%'
+              AND target NOT LIKE '% %'
+              AND target NOT LIKE '%>%'
+              AND raw_target NOT LIKE 'create%'
+        )
+        SELECT repo,
+               count(*) AS edits,
+               count(DISTINCT session_id) AS sessions,
+               sum(approx_out_tokens) AS tokens,
+               arg_max(target, approx_out_tokens) AS example_target,
+               arg_min(session_id, step_idx) AS example_session,
+               arg_min(step_idx, step_idx) AS example_step
+        FROM edits e
+        WHERE NOT EXISTS (
+            SELECT 1 FROM tool_events r
+            WHERE r.session_id = e.session_id
+              AND r.action_type = 'read'
+              AND r.target = e.target
+              AND r.step_idx < e.step_idx
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM tool_events c
+            WHERE c.session_id = e.session_id
+              AND c.action_type = 'edit'
+              AND c.raw_target LIKE 'create%'
+              AND c.target = e.target
+              AND c.step_idx < e.step_idx
+        )
+        GROUP BY 1
+        HAVING count(DISTINCT session_id) >= 2
+        ORDER BY sessions DESC, edits DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="blind_edit",
+            repo=repo,
+            title="edits without a preceding read",
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{edits} edits with no prior read of the target; example {example_target[:120]}",
+            side="agent",
+            recommendation="Read the target before editing it. For a new file, state that it is new and avoid patching unseen existing content.",
+            window=_representative_window(con, example_session, example_step),
+        )
+        for repo, edits, sessions, tokens, example_target, example_session, example_step in con.execute(query).fetchall()
+    ]
+
+
+def environment_thrash(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = r"""
+        WITH installs AS (
+            SELECT session_id, repo, step_idx, approx_out_tokens, is_error,
+                   coalesce(nullif(raw_target, ''), target) AS command
+            FROM tool_events
+            WHERE action_type = 'exec'
+              AND regexp_matches(
+                  coalesce(raw_target, target),
+                  '(?i)\b(pip3?|uv|poetry|conda|npm|yarn|pnpm|cargo|go|bundle|composer|dotnet|mix)\s+(install|add|sync|update|remove|uninstall|upgrade|lock|get|ci)\b'
+              )
+        )
+        SELECT repo,
+               count(*) AS installs,
+               count(DISTINCT session_id) AS sessions,
+               sum(approx_out_tokens) AS tokens,
+               count(*) FILTER (WHERE is_error) AS failures,
+               arg_min(command, step_idx) AS example,
+               arg_min(session_id, step_idx) AS example_session,
+               arg_min(step_idx, step_idx) AS example_step
+        FROM installs
+        GROUP BY 1
+        HAVING count(DISTINCT session_id) >= 2 AND count(*) >= 5
+        ORDER BY installs DESC, tokens DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="environment_thrash",
+            repo=repo,
+            title="repeated dependency/environment setup",
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{installs} package-manager calls across {sessions} sessions; {failures} failed; example {example[:120]}",
+            side="repo",
+            recommendation="Prebuild or document the environment. Do not make every session rediscover and reinstall the same tooling.",
+            window=_representative_window(con, example_session, example_step),
+        )
+        for repo, installs, sessions, tokens, failures, example, example_session, example_step in con.execute(query).fetchall()
+    ]
+
+
+def destructive_commands(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = r"""
+        SELECT repo, coalesce(nullif(raw_target, ''), target) AS command,
+               count(DISTINCT session_id) AS sessions,
+               count(*) AS events,
+               sum(approx_out_tokens) AS tokens,
+               arg_min(session_id, step_idx) AS example_session,
+               arg_min(step_idx, step_idx) AS example_step
+        FROM tool_events
+        WHERE action_type = 'exec'
+          AND regexp_matches(
+              coalesce(raw_target, target),
+              '(?i)(git\s+reset\s+--hard|git\s+clean\s+-[a-z]*f|git\s+checkout\s+(--\s+)?\.|git\s+stash\s+drop|git\s+branch\s+-D|git\s+push\s+.*--force|--no-verify|HUSKY=0|core\.hooksPath|--admin)'
+          )
+        GROUP BY 1, 2
+        ORDER BY sessions DESC, events DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="destructive_command",
+            repo=repo,
+            title=command,
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{events} destructive or gate-bypassing invocations",
+            side="agent",
+            recommendation="Do not run destructive git or bypass verification hooks without an explicit user request; inspect the working tree first.",
+            window=_representative_window(con, example_session, example_step),
+        )
+        for repo, command, sessions, events, tokens, example_session, example_step in con.execute(query).fetchall()
+    ]
+
+
+def no_reproduction(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = r"""
+        WITH first_edit AS (
+            SELECT session_id, repo, min(step_idx) AS step
+            FROM tool_events
+            WHERE action_type = 'edit'
+              AND target NOT IN ('', '.')
+              AND target NOT LIKE '<%'
+              AND NOT regexp_matches(
+                  target,
+                  '(?i)(^|/)(tests?|specs?|__tests__)(/|$)|(^|/)(test_|conftest\.|.*_test\.)|(^|/)(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)'
+              )
+            GROUP BY 1, 2
+        ),
+        session_tokens AS (
+            SELECT session_id, sum(approx_out_tokens) AS tokens
+            FROM tool_events GROUP BY 1
+        )
+        SELECT s.repo, count(*) AS sessions, coalesce(sum(t.tokens), 0) AS tokens,
+               arg_min(s.session_id, f.step) AS example_session,
+               arg_min(f.step, f.step) AS example_step
+        FROM sessions s
+        JOIN first_edit f USING (session_id)
+        LEFT JOIN session_tokens t USING (session_id)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM tool_events e
+            WHERE e.session_id = s.session_id
+              AND e.step_idx < f.step
+              AND e.action_type = 'exec'
+              AND e.outcome = 'err'
+        )
+        GROUP BY 1
+        HAVING count(*) >= 3
+        ORDER BY sessions DESC, tokens DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="no_reproduction",
+            repo=repo,
+            title="source edits before any failing reproduction",
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{sessions} sessions edited source without a preceding failing exec",
+            side="agent",
+            recommendation="For a bug fix, reproduce the failure first with the narrowest command or test; only then edit the source.",
+            window=_repo_window(con, repo, "action_type = 'edit'"),
+        )
+        for repo, sessions, tokens, example_session, example_step in con.execute(query).fetchall()
+    ]
+
+
+def false_completions(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = r"""
+        WITH last_claim AS (
+            SELECT session_id, repo, assistant_context
+            FROM (
+                SELECT session_id, repo, assistant_context,
+                       row_number() OVER (PARTITION BY session_id ORDER BY step_idx DESC) AS rn
+                FROM tool_events
+                WHERE assistant_context <> ''
+            ) ranked
+            WHERE rn = 1
+        ),
+        last_edit AS (
+            SELECT session_id, max(step_idx) AS step
+            FROM tool_events
+            WHERE action_type = 'edit'
+            GROUP BY 1
+        ),
+        session_tokens AS (
+            SELECT session_id, sum(approx_out_tokens) AS tokens
+            FROM tool_events GROUP BY 1
+        ),
+        test_state AS (
+            SELECT session_id,
+                   max(step_idx) FILTER (WHERE is_test_command) AS last_step,
+                   arg_max(outcome, step_idx) FILTER (WHERE is_test_command) AS last_outcome,
+                   arg_max(exit_code, step_idx) FILTER (WHERE is_test_command) AS last_exit
+            FROM (
+                SELECT *,
+                       regexp_matches(
+                           raw_target,
+                           '(?i)(pytest|unittest|tox|nox|npm (run )?test|yarn test|pnpm test|vitest|jest|'
+                           'cargo test|go test|dotnet test|rspec|phpunit|mix test|swift test|mvn test|gradle test)'
+                       ) AS is_test_command
+                FROM tool_events
+                WHERE action_type = 'exec'
+            ) tests
+            GROUP BY 1
+        )
+        SELECT c.repo, count(*) AS sessions,
+               coalesce(sum(t.tokens), 0) AS tokens,
+               arg_max(c.assistant_context, t.tokens) AS example
+        FROM last_claim c
+        JOIN sessions s USING (session_id)
+        JOIN last_edit e USING (session_id)
+        LEFT JOIN test_state ts USING (session_id)
+        LEFT JOIN session_tokens t USING (session_id)
+        WHERE regexp_matches(
+                  c.assistant_context,
+                  '(?i)(all tests pass|tests pass|test suite passes|everything (passes|works)|'
+                  'no failures|successfully (fixed|implemented|completed|verified)|'
+                  'verified that|completed successfully)'
+              )
+          AND NOT regexp_matches(
+                  c.assistant_context,
+                  '(?i)(could not run|couldn''t run|unable to run|did not run|not run|'
+                  'cannot run|can''t run|not verified|unverified|failing test)'
+              )
+          AND (
+              ts.last_step IS NULL
+              OR ts.last_step < e.step
+              OR ts.last_outcome = 'err'
+              OR coalesce(ts.last_exit, 0) <> 0
+          )
+        GROUP BY 1
+        HAVING count(*) >= 2
+        ORDER BY sessions DESC, tokens DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="false_completion",
+            repo=repo,
+            title="completion claim without green validation",
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{sessions} sessions claim completion without a passing test after the last edit",
+            cause=(example or "")[:240],
+            side="agent",
+            recommendation="Only claim completion after a passing validation command that covers the final edit; otherwise state what remains unverified.",
+            window=_repo_window(con, repo, "action_type = 'edit'"),
+        )
+        for repo, sessions, tokens, example in con.execute(query).fetchall()
+    ]
+
+
 def context_blasts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     query = """
         SELECT repo, target, tool_name, action_type,

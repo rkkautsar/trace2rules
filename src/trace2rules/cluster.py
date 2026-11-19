@@ -10,7 +10,7 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_distances
 
-from .detectors import Finding, command_errors, context_blasts, edit_churn, failure_loops, feedback_loops, global_patterns, hotspots, noop_retries, orientation, permission_denials, premature_completion, low_validation, repeated_reads, site_edit_mismatch, recovery_loops, selector_misses, stuck_loops, workaround_scripts
+from .detectors import Finding, blind_edits, false_completions, command_errors, context_blasts, destructive_commands, edit_churn, edit_rejections, environment_thrash, failure_loops, feedback_loops, global_patterns, hotspots, noop_retries, no_reproduction, orientation, permission_denials, premature_completion, low_validation, repeated_reads, site_edit_mismatch, recovery_loops, selector_misses, stuck_loops, workaround_scripts
 
 
 @dataclass
@@ -363,6 +363,12 @@ def mine(
         "command_error": command_errors,
         "feedback": feedback_loops,
         "failure_loop": failure_loops,
+        "edit_rejection": edit_rejections,
+        "blind_edit": blind_edits,
+        "environment_thrash": environment_thrash,
+        "destructive_command": destructive_commands,
+        "no_reproduction": no_reproduction,
+        "false_completion": false_completions,
     }
     workers = workers or min(8, len(jobs), os.cpu_count() or 1)
     if workers <= 1:

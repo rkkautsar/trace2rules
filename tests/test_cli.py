@@ -398,3 +398,19 @@ def test_synthesize_json_emits_only_json(tmp_path: Path, monkeypatch) -> None:
     result = runner.invoke(app, ["synthesize", "--db", str(db), "--offline", "--json"])
     assert result.exit_code == 0
     assert json.loads(result.output) == []
+
+
+def test_report_does_not_audit_cwd_agents_for_other_repo(tmp_path: Path, monkeypatch) -> None:
+    db = tmp_path / "scope.duckdb"
+    write_sessions(
+        db,
+        [Session("s1", "acme/other", source="test", calls=[ToolCall("Read", "src/a.py", action_type="read")])],
+    )
+    (tmp_path / "AGENTS.md").write_text("## Validation\n\n- CWD_RULE_SENTINEL\n")
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(
+        app,
+        ["report", "--repo", "acme/other", "--prompt", "--db", str(db)],
+    )
+    assert result.exit_code == 0
+    assert "CWD_RULE_SENTINEL" not in result.output

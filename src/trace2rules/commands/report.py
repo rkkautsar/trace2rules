@@ -89,6 +89,7 @@ def _report_command(
         if prompt:
             from ..detectors import prompt_context
 
+            explicit_agents = agents is not None
             agent_paths = resolve_agents(agents)
             chunks: list[str] = []
             for repo_name, _count in repo_rows:
@@ -106,7 +107,10 @@ def _report_command(
                 existing = (
                     audit_payload(con, repo_name, agent_paths)
                     if agent_paths
-                    and (repo is not None or _repo_matches_cwd(repo_name))
+                    and (
+                        _repo_matches_cwd(repo_name)
+                        or (explicit_agents and repo is not None)
+                    )
                     else None
                 )
                 chunks.append(

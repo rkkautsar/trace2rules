@@ -805,3 +805,37 @@ def test_required_status_is_not_inferred_from_ci_presence(tmp_path: Path) -> Non
     assert audit.enforcement_status == "configured"
     assert audit.required is None
     assert "branch protection" in audit.required_reason
+
+
+def test_permission_denials_are_mined(tmp_path: Path) -> None:
+    from trace2rules.detectors import permission_denials
+
+    db = tmp_path / "permission.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                f"s{index}",
+                "acme/repo",
+                calls=[
+                    ToolCall(
+                        "Bash",
+                        "pdm run python --version",
+                        observation="[Errno 13] Permission denied: /tmp/testbed/python",
+                        action_type="exec",
+                        target="pdm run python --version",
+                        is_error=True,
+                    )
+                ],
+            )
+            for index in range(2)
+        ],
+    )
+    con = connect(db)
+    try:
+        findings = permission_denials(con)
+    finally:
+        con.close()
+    assert len(findings) == 1
+    assert findings[0].kind == "permission_denied"
+    assert findings[0].sessions == 2

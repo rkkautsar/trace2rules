@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import duckdb
@@ -338,25 +340,42 @@ def cluster_friction(
 
 
 def mine(
-    con: duckdb.DuckDBPyConnection, top: int | None = 25
+    con: duckdb.DuckDBPyConnection,
+    top: int | None = 25,
+    workers: int | None = None,
 ) -> dict[str, list[Finding]]:
-    return {
-        "hotspots": hotspots(con, limit=top),
-        "recovery": recovery_loops(con, limit=top),
-        "context": context_blasts(con, limit=top),
-        "orientation": orientation(con, limit=top),
-        "global": global_patterns(con, limit=top),
-        "selector_miss": selector_misses(con, limit=top),
-        "workaround": workaround_scripts(con, limit=top),
-        "stuck_loop": stuck_loops(con, limit=top),
-        "noop_retry": noop_retries(con, limit=top),
-        "premature_completion": premature_completion(con, limit=top),
-        "low_validation": low_validation(con, limit=top),
-        "site_edit_mismatch": site_edit_mismatch(con, limit=top),
-        "permission": permission_denials(con, limit=top),
-        "reread": repeated_reads(con, limit=top),
-        "edit_churn": edit_churn(con, limit=top),
-        "command_error": command_errors(con, limit=top),
-        "feedback": feedback_loops(con, limit=top),
-        "clusters": [],
+    jobs = {
+        "hotspots": hotspots,
+        "recovery": recovery_loops,
+        "context": context_blasts,
+        "orientation": orientation,
+        "global": global_patterns,
+        "selector_miss": selector_misses,
+        "workaround": workaround_scripts,
+        "stuck_loop": stuck_loops,
+        "noop_retry": noop_retries,
+        "premature_completion": premature_completion,
+        "low_validation": low_validation,
+        "site_edit_mismatch": site_edit_mismatch,
+        "permission": permission_denials,
+        "reread": repeated_reads,
+        "edit_churn": edit_churn,
+        "command_error": command_errors,
+        "feedback": feedback_loops,
     }
+    workers = workers or min(8, len(jobs), os.cpu_count() or 1)
+    if workers <= 1:
+        return {key: fn(con, limit=top) for key, fn in jobs.items()} | {"clusters": []}
+
+    def run(job):
+        key, fn = job
+        cursor = con.cursor()
+        try:
+            return key, fn(cursor, limit=top)
+        finally:
+            cursor.close()
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = dict(pool.map(run, jobs.items()))
+    results["clusters"] = []
+    return results

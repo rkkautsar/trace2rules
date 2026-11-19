@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -185,6 +186,8 @@ def audit_agents(
     since: datetime | None = None,
     until: datetime | None = None,
     root: Path | None = None,
+    workers: int = 1,
+    _sessions: dict[str, list[tuple]] | None = None,
 ) -> list[RuleAudit]:
     filters = ["e.repo = ?"]
     params: list[Any] = [repo]
@@ -196,18 +199,31 @@ def audit_agents(
     if until is not None:
         filters.append("s.started_at < ?")
         params.append(until)
-    rows = con.execute(
-        f"""
-        SELECT e.session_id, e.step_idx, e.action_type, e.raw_target,
-               e.target, e.object_id, e.outcome
-        FROM tool_events e JOIN sessions s USING (session_id)
-        WHERE {' AND '.join(filters)}
-        """,
-        params,
-    ).fetchall()
-    sessions: dict[str, list[tuple]] = {}
-    for row in rows:
-        sessions.setdefault(row[0], []).append(row)
+    if _sessions is None:
+        rows = con.execute(
+            f"""
+            SELECT e.session_id, e.step_idx, e.action_type, e.raw_target,
+                   e.target, e.object_id, e.outcome
+            FROM tool_events e JOIN sessions s USING (session_id)
+            WHERE {' AND '.join(filters)}
+            """,
+            params,
+        ).fetchall()
+        sessions: dict[str, list[tuple]] = {}
+        for row in rows:
+            sessions.setdefault(row[0], []).append(row)
+    else:
+        sessions = _sessions
+
+    if workers > 1 and len(rules) > 1:
+        def run(rule: AgentRule) -> RuleAudit:
+            return audit_agents(
+                con, repo, [rule], since=since, until=until, root=root,
+                _sessions=sessions,
+            )[0]
+
+        with ThreadPoolExecutor(max_workers=min(workers, len(rules))) as pool:
+            return list(pool.map(run, rules))
 
     audits: list[RuleAudit] = []
     for rule in rules:
@@ -597,6 +613,7 @@ def audit_payload(
                 rules,
                 since=since,
                 until=until,
+                workers=min(8, len(rules)),
                 root=paths[0].parent if paths else None,
             )
         ],

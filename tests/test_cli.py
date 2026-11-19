@@ -414,3 +414,29 @@ def test_report_does_not_audit_cwd_agents_for_other_repo(tmp_path: Path, monkeyp
     )
     assert result.exit_code == 0
     assert "CWD_RULE_SENTINEL" not in result.output
+
+
+def test_report_uses_session_cwd_for_agents(tmp_path: Path, monkeypatch) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "AGENTS.md").write_text("## Validation\n\n- Run `CWD_RULE_SENTINEL` after editing.\n")
+    db = tmp_path / "cwd.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s1",
+                "acme/repo",
+                source="test",
+                cwd=str(checkout),
+                calls=[ToolCall("Read", "src/a.py", action_type="read")],
+            )
+        ],
+    )
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(
+        app,
+        ["report", "--repo", "acme/repo", "--prompt", "--db", str(db)],
+    )
+    assert result.exit_code == 0
+    assert "CWD_RULE_SENTINEL" in result.output

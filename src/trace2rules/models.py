@@ -43,4 +43,5 @@ class Session:
     agent: str = ""
     success_score: float | None = None
     started_at: datetime | None = None
+    cwd: str = ""
     feedback: list[Feedback] = field(default_factory=list)

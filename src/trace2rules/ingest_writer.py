@@ -62,12 +62,13 @@ def write_sessions(
                         session.agent,
                         session.success_score,
                         session.started_at,
+                        session.cwd,
                     )
                     for session in session_list
                 ],
                 columns=[
                     "session_id", "repo", "instance_id", "resolved", "total_turns",
-                    "source", "source_ref", "agent", "success_score", "started_at",
+                    "source", "source_ref", "agent", "success_score", "started_at", "cwd",
                 ],
             )
 

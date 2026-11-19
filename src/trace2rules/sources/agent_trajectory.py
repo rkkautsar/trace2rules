@@ -413,6 +413,7 @@ def _records_to_session(
         source_ref=str(path),
         agent=source,
         started_at=started_at,
+        cwd=str(meta_record.get("cwd") or ""),
     )
     pending: dict[str, ToolCall] = {}
     for record in records:

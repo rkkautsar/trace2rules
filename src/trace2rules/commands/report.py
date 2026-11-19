@@ -92,6 +92,26 @@ def _report_command(
             explicit_agents = agents is not None
             agent_paths = resolve_agents(agents)
             chunks: list[str] = []
+
+            def agents_for(repo_name: str):
+                if agent_paths and (
+                    _repo_matches_cwd(repo_name)
+                    or (explicit_agents and repo is not None)
+                ):
+                    return agent_paths
+                if explicit_agents:
+                    return None
+                cwd_rows = con.execute(
+                    "SELECT DISTINCT cwd FROM sessions WHERE repo = ? AND cwd <> '' LIMIT 5",
+                    [repo_name],
+                ).fetchall()
+                for (cwd,) in cwd_rows:
+                    candidate = Path(cwd)
+                    found = resolve_agents(candidate / "AGENTS.md")
+                    found += resolve_agents(candidate / "CLAUDE.md")
+                    if found:
+                        return found
+                return None
             for repo_name, _count in repo_rows:
                 selected_findings = annotate_findings(
                     con,
@@ -104,15 +124,8 @@ def _report_command(
                     for finding in selected_findings
                     if _finding_confidence(finding) != "low"
                 ]
-                existing = (
-                    audit_payload(con, repo_name, agent_paths)
-                    if agent_paths
-                    and (
-                        _repo_matches_cwd(repo_name)
-                        or (explicit_agents and repo is not None)
-                    )
-                    else None
-                )
+                repo_agents = agents_for(repo_name)
+                existing = audit_payload(con, repo_name, repo_agents) if repo_agents else None
                 chunks.append(
                     f"# Repository: {repo_name}\n\n"
                     + _prompt(

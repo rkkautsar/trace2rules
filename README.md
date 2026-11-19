@@ -83,14 +83,15 @@ Fresh agent synthesis from the actual report prompts:
 
 **`rkkautsar/louibot`**
 
-- Validate with `npx tsc --noEmit && npm test` followed by `npm run build`; the copied pytest rule was never satisfied, while 5 of 7 edit sessions used this loop.
-- Edit `src/agent.ts` with targeted edits, not scripted whole-file splices; it had 186 edits across 4 sessions and 216 extra reads across 6.
-- Inspect a benchmark run by reading `.louibot/benchmarks/runs/<run>/report.json` instead of crawling the benchmark tree; the tree was read-only in 7/23 sessions.
+- Validate TypeScript edits with `npx tsc --noEmit && npm test`, then run `npm run build` only after both pass; 5 of 7 edit sessions used this loop.
+- Read `src/agent.ts` and `README.md` by symbol or line range instead of whole-file or repeated `git show` reads; `src/agent.ts` had 218 extra reads across 6 sessions.
+- Apply `src/agent.ts` changes with targeted edits, not scripted regex splices; one splice produced duplicate declarations and `TS1005` errors at lines 2121, 2132, 3052, and 3156.
 
 **`rkkautsar/personal-website`**
 
-- Remove copied trace2rules rules (`uv run pytest`, `src/trace2rules/*`); this is a Cloudflare Pages/Workers site. Five editing sessions had no validation command and all four copied rules pointed at another repository.
-- Read `scripts/generate-blog.mjs` by targeted range; three sessions averaged ~1.8k tokens per whole-file read.
+- Add a typecheck/build command covering `functions/api/**/*.ts` before reporting; 5 editing sessions had no validation command and 0 validated.
+- Start from `functions/api/**/*.ts`, `src/blog/metadata.ts`, and `scripts/generate-blog.mjs`; one `node_modules`/`wrangler` search cost 2,525 tokens.
+- Read `scripts/generate-blog.mjs` and `functions/api/**` by range; whole-file reads averaged ~1.8k tokens per call.
 
 Rules are capped at 5 rules, 160 lines, and 12,000 characters per repo.
 

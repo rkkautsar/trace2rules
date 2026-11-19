@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     source_ref       VARCHAR DEFAULT '',
     agent            VARCHAR DEFAULT '',
     success_score    DOUBLE,
-    started_at       TIMESTAMP
+    started_at       TIMESTAMP,
+    cwd              VARCHAR DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS tool_events (
@@ -97,6 +98,7 @@ def connect(path: str | Path = DB_PATH) -> duckdb.DuckDBPyConnection:
         "ALTER TABLE sessions ADD COLUMN source_ref VARCHAR DEFAULT ''",
         "ALTER TABLE sessions ADD COLUMN success_score DOUBLE",
         "ALTER TABLE sessions ADD COLUMN started_at TIMESTAMP",
+        "ALTER TABLE sessions ADD COLUMN cwd VARCHAR DEFAULT ''",
         "ALTER TABLE tool_events ADD COLUMN verb VARCHAR DEFAULT ''",
         "ALTER TABLE tool_events ADD COLUMN object_id VARCHAR DEFAULT ''",
         "ALTER TABLE tool_events ADD COLUMN outcome VARCHAR DEFAULT 'unknown'",

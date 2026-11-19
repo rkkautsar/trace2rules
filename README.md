@@ -9,6 +9,8 @@ Status: beta. The output is a proposal, not an automatically applied `AGENTS.md`
 ## Project layout
 
 - `mining/heuristics/`: one focused detector per file, such as `repeated_reads.py`.
+- `audit/parsing.py`: AGENTS.md parsing and rule categories.
+- `audit/enforcement.py`: CI, pre-commit, Makefile, and package-script discovery.
 - `audit/heuristics/`: one audit category per file, with a shared `AuditOutcome`.
 - `detectors_core.py`: shared `Finding` model, session summary, and evidence-window helpers.
 - `detectors.py`: stable facade for detector imports and the aggregate `all_findings`.

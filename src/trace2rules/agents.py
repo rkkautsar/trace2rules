@@ -155,6 +155,8 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
     commands = COMMAND_RE.findall(text)
     if len(commands) >= 2 and re.search(r"(?i)\bonly after\b", lower):
         return "ordering"
+    if commands and re.search(r"(?i)\bbefore (?:running |running the )?tests?\b", lower):
+        return "ordering"
     if SCRATCH_RE.search(lower) and any(
         token in lower for token in ("do not", "don't", "never", "keep", "outside")
     ):
@@ -868,6 +870,38 @@ def audit_agents(
                 test_outcomes[outcome] = test_outcomes.get(outcome, 0) + 1
                 examples.extend(event[3][:240] for event in (post_exact or post_any or pre_any)[:2])
             elif rule.category == "ordering":
+                if not rule.commands:
+                    continue
+                before_tests = bool(re.search(r"(?i)\bbefore (?:running |running the )?tests?\b", rule.text))
+                if before_tests:
+                    tests = [
+                        (step, raw) for _sid, step, action, raw, _target, _object, _outcome in events
+                        if action == "exec" and TEST_RUN_RE.search(raw)
+                    ]
+                    if not tests:
+                        continue
+                    first_test, first_test_raw = tests[0]
+                    prerequisite = rule.commands[0]
+                    prerequisite_events = [
+                        step for _sid, step, action, raw, _target, _object, _outcome in events
+                        if action == "exec"
+                        and (
+                            step < first_test
+                            or (
+                                step == first_test
+                                and raw.find(prerequisite) < raw.find(first_test_raw)
+                            )
+                        )
+                        and _argv_match(_normalize_command(prerequisite), _normalize_command(raw))
+                    ]
+                    applicable += 1
+                    observed += 1
+                    examples.extend(raw[:240] for _step, raw in tests[:2])
+                    if prerequisite_events:
+                        compliant += 1
+                    else:
+                        violations += 1
+                    continue
                 if len(rule.commands) < 2:
                     continue
                 action_command, prerequisite = rule.commands[0], rule.commands[1]

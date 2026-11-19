@@ -868,3 +868,31 @@ def test_repeated_reads_are_mined(tmp_path: Path) -> None:
     assert findings[0].kind == "reread"
     assert findings[0].sessions == 2
     assert findings[0].detail.startswith("2 extra reads")
+
+
+def test_edit_churn_is_mined(tmp_path: Path) -> None:
+    from trace2rules.detectors import edit_churn
+
+    db = tmp_path / "churn.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                f"s{index}",
+                "acme/repo",
+                calls=[
+                    ToolCall("Edit", "src/a.py", action_type="edit", target="src/a.py")
+                    for _ in range(3)
+                ],
+            )
+            for index in range(2)
+        ],
+    )
+    con = connect(db)
+    try:
+        findings = edit_churn(con)
+    finally:
+        con.close()
+    assert len(findings) == 1
+    assert findings[0].kind == "edit_churn"
+    assert findings[0].sessions == 2

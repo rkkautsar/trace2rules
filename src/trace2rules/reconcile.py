@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .audit.parsing import PATH_RE
-from .synthesize import Rule
+from .synthesis.models import Rule
 
 COMMAND_RE = re.compile(r"`([^`]+)`")
 

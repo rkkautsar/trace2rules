@@ -55,14 +55,9 @@ def _report_command(
 
         from ..mining.sequences import exact_sequences
         from ..mining.mine import mine as mine_friction
-        from ..synthesize import (
-            EXACT_LENGTHS,
-            _finding_confidence,
-            _prompt,
-            annotate_findings,
-            label_summary,
-            select_findings,
-        )
+        from ..synthesis.models import EXACT_LENGTHS
+        from ..synthesis.prompt import _finding_confidence, _prompt
+        from ..synthesis.selection import annotate_findings, label_summary, select_findings
 
         mined = mine_friction(con, top=None if (repo or prompt) else top)
         findings = [

@@ -115,7 +115,7 @@ def _ingest_command(
                 except (duckdb.Error, OSError, RuntimeError) as error:
                     failed_sources.append((selected_source, error))
     elif fmt == "swe-chat":
-        from .sources.swe_chat import ingest_swe_chat
+        from .ingest.sources.swe_chat import ingest_swe_chat
 
         selected_sources = sources or ["data/swe-chat"]
         stats = []
@@ -132,7 +132,7 @@ def _ingest_command(
             except (FileNotFoundError, ValueError, RuntimeError) as error:
                 failed_sources.append((selected_source, error))
     elif fmt in {"agent-trajectory", "agent"}:
-        from .sources.agent_trajectory import ingest_agent_sessions
+        from .ingest.sources.agent_trajectory import ingest_agent_sessions
 
         selected_sources = sources or [str(Path.home())]
         stats = []
@@ -515,7 +515,7 @@ def _doctor_command(
             (key, "ok" if os.getenv(key) else "warn", "set" if os.getenv(key) else "unset")
         )
 
-    from .sources.agent_trajectory import _source_roots
+    from .ingest.sources.agent_trajectory import _source_roots
 
     try:
         roots = _source_roots(Path.home())
@@ -739,7 +739,7 @@ def _synthesize_command(
             cmd_console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
             raise typer.Exit(1)
         try:
-            from .synthesize import synthesize as synthesize_rules
+            from .synthesis import synthesize as synthesize_rules
 
             results = synthesize_rules(
                 con,
@@ -782,8 +782,8 @@ def _eval_command(
     golden: Annotated[Path | None, typer.Option("--golden", help="Golden rule set JSON.")] = None,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
-    from .evaluate import evaluate_synthesis, load_golden
-    from .synthesize import synthesize as synthesize_rules
+    from .synthesis.evaluate import evaluate_synthesis, load_golden
+    from .synthesis import synthesize as synthesize_rules
 
     con = connect(db)
     try:

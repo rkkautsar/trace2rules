@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
-from .mining.models import Finding
+from ..mining.models import Finding
 
 GENERATED_VERIFIER_RE = re.compile(
     r"final_|validation_test|test_fix_verification|test_reproduce_issue|comprehensive_test|"

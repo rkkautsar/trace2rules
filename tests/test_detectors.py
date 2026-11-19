@@ -275,7 +275,7 @@ def test_runner_advice_is_language_neutral() -> None:
 
 
 def test_path_and_runner_heuristics_cover_multiple_languages() -> None:
-    from trace2rules.ingest import _error_site, _is_path_token
+    from trace2rules.ingest.normalize import _error_site, _is_path_token
 
     for path in ("src/main.rs", "cmd/app/main.go", "src/app.ts", "src/App.java", "src/main.c", "lib/x.rb"):
         assert _is_path_token(path), path

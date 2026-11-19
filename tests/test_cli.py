@@ -144,7 +144,7 @@ def test_bad_swebench_source_is_friendly() -> None:
 
 
 def test_ingest_defaults_to_home_agent(monkeypatch) -> None:
-    import trace2rules.sources.agent_trajectory as agent_source
+    import trace2rules.ingest.sources.agent_trajectory as agent_source
 
     calls: list[str] = []
 
@@ -159,7 +159,7 @@ def test_ingest_defaults_to_home_agent(monkeypatch) -> None:
 
 
 def test_ingest_accepts_repeated_sources(monkeypatch) -> None:
-    import trace2rules.sources.agent_trajectory as agent_source
+    import trace2rules.ingest.sources.agent_trajectory as agent_source
 
     calls: list[str] = []
 
@@ -347,7 +347,7 @@ def test_doctor_survives_a_node_timeout(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_ingest_continues_after_a_bad_source(monkeypatch) -> None:
-    import trace2rules.sources.agent_trajectory as agent_source
+    import trace2rules.ingest.sources.agent_trajectory as agent_source
 
     def fake_ingest(source, db_path, *, limit=None, repo=None, progress=None):
         if str(source) == "/bad":

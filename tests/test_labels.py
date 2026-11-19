@@ -11,12 +11,9 @@ from trace2rules.labels import (
     label_targets,
 )
 from trace2rules.models import Session, ToolCall
-from trace2rules.synthesize import (
-    _offline_synthesis,
-    _prompt,
-    annotate_findings,
-    label_summary,
-)
+from trace2rules.synthesis.offline import _offline_synthesis
+from trace2rules.synthesis.prompt import _prompt
+from trace2rules.synthesis.selection import annotate_findings, label_summary
 
 
 def test_decision_model_aliases() -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from trace2rules.ingest import (
+from trace2rules.ingest.normalize import (
     _error_detail,
     _error_site,
     _event_outcome,

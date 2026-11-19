@@ -7,10 +7,10 @@ from pathlib import Path
 from rich.console import Console
 from rich.markup import escape
 
-from .mining.models import Finding
-from .synthesis_models import MAX_CHARS, MAX_LINES, MAX_RULES, EXACT_LENGTHS, Rule, Synthesis
-from .synthesis_prompt import _client, _finding_confidence, _llm_synthesis, _make_client, _prompt
-from .synthesis_selection import (
+from ..mining.models import Finding
+from .models import MAX_CHARS, MAX_LINES, MAX_RULES, EXACT_LENGTHS, Rule, Synthesis
+from .prompt import _client, _finding_confidence, _llm_synthesis, _make_client, _prompt
+from .selection import (
     GENERATED_VERIFIER_RE,
     _candidate_score,
     _generated_verifier,
@@ -26,7 +26,7 @@ from .synthesis_selection import (
 )
 
 
-from .synthesis_offline import (
+from .offline import (
     _allowed_sources,
     _attach_rule_provenance,
     _dedupe_templates,
@@ -89,8 +89,8 @@ def synthesize(
     emit: bool = True,
     agents: str | Path | list[str | Path] | None = None,
 ) -> list[Synthesis]:
-    from .mining.sequences import exact_sequences
-    from .mining.mine import mine
+    from ..mining.sequences import exact_sequences
+    from ..mining.mine import mine
 
     console = console or Console()
     repo_rows = _repos_with_sessions(con)
@@ -131,7 +131,7 @@ def synthesize(
         llm_used = False
         existing = None
         if agents:
-            from .agents import audit_payload
+            from ..agents import audit_payload
 
             existing = audit_payload(con, repo_name, agents)
         if not offline:
@@ -159,7 +159,7 @@ def synthesize(
             console.print(f"[yellow]Deterministic rules for {escape(repo_name)} ({reason}).[/yellow]")
 
         if existing:
-            from .reconcile import reconcile
+            from ..reconcile import reconcile
 
             kept, actions = reconcile(synthesis.rules, existing.get("rules", []))
             for action in actions:

@@ -3,9 +3,9 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from .mining.models import Finding
-from .synthesis_models import MAX_RULES, Rule, Synthesis
-from .synthesis_selection import _is_path_target, _truncate
+from ..mining.models import Finding
+from .models import MAX_RULES, Rule, Synthesis
+from .selection import _is_path_target, _truncate
 
 INSTALL_RECOVERY_RE = re.compile(
     r"(?i)\b(pip|pip3|uv|poetry|pipenv|bundle|composer|npm|yarn|pnpm|cargo|go|dotnet|mix)\b.*"

@@ -4,7 +4,9 @@ from trace2rules.db import connect
 from trace2rules.mining import Finding
 from trace2rules.ingest import write_sessions
 from trace2rules.models import Session
-from trace2rules.synthesize import _client, _sequence_tokens, select_findings, synthesize
+from trace2rules.synthesis.prompt import _client
+from trace2rules.synthesis.selection import _sequence_tokens, select_findings
+from trace2rules.synthesis.service import synthesize
 
 
 def test_custom_llm_key_uses_explicit_endpoint(monkeypatch) -> None:
@@ -103,7 +105,7 @@ def test_repo_without_findings_is_skipped(tmp_path, monkeypatch) -> None:
         called = True
         raise AssertionError("LLM should not run without findings")
 
-    monkeypatch.setattr("trace2rules.synthesize._llm_synthesis", fake_llm)
+    monkeypatch.setattr("trace2rules.synthesis.service._llm_synthesis", fake_llm)
     results = synthesize(con)
     con.close()
     assert results == []
@@ -112,7 +114,8 @@ def test_repo_without_findings_is_skipped(tmp_path, monkeypatch) -> None:
 
 def test_rule_with_unknown_source_is_dropped() -> None:
     from trace2rules.mining import Finding
-    from trace2rules.synthesize import Rule, Synthesis, _validate_sources
+    from trace2rules.synthesis.models import Rule, Synthesis
+    from trace2rules.synthesis.offline import _validate_sources
 
     finding = Finding(
         kind="recovery",
@@ -147,7 +150,7 @@ def test_rule_with_unknown_source_is_dropped() -> None:
 
 def test_prompt_omits_detector_recommendations() -> None:
     from trace2rules.mining import Finding
-    from trace2rules.synthesize import _prompt
+    from trace2rules.synthesis.prompt import _prompt
 
     finding = Finding(
         kind="context",
@@ -165,7 +168,8 @@ def test_prompt_omits_detector_recommendations() -> None:
 
 
 def test_rule_provenance_is_attached_from_evidence() -> None:
-    from trace2rules.synthesize import Rule, Synthesis, _attach_rule_provenance
+    from trace2rules.synthesis.models import Rule, Synthesis
+    from trace2rules.synthesis.offline import _attach_rule_provenance
 
     finding = Finding(
         kind="recovery",
@@ -196,7 +200,8 @@ def test_rule_provenance_is_attached_from_evidence() -> None:
 
 
 def test_llm_rules_require_sources() -> None:
-    from trace2rules.synthesize import Rule, Synthesis, _validate_sources
+    from trace2rules.synthesis.models import Rule, Synthesis
+    from trace2rules.synthesis.offline import _validate_sources
 
     synthesis = Synthesis(
         repo="acme/repo",

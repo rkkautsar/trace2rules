@@ -1,5 +1,5 @@
 from trace2rules.reconcile import reconcile
-from trace2rules.synthesize import Rule
+from trace2rules.synthesis.models import Rule
 
 
 def _rule(markdown: str, enforceable: bool = False, enforcement: str = "") -> Rule:

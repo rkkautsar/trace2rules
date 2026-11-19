@@ -12,7 +12,7 @@ import pytest
 from trace2rules.mining import Finding
 from trace2rules.ingest import write_sessions
 from trace2rules.models import Session, ToolCall
-from trace2rules.sources.agent_trajectory import (
+from trace2rules.ingest.sources.agent_trajectory import (
     TranscriptMeta,
     _detect_source,
     _records_to_session,
@@ -20,10 +20,10 @@ from trace2rules.sources.agent_trajectory import (
     extract_transcript_meta,
     ingest_agent_sessions,
 )
-from trace2rules.sources.common import classify_tool_call
-from trace2rules.sources.opencode import ingest_opencode
-from trace2rules.sources.swe_chat import ingest_swe_chat
-from trace2rules.synthesize import _offline_synthesis
+from trace2rules.ingest.sources.common import classify_tool_call
+from trace2rules.ingest.sources.opencode import ingest_opencode
+from trace2rules.ingest.sources.swe_chat import ingest_swe_chat
+from trace2rules.synthesis.offline import _offline_synthesis
 
 
 def _write_swe_chat(root: Path) -> None:
@@ -563,7 +563,7 @@ def test_opencode_export_ingests(tmp_path: Path) -> None:
 
 
 def test_repo_label_uses_git_remote(tmp_path: Path) -> None:
-    from trace2rules.sources.agent_trajectory import _repo_from_cwd
+    from trace2rules.ingest.sources.agent_trajectory import _repo_from_cwd
 
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(
@@ -576,7 +576,7 @@ def test_repo_label_uses_git_remote(tmp_path: Path) -> None:
 def test_limit_selects_most_recent_files(tmp_path: Path) -> None:
     import os
     import time
-    from trace2rules.sources.agent_trajectory import _iter_files
+    from trace2rules.ingest.sources.agent_trajectory import _iter_files
 
     old = tmp_path / "old.jsonl"
     new = tmp_path / "new.jsonl"

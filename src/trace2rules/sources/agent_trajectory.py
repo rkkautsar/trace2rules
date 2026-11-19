@@ -344,7 +344,6 @@ def _iter_files(root: Path, source: str, limit: int | None) -> list[Path]:
         for path in root.rglob(f"*{suffix}")
         if path.is_file() and path.name not in skip
     ]
-    if limit:
         files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
         return files[:limit]
     return files
@@ -595,7 +594,6 @@ def ingest_agent_sessions(
                     normalized = list(
                         normalize_many(
                             [
-                                {"source": source_name, "transcript": text, "bounds": bounds}
                                 for _path, text in texts
                             ]
                         )

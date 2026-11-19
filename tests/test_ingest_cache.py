@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from trace2rules.ingest import _cached_source, _remote_url
+from trace2rules.ingest.normalize import _cached_source, _remote_url
 
 
 class FakeResponse:

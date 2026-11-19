@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from trace2rules.evaluate import evaluate_synthesis
-from trace2rules.synthesize import Rule, Synthesis
+from trace2rules.synthesis.evaluate import evaluate_synthesis
+from trace2rules.synthesis.models import Rule, Synthesis
 
 
 def _synthesis(*rules: Rule) -> Synthesis:

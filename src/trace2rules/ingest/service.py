@@ -6,8 +6,8 @@ from pathlib import Path
 
 from rich.progress import Progress
 
-from .db import DB_PATH, connect
-from .ingest_normalize import (
+from ..db import DB_PATH, connect
+from .normalize import (
     DEFAULT_REPOS,
     OPEN_SWE_FILES,
     OPEN_SWE_SOURCE,
@@ -33,8 +33,8 @@ from .ingest_normalize import (
     _stream_rows,
     normalize_path,
 )
-from .ingest_writer import _flush_sessions, _insert_rows, write_sessions
-from .models import Session, ToolCall
+from .writer import _flush_sessions, _insert_rows, write_sessions
+from ..models import Session, ToolCall
 
 __all__ = [
     "DEFAULT_REPOS",

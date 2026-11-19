@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 
-from .synthesize import Rule, Synthesis
+from .models import Rule, Synthesis
 
 _PLACEHOLDER_RE = re.compile(r"<(?:id|n|path|workspace)>|\{\{")
 

@@ -40,7 +40,7 @@ def _ensure_local_sessions(
     limit: int = 200,
 ) -> bool:
     from .db import connect
-    from .sources.agent_trajectory import ingest_agent_sessions
+    from .ingest.sources.agent_trajectory import ingest_agent_sessions
     from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
     con = connect(db)

@@ -5,8 +5,8 @@ from pathlib import Path
 
 import duckdb
 
-from .db import connect
-from .ingest_normalize import (
+from ..db import connect
+from .normalize import (
     TEXT_ERROR_RE,
     TIMEOUT_RE,
     TOOL_ERROR_RE,
@@ -21,7 +21,7 @@ from .ingest_normalize import (
     _extract_exit_code,
     _observation_cause,
 )
-from .models import Session
+from ..models import Session
 
 def write_sessions(
     db_path: str | Path,

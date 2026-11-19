@@ -7,6 +7,7 @@ import duckdb
 from trace2rules.mining import (
     blind_edits,
     correction_loops,
+    dependency_drift,
     destructive_commands,
     edit_rejections,
     generated_edits,
@@ -288,6 +289,16 @@ def test_generated_edits_flag_vendored_paths(monkeypatch) -> None:
     finding = generated_edits(con)[0]
     assert finding.sessions == 2
     assert "generated or vendored" in finding.title
+
+
+def test_dependency_drift_flags_manifest_edits_without_install(monkeypatch) -> None:
+    con = _detector_db(monkeypatch)
+    _add_sessions(con, 2)
+    for session in ("s0", "s1"):
+        _add_edit(con, session, 1, "pyproject.toml")
+    finding = dependency_drift(con)[0]
+    assert finding.sessions == 2
+    assert "manifest/lockfile" in finding.detail
 
 
 def test_context_advice_distinguishes_test_output_from_repo_entrypoint() -> None:

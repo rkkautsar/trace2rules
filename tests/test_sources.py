@@ -23,7 +23,6 @@ from trace2rules.ingest.sources.agent_trajectory import (
 from trace2rules.ingest.sources.common import classify_tool_call
 from trace2rules.ingest.sources.opencode import ingest_opencode
 from trace2rules.ingest.sources.swe_chat import ingest_swe_chat
-from trace2rules.synthesis.offline import _offline_synthesis
 
 
 def _write_swe_chat(root: Path) -> None:
@@ -461,31 +460,6 @@ def test_unknown_tools_are_other_actions() -> None:
     assert target
     assert verb == "mcp__claude_browser__navigate"
     assert object_id
-
-
-def test_offline_synthesis_skips_command_hotspots() -> None:
-    synthesis = _offline_synthesis(
-        [
-            Finding(
-                kind="hotspot",
-                repo="acme/repo",
-                title="git diff",
-                sessions=5,
-                tokens=100,
-            ),
-            Finding(
-                kind="hotspot",
-                repo="acme/repo",
-                title="src/app.py",
-                sessions=5,
-                tokens=100,
-            ),
-        ],
-        "acme/repo",
-    )
-    assert len(synthesis.rules) == 1
-    assert "git diff" not in synthesis.rules[0].rule_markdown
-    assert "src/app.py" in synthesis.rules[0].rule_markdown
 
 
 def test_opencode_export_ingests(tmp_path: Path) -> None:

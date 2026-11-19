@@ -1,7 +1,7 @@
 from .command_errors import command_errors
 from .context import prompt_context
 from .edit_churn import edit_churn
-from .editing import blind_edits, edit_rejections, generated_edits, site_edit_mismatch, stuck_loops
+from .editing import blind_edits, dependency_drift, edit_rejections, generated_edits, site_edit_mismatch, stuck_loops
 from .environment import environment_thrash
 from .feedback_loops import correction_loops, feedback_loops
 from .global_patterns import global_patterns
@@ -21,6 +21,7 @@ __all__ = [
     "destructive_commands",
     "edit_churn",
     "edit_rejections",
+    "dependency_drift",
     "generated_edits",
     "environment_thrash",
     "failure_loops",

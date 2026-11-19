@@ -53,7 +53,6 @@ def _compact_existing(existing: dict | None) -> dict | None:
 def _prompt(
     findings: list[Finding],
     repo: str,
-    labels: list[dict],
     max_rules: int = MAX_RULES,
     context: dict | None = None,
     existing: dict | None = None,
@@ -75,8 +74,6 @@ def _prompt(
                 "detail": finding.detail,
                 "sequence": finding.sequence,
                 "variants": list(finding.variants),
-                "intent": finding.intent,
-                "object_type": finding.object_type,
                 "cause": finding.cause,
                 "cause_support_sessions": finding.cause_support_sessions,
                 "side": finding.side,
@@ -89,9 +86,6 @@ def _prompt(
 
 Findings from mined agent trajectories for this repo only (JSON):
 {json.dumps(payload, indent=2)}
-
-Semantic target labels observed for this repo (clef/decision-model annotations, JSON):
-{json.dumps(redact_value(labels), indent=2)}
 
 Command/bootstrap evidence (JSON):
 {json.dumps(redact_value(context or {}), indent=2)}
@@ -152,13 +146,7 @@ def _make_client(key: str, base: str | None, model: str):
     return client, model
 
 
-def _llm_synthesis(
-    findings: list[Finding],
-    repo: str,
-    labels: list[dict],
-    max_rules: int = MAX_RULES,
-    existing: dict | None = None,
-) -> Synthesis | None:
+def _llm_prompt(prompt: str) -> Synthesis | None:
     resolved = _client()
     if resolved is None:
         return None
@@ -170,9 +158,9 @@ def _llm_synthesis(
         messages=[
             {
                 "role": "system",
-                "content": "You convert observed coding-agent friction into terse, repo-level AGENTS.md rules.",
+                "content": "You convert observed coding-agent friction into terse, durable AGENTS.md rules.",
             },
-            {"role": "user", "content": _prompt(findings, repo, labels, max_rules, existing=existing)},
+            {"role": "user", "content": prompt},
         ],
     )
     content = (response.choices[0].message.content or "").strip()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import io
+import json
 import os
 import platform
 import shutil
@@ -26,7 +26,6 @@ from .commands.audit import _audit_command
 from .commands.holdout import _holdout_command
 from .db import DB_PATH, connect
 from .ingest import DEFAULT_REPOS, SOURCE, ingest as ingest_traces
-from .labels import label_targets
 from .patterns import mine_sequences
 
 load_dotenv(Path.cwd() / ".env")
@@ -58,13 +57,6 @@ def _ingest_command(
         typer.Option(
             "--refresh-cache",
             help="Re-download the remote parquet instead of using the cached copy.",
-        ),
-    ] = False,
-    label: Annotated[
-        bool,
-        typer.Option(
-            "--label",
-            help="After ingest, label targets if a decision backend is available.",
         ),
     ] = False,
     source: Annotated[
@@ -185,23 +177,6 @@ def _ingest_command(
         )
     if failed_sources and not stats:
         raise typer.Exit(1)
-    if label:
-        from .labels import detect_model
-
-        model = detect_model()
-        if model is None:
-            console.print(
-                "[yellow]No decision backend detected; skipping labeling.[/yellow]"
-            )
-        else:
-            try:
-                done, failed = label_targets(db, model=model)
-                console.print(
-                    f"Labeled [bold]{done}[/bold] targets with [bold]{escape(model)}[/bold]"
-                    f" ({failed} failed)."
-                )
-            except RuntimeError as error:
-                console.print(f"[yellow]Labeling skipped: {escape(str(error))}[/yellow]")
     console.print(f"Database: [bold]{db}[/bold]")
 
 
@@ -304,6 +279,7 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
     for key, label in (
         ("edit_rejection", "rejected edit"),
         ("generated_edit", "generated edit"),
+        ("dependency_drift", "dependency drift"),
         ("blind_edit", "blind edit"),
         ("environment_thrash", "environment thrash"),
         ("destructive_command", "destructive command"),
@@ -484,28 +460,6 @@ def _doctor_command(
             node_version = "unavailable"
         checks.append(("Node.js", "ok", node_version or node))
 
-    try:
-        from .labels import _wrangler_ready, detect_model
-
-        wrangler_ready = _wrangler_ready()
-        checks.append(
-            (
-                "wrangler",
-                "ok" if wrangler_ready else "warn",
-                "authenticated" if wrangler_ready else "not authenticated",
-            )
-        )
-        decision_model = detect_model()
-        checks.append(
-            (
-                "decision backend",
-                "ok" if decision_model else "warn",
-                decision_model or "none detected",
-            )
-        )
-    except Exception as error:  # noqa: BLE001 - doctor must not fail on probes
-        checks.append(("decision backend", "warn", str(error)))
-
     for key in (
         "TRACE2RULES_LLM_API_KEY",
         "TRACE2RULES_API_KEY",
@@ -581,41 +535,10 @@ def _doctor_command(
 app.command("doctor")(_doctor_command)
 
 
-def _label_command(
-    limit: Annotated[int, typer.Option(help="Max pending targets; 0 = all.")] = 0,
-    rpm: Annotated[int, typer.Option(help="Requests per minute cap.")] = 270,
-    workers: Annotated[int, typer.Option(help="Concurrent requests.")] = 6,
-    model: Annotated[
-        str,
-        typer.Option(
-            "--model",
-            help="clef-flash, clef, jev, gemini-decision-1, or gpt-6-luna; auto-detected if omitted.",
-        ),
-    ] = "",
-    db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
-) -> None:
-    try:
-        done, failed = label_targets(
-            db,
-            limit=limit or None,
-            rpm=rpm,
-            workers=workers,
-            model=model or os.getenv("TRACE2RULES_DECISION_MODEL"),
-        )
-    except RuntimeError as error:
-        console.print(f"[red]{escape(str(error))}[/red]")
-        raise typer.Exit(1) from None
-    console.print(f"Labeled [bold]{done}[/bold], failed [bold]{failed}[/bold].")
-
-
-app.command("label")(_label_command)
-
-
 def _patterns_command(
     top: Annotated[int, typer.Option(help="Patterns to show.")] = 25,
     min_sessions: Annotated[int, typer.Option(help="Minimum session support.")] = 3,
     max_len: Annotated[int, typer.Option(help="Maximum sequence length.")] = 4,
-    min_confidence: Annotated[float, typer.Option(help="Minimum label confidence.")] = 0.4,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     con = connect(db)
@@ -629,7 +552,6 @@ def _patterns_command(
             min_sessions=min_sessions,
             max_len=max_len,
             top=top,
-            min_confidence=min_confidence,
         )
         table = Table(title="Semantic friction sequences", header_style="bold", expand=True)
         table.add_column("#", width=3)
@@ -715,115 +637,32 @@ app.command("exact")(_exact_command)
 
 
 def _synthesize_command(
-    repo: Annotated[str | None, typer.Option("--repo", help="Synthesize only this repo.")] = None,
-    top: Annotated[int, typer.Option(help="Findings to pass to synthesis.")] = 25,
-    agents: Annotated[
-        Path | None,
-        typer.Option("--agents", help="Existing AGENTS.md to audit and avoid duplicating."),
-    ] = None,
-    max_rules: Annotated[
-        int,
-        typer.Option("--max-rules", min=1, max=20, help="Maximum rules per repo."),
-    ] = 5,
-    min_support: Annotated[
-        int,
-        typer.Option("--min-support", min=1, max=100, help="Minimum sessions per rule."),
-    ] = 3,
-    offline: Annotated[bool, typer.Option("--offline", help="Skip the LLM and use deterministic rules.")] = False,
-    json_output: Annotated[bool, typer.Option("--json", help="Emit proposed rules with provenance as JSON.")] = False,
-    db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
+    report: Annotated[
+        Path,
+        typer.Option(
+            "--report",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="Report prompt emitted by `trace2rules run` or `report --prompt`.",
+        ),
+    ],
+    json_output: Annotated[bool, typer.Option("--json", help="Emit the parsed synthesis as JSON.")] = False,
 ) -> None:
-    cmd_console = Console(stderr=True)
-    con = connect(db)
+    from .synthesis import synthesize_report
+    from .synthesis.service import render
+
     try:
-        session_count = con.execute("SELECT count(*) FROM sessions").fetchone()[0]
-        if session_count == 0:
-            cmd_console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
-            raise typer.Exit(1)
-        try:
-            from .synthesis import synthesize as synthesize_rules
-
-            results = synthesize_rules(
-                con,
-                repo=repo,
-                top=top,
-                max_rules=max_rules,
-                min_support=min_support,
-                offline=offline,
-                emit=not json_output,
-                console=Console(file=io.StringIO()) if json_output else cmd_console,
-                agents=(
-                    resolve_agents(agents)
-                    if agents
-                    else resolve_agents()
-                    if repo
-                    else None
-                ),
-            )
-        except ValueError as error:
-            cmd_console.print(f"[red]{escape(str(error))}[/red]")
-            raise typer.Exit(1) from None
-        if json_output:
-            import json as _json
-
-            typer.echo(_json.dumps([item.model_dump() for item in results], indent=2))
-            return
-        for synthesis in results:
-            cmd_console.print(
-                f"[dim]{len(synthesis.rules)} rules for {synthesis.repo}.[/dim]"
-            )
-    finally:
-        con.close()
-
-
-def _eval_command(
-    repo: Annotated[str | None, typer.Option("--repo", help="Evaluate one repo.")] = None,
-    max_rules: Annotated[int, typer.Option("--max-rules", min=1, max=20)] = 5,
-    offline: Annotated[bool, typer.Option("--offline/--llm", help="Use deterministic rules.")] = True,
-    json_output: Annotated[bool, typer.Option("--json", help="Emit JSON.")] = False,
-    golden: Annotated[Path | None, typer.Option("--golden", help="Golden rule set JSON.")] = None,
-    db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
-) -> None:
-    from .synthesis.evaluate import evaluate_synthesis, load_golden
-    from .synthesis import synthesize as synthesize_rules
-
-    con = connect(db)
-    try:
-        results = synthesize_rules(
-            con,
-            repo=repo,
-            max_rules=max_rules,
-            offline=offline,
-            console=Console(stderr=True),
-            emit=False,
-        )
-    finally:
-        con.close()
-    specs = load_golden(golden) if golden else None
-    metrics = [evaluate_synthesis(synthesis, specs) for synthesis in results]
+        synthesis = synthesize_report(report.read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, ValueError) as error:
+        console.print(f"[red]{escape(str(error))}[/red]")
+        raise typer.Exit(1) from None
     if json_output:
-        console.print_json(data={"metrics": metrics})
+        typer.echo(json.dumps(synthesis.model_dump(), indent=2))
         return
-    table = Table(title="Synthesis quality")
-    table.add_column("Repo")
-    table.add_column("Rules", justify="right")
-    table.add_column("Placeholders", justify="right")
-    table.add_column("Redundancy", justify="right")
-    table.add_column("Citations", justify="right")
-    table.add_column("Precision@5", justify="right")
-    for row in metrics:
-        table.add_row(
-            escape(str(row["repo"])),
-            str(row["rules"]),
-            f"{row['placeholder_rate']:.0%}",
-            f"{row['template_redundancy']:.0%}",
-            f"{row['citation_rate']:.0%}",
-            f"{row.get('precision_at_5', 0):.0%}",
-        )
-    console.print(table)
+    typer.echo(render(synthesis, synthesis.repo, 0))
 
 
-app.command("eval")(_eval_command)
 app.command("synthesize")(_synthesize_command)
 
 

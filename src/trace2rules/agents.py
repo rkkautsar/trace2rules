@@ -3,7 +3,7 @@
 New code should import from ``trace2rules.audit.*``.
 """
 
-from .audit.enforcement import discover_enforcement
+from .audit.enforcement import discover_enforcement, enforcement_inventory
 from .audit.engine import (
     RuleAudit,
     _infer_scope,
@@ -31,6 +31,7 @@ __all__ = [
     "audit_prompt",
     "available_text",
     "discover_enforcement",
+    "enforcement_inventory",
     "latest_agents_commit",
     "parse_agents",
     "parse_agents_text",

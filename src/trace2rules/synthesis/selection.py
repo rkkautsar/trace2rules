@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 import re
-from collections import defaultdict
 
 from rich.console import Console
 from rich.markup import escape
@@ -72,6 +71,7 @@ def _candidate_score(finding: Finding) -> float:
         "failure_loop": 1.6,
         "edit_rejection": 1.7,
         "generated_edit": 1.8,
+        "dependency_drift": 1.4,
         "blind_edit": 1.2,
         "environment_thrash": 0.7,
         "destructive_command": 2.0,
@@ -111,6 +111,7 @@ def select_findings(
         "failure_loop",
         "edit_rejection",
         "generated_edit",
+        "dependency_drift",
         "blind_edit",
         "environment_thrash",
         "destructive_command",
@@ -171,112 +172,6 @@ def select_findings(
         if len(selected) >= limit:
             break
     return selected[:limit]
-
-
-def annotate_findings(con, findings: list[Finding]) -> list[Finding]:
-    """Attach labels by full event key, falling back to the finding title."""
-    targets = sorted(
-        {finding.title for finding in findings if finding.title}
-        | {
-            target
-            for finding in findings
-            for _tool, _action, target in finding.event_keys
-        }
-    )
-    if not targets:
-        return findings
-    placeholders = ",".join("?" for _ in targets)
-    rows = con.execute(
-        f"""
-        SELECT tool_name, action_type, target,
-               intent, object_type, intent_confidence, object_confidence
-        FROM target_labels
-        WHERE target IN ({placeholders})
-        """,
-        targets,
-    ).fetchall()
-
-    grouped: dict[tuple[str, str, str], list[tuple[str, str, float, float]]] = defaultdict(list)
-    for tool_name, action_type, target, intent, object_type, intent_confidence, object_confidence in rows:
-        grouped[(tool_name, action_type, target)].append(
-            (intent, object_type, float(intent_confidence), float(object_confidence))
-        )
-
-    labels: dict[tuple[str, str, str], tuple[str, str, float, float]] = {}
-    for key, entries in grouped.items():
-        intents = {entry[0] for entry in entries}
-        objects = {entry[1] for entry in entries}
-        if len(intents) != 1 or len(objects) != 1:
-            continue
-        intent, object_type, intent_confidence, object_confidence = max(
-            entries, key=lambda entry: (entry[2] + entry[3], entry[3], entry[2])
-        )
-        if intent_confidence < 0.4 or object_confidence < 0.6:
-            continue
-        labels[key] = (intent, object_type, intent_confidence, object_confidence)
-
-    title_labels = {
-        key[2]: value for key, value in labels.items() if key[0] and key[1]
-    }
-    annotated = []
-    for finding in findings:
-        candidates = [labels[key] for key in finding.event_keys if key in labels]
-        label = (
-            max(candidates, key=lambda item: (item[2] + item[3], item[3], item[2]))
-            if candidates
-            else title_labels.get(finding.title)
-        )
-        if label is None:
-            annotated.append(finding)
-            continue
-        intent, object_type, intent_confidence, object_confidence = label
-        from dataclasses import replace
-
-        annotated.append(
-            replace(
-                finding,
-                intent=intent,
-                object_type=object_type,
-                intent_confidence=float(intent_confidence),
-                object_confidence=float(object_confidence),
-            )
-        )
-    return annotated
-
-
-def label_summary(con, repo: str, limit: int = 12) -> list[dict]:
-    rows = con.execute(
-        """
-        SELECT l.intent, l.object_type,
-               count(*) AS calls,
-               count(DISTINCT e.session_id) AS sessions,
-               avg(l.intent_confidence) AS intent_confidence,
-               avg(l.object_confidence) AS object_confidence
-        FROM tool_events e
-        JOIN target_labels l
-          ON e.tool_name = l.tool_name
-         AND e.action_type = l.action_type
-         AND e.target = l.target
-        WHERE e.repo = ?
-        GROUP BY 1, 2
-        HAVING avg(l.intent_confidence) >= 0.4
-           AND avg(l.object_confidence) >= 0.6
-        ORDER BY calls DESC
-        LIMIT ?
-        """,
-        [repo, limit],
-    ).fetchall()
-    return [
-        {
-            "intent": intent,
-            "object_type": object_type,
-            "calls": calls,
-            "sessions": sessions,
-            "intent_confidence": round(float(intent_confidence or 0), 2),
-            "object_confidence": round(float(object_confidence or 0), 2),
-        }
-        for intent, object_type, calls, sessions, intent_confidence, object_confidence in rows
-    ]
 
 
 def _truncate(text: str, width: int) -> str:

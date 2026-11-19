@@ -313,13 +313,11 @@ def test_report_emits_machine_readable_evidence(tmp_path: Path) -> None:
     payload = json.loads(result.output)
     assert payload["sessions"] == 1
     assert payload["instances"] == 1
-    assert payload["labels"] == 0
     assert payload["repos"] == [{"repo": "acme/repo", "sessions": 1}]
     assert isinstance(payload["findings"], list)
 
 
 def test_doctor_reports_environment(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("trace2rules.labels._wrangler_ready", lambda: False)
     result = runner.invoke(
         app,
         ["doctor", "--db", str(tmp_path / "pending.duckdb")],
@@ -330,7 +328,6 @@ def test_doctor_reports_environment(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_doctor_survives_a_node_timeout(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("trace2rules.labels._wrangler_ready", lambda: False)
     monkeypatch.setattr("trace2rules.cli.shutil.which", lambda _: "/usr/local/bin/node")
 
     def timeout(*args, **kwargs):
@@ -370,52 +367,54 @@ def test_ingest_continues_after_a_bad_source(monkeypatch) -> None:
     assert "/good" in result.output
 
 
-def test_synthesize_defaults_to_stdout(tmp_path: Path, monkeypatch) -> None:
-    db = tmp_path / "stdout.duckdb"
-    sessions = []
-    for index in range(3):
-        sessions.append(
-            Session(
-                f"s{index}",
-                "acme/repo",
-                source="test",
-                calls=[
-                    ToolCall(
-                        "Read",
-                        "src/a.py",
-                        observation="contents",
-                        action_type="read",
-                        target="src/a.py",
-                        verb="read",
-                        object_id="src/a.py",
-                    )
-                ],
-            )
-        )
-    write_sessions(db, sessions)
-    monkeypatch.chdir(tmp_path)
-    result = runner.invoke(app, ["synthesize", "--db", str(db), "--offline"])
-    assert result.exit_code == 0
-    assert "No rules for acme/repo" in result.output
+def test_synthesize_reads_a_report_prompt(tmp_path: Path, monkeypatch) -> None:
+    from trace2rules.synthesis.models import Rule, Synthesis
 
-
-def test_synthesize_json_emits_only_json(tmp_path: Path, monkeypatch) -> None:
-    db = tmp_path / "synth-json.duckdb"
-    write_sessions(
-        db,
-        [
-            Session(
-                "s1",
-                "acme/empty",
-                source="test",
-                calls=[ToolCall("Read", "src/a.py", action_type="read", target="src/a.py")],
+    report = tmp_path / "acme__repo.md"
+    report.write_text("# Repository: acme/repo\n\nRepo: acme/repo\n")
+    synthesis = Synthesis(
+        repo="acme/repo",
+        rules=[
+            Rule(
+                category="convention",
+                rule_markdown="Do X.",
+                evidence_summary="3 sessions",
+                estimated_tokens_saved_per_session=0,
             )
         ],
     )
-    monkeypatch.chdir(tmp_path)
-    result = runner.invoke(app, ["synthesize", "--db", str(db), "--offline", "--json"])
+    monkeypatch.setattr(
+        "trace2rules.synthesis.synthesize_report", lambda prompt: synthesis
+    )
+    result = runner.invoke(app, ["synthesize", "--report", str(report)])
     assert result.exit_code == 0
-    assert json.loads(result.output) == []
+    assert "Do X." in result.output
+
+
+def test_synthesize_json_emits_the_parsed_result(tmp_path: Path, monkeypatch) -> None:
+    from trace2rules.synthesis.models import Rule, Synthesis
+
+    report = tmp_path / "acme__repo.md"
+    report.write_text("# Repository: acme/repo\n")
+    synthesis = Synthesis(
+        repo="acme/repo",
+        rules=[
+            Rule(
+                category="convention",
+                rule_markdown="Do X.",
+                evidence_summary="3 sessions",
+                estimated_tokens_saved_per_session=0,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "trace2rules.synthesis.synthesize_report", lambda prompt: synthesis
+    )
+    result = runner.invoke(app, ["synthesize", "--report", str(report), "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["repo"] == "acme/repo"
+    assert payload["rules"][0]["rule_markdown"] == "Do X."
 
 
 def test_report_does_not_audit_cwd_agents_for_other_repo(tmp_path: Path, monkeypatch) -> None:

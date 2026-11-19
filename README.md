@@ -118,7 +118,9 @@ To write one prompt per detected repo instead of one combined stream:
 trace2rules report --prompt --out-dir reports/
 ```
 
-Agent synthesis from the report is the default workflow. `trace2rules synthesize` is the optional built-in LLM fallback.
+Agent synthesis from the report is the primary workflow. `run` writes the prompts; give them to your own agent.
+
+`trace2rules synthesize` is only an optional thin wrapper: it sends one existing report prompt to a configured LLM and prints the parsed rules. It does not ingest, mine, or rebuild the report.
 
 `run` and `mine` auto-ingest local sessions when the database is empty. `ingest` writes to `$TMPDIR/trace2rules/trace2rules.duckdb` by default. Set `TRACE2RULES_DB` to use a persistent path.
 
@@ -151,21 +153,25 @@ source: .github/workflows/package-test.yml
 
 `holdout` fits the same rules on an earlier train slice and a later time holdout, then reports both. This catches rules that only fit the sessions that produced them; it is not a synthesis backtest.
 
-`trace2rules synthesize --agents AGENTS.md` reconciles proposed rules against the audit: duplicates are dropped, configured enforcement is reused, and soft rules are upgraded with concrete enforcement. When run from the target checkout, `--agents` is optional.
+Use `trace2rules synthesize --report reports/acme__repo.md --json` for a machine-readable wrapper result. Each rule carries `support_sessions`, `support_instances`, `confidence`, `finding_kinds`, `evidence_quotes`, and source references when the report prompt includes them.
 
-Use `trace2rules synthesize --json` for machine-readable proposals. Each rule carries `support_sessions`, `support_instances`, `confidence`, `finding_kinds`, `evidence_quotes`, and source references; the deterministic path also labels non-window evidence as `finding:<kind>:<title>`.
+## Synthesis wrapper
 
-## Synthesis
+`run`/`report --prompt` produce the evidence prompt. The normal path is to hand that prompt to your own coding agent.
 
-Synthesis is LLM-first. `trace2rules synthesize` sends redacted gated findings for each repo to an OpenAI-compatible chat model and asks for structured rules. Common API keys, bearer tokens, URL credentials, query tokens, password assignments, and private keys are redacted before external calls; redaction is best-effort, not a guarantee.
+`trace2rules synthesize` is a thin optional wrapper around the same prompt:
+
+```bash
+trace2rules synthesize --report reports/acme__repo.md
+```
+
+It reads the file and sends that exact prompt to an OpenAI-compatible chat model. It does not query DuckDB, re-mine sessions, or reconstruct the prompt. If no provider is configured it exits with an error.
 
 Provider selection:
 
 1. `TRACE2RULES_LLM_API_KEY` — API key for a custom OpenAI-compatible endpoint.
 2. `GEMINI_API_KEY` or `GOOGLE_API_KEY` — Gemini OpenAI-compatible endpoint.
 3. `OPENAI_API_KEY` — OpenAI.
-
-If no key is configured, or the call fails, synthesis falls back to deterministic rules and continues. `--offline` forces the deterministic path without a network call.
 
 `TRACE2RULES_BASE_URL` makes any OpenAI-compatible endpoint usable, including a LiteLLM proxy.
 
@@ -229,7 +235,7 @@ The repository label is inferred from the git remote or working-directory basena
 | `doctor` | Check install, Node, credentials, source stores, and database schema |
 | `patterns` | Mine structural multi-step friction |
 | `exact` | Show exact recurring sequences with evidence |
-| `synthesize` | Print per-repo rules to stdout |
+| `synthesize` | Send an existing report prompt to an LLM |
 | `audit` | Audit existing `AGENTS.md` rules against sessions and suggest enforcement |
 | `holdout` | Audit rules on an earlier train split and a later time holdout |
 
@@ -239,11 +245,8 @@ Useful options:
 trace2rules ingest                         # ~, all detected local stores
 trace2rules ingest --format swe-rebench    # opt into the public dataset
 trace2rules ingest --source PATH --limit 200
-trace2rules synthesize
-trace2rules synthesize --offline
-trace2rules synthesize --max-rules 10
-trace2rules synthesize --min-support 5 --json
-trace2rules synthesize
+trace2rules synthesize --report reports/acme__repo.md
+trace2rules synthesize --report reports/acme__repo.md --json
 trace2rules audit --agents AGENTS.md
 trace2rules audit --agents AGENTS.md --commit HEAD --json
 trace2rules audit --agents AGENTS.md --prompt
@@ -265,11 +268,9 @@ trace2rules report --prompt > /tmp/trace2rules-prompt.txt
 
 `report` emits JSON with repo/session/instance counts, findings, exact sequences, and patterns. For the main agent workflow, `report --prompt` emits the evidence prompt directly; feed that prompt to a fresh agent and let it write the rules. The prompt includes findings, support, windows, and source references, and excludes orientation/hotspot noise. Each finding carries `sessions`, `instances`, `confidence`, `tokens`, `evidence`, and detector-specific fields such as `lift`, `rework`, `setup_tax`, `cost`, and `paired_instances`. Prefer `high`/`medium` confidence findings; treat `low` as a lead, not proof. The report prompt is bounded to the top 10 findings, 3 window events per finding, and 40 existing rules.
 
-The calling agent can then write `AGENTS.md` rules from that evidence without invoking `trace2rules synthesize` or configuring an LLM key.
+The calling agent can then write `AGENTS.md` rules from that evidence without configuring an LLM key.
 
-Rules go to stdout; progress and findings go to stderr.
-
-Synthesis is LLM-first. `--offline` skips the LLM and uses deterministic rules.
+The optional `synthesize --report` wrapper sends that same prompt to one configured model. Rules go to stdout; progress and findings go to stderr.
 
 ## Configuration
 
@@ -281,7 +282,6 @@ Synthesis is LLM-first. `--offline` skips the LLM and uses deterministic rules.
 | `TRACE2RULES_LLM_API_KEY` | API key for a custom OpenAI-compatible endpoint |
 | `TRACE2RULES_BASE_URL` | OpenAI-compatible base URL (including LiteLLM) |
 | `TRACE2RULES_MODEL` | Synthesis model, e.g. `gemini-4-hydrogen` |
-| `TRACE2RULES_DECISION_MODEL` | Labeling backend: `clef-flash` (default), `clef`, `jev`, `gemini-decision-1`, `gpt-6-luna` |
 | `TRACE2RULES_CACHE_DIR` | Local parquet cache; defaults to `~/.cache/trace2rules` |
 | `HF_TOKEN` | Used by `hf download` for gated datasets; not read by trace2rules |
 
@@ -292,15 +292,15 @@ Synthesis is LLM-first. `--offline` skips the LLM and uses deterministic rules.
 1. **Ingest** normalizes tool calls into DuckDB (`sessions`, `tool_events`).
 2. **Detectors** find high-coverage setup failures, repeated exception signatures, read-only hotspots, and large output calls.
 3. **Exact n-gram mining** groups recurring 3–5-step tool sequences with lift and paired-rework evidence. Windows never cross a compaction boundary; nested sequences are deduplicated before selection.
-5. **Synthesis** is LLM-first. It selects gated findings and asks the configured model for structured rules; `--offline` forces deterministic rules.
+5. **Report** selects gated findings and writes one evidence prompt per repo. The optional `synthesize --report` wrapper sends that prompt to an LLM; it does not re-mine.
 
 Generated verifier scripts and low-support task-specific sequences are filtered before synthesis.
 
 ## Data and privacy
 
 - Session data stays in your local DuckDB database.
-- `--offline` performs no LLM calls.
-- LLM synthesis sends mined findings, not the full raw session database. Findings can still contain commands, paths, and repository names; review before using an external provider.
+- `synthesize --report` sends only the report prompt, not the full raw session database.
+- `report`/`run` perform no LLM calls. Findings can still contain commands, paths, and repository names; review before using an external provider.
 - `data/` is gitignored.
 
 ## Known limits

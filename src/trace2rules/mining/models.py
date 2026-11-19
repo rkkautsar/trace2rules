@@ -20,10 +20,6 @@ class Finding:
     paired_instances: int = 0
     delta_rework: float = 0.0
     delta_setup: float = 0.0
-    intent: str = ""
-    object_type: str = ""
-    intent_confidence: float = 0.0
-    object_confidence: float = 0.0
     event_keys: tuple[tuple[str, str, str], ...] = field(default_factory=tuple)
     cause: str = ""
     failure_family: str = ""

@@ -227,3 +227,61 @@ def generated_edits(con: duckdb.DuckDBPyConnection, limit: int | None = None) ->
         )
         for repo, sessions, edits, tokens, example_target, example_session, example_step in con.execute(query).fetchall()
     ]
+
+
+def dependency_drift(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = r"""
+        WITH manifests AS (
+            SELECT session_id, repo, step_idx, target, approx_out_tokens
+            FROM tool_events
+            WHERE action_type = 'edit'
+              AND regexp_matches(
+                  target,
+                  '(?i)(^|/)(pyproject\.toml|requirements[^/]*\.txt|poetry\.lock|uv\.lock|'
+                  'Pipfile|Pipfile\.lock|package\.json|package-lock\.json|pnpm-lock\.yaml|'
+                  'yarn\.lock|Cargo\.toml|Cargo\.lock|go\.mod|go\.sum)$'
+              )
+        ),
+        dependency_commands AS (
+            SELECT DISTINCT session_id
+            FROM tool_events
+            WHERE action_type = 'exec'
+              AND regexp_matches(
+                  raw_target,
+                  '(?i)\b(pip3?|uv|poetry|conda|npm|yarn|pnpm|cargo|go|bundle|composer|dotnet|mix)\s+'
+                  '(install|add|sync|update|remove|uninstall|upgrade|lock|get|ci)\b'
+              )
+        )
+        SELECT repo, count(DISTINCT session_id) AS sessions,
+               count(*) AS edits, sum(approx_out_tokens) AS tokens,
+               arg_max(target, approx_out_tokens) AS example_target,
+               arg_min(session_id, step_idx) AS example_session,
+               arg_min(step_idx, step_idx) AS example_step
+        FROM manifests m
+        WHERE NOT EXISTS (
+            SELECT 1 FROM dependency_commands d WHERE d.session_id = m.session_id
+        )
+        GROUP BY 1
+        HAVING count(DISTINCT session_id) >= 2
+        ORDER BY sessions DESC, edits DESC
+    """
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return [
+        Finding(
+            kind="dependency_drift",
+            repo=repo,
+            title="manifest edits without a dependency operation",
+            sessions=sessions,
+            tokens=int(tokens or 0),
+            detail=f"{edits} manifest/lockfile edits across {sessions} sessions; example {example_target[:120]}",
+            side="agent",
+            recommendation=(
+                "Keep dependency changes intentional. Do not edit manifests or lockfiles unless the task requires it; "
+                "add a lockfile and dependency-review check in CI."
+            ),
+            window=_representative_window(con, example_session, example_step),
+        )
+        for repo, sessions, edits, tokens, example_target, example_session, example_step in con.execute(query).fetchall()
+    ]
+

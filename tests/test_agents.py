@@ -208,6 +208,25 @@ def test_discover_enforcement_marks_tox_available(tmp_path: Path) -> None:
     assert "tox.ini" in source
 
 
+def test_enforcement_inventory_lists_existing_checks(tmp_path: Path) -> None:
+    from trace2rules.agents import enforcement_inventory
+
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text(
+        "jobs:\n  test:\n    steps:\n      - run: uv run pytest -q\n"
+    )
+    (tmp_path / "Makefile").write_text("check:\n\tpytest\n")
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"npm test"}}')
+    hook = tmp_path / ".git" / "hooks" / "pre-commit"
+    hook.parent.mkdir(parents=True)
+    hook.write_text("#!/bin/sh\nuv run ruff check .\n")
+    inventory = enforcement_inventory(tmp_path)
+    assert inventory["make_targets"] == ["check"]
+    assert inventory["package_scripts"] == ["test"]
+    assert any("uv run pytest -q" in cmd for item in inventory["configs"] for cmd in item["commands"])
+    assert inventory["hooks"] == [".git/hooks/pre-commit"]
+
+
 def test_parse_agents_accepts_document_title_sections() -> None:
     rules = parse_agents_text("# AGENTS.md\n- Run `pytest` before committing.\n")
     assert [rule.text for rule in rules] == ["Run `pytest` before committing."]

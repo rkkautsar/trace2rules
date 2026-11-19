@@ -80,6 +80,97 @@ def _command_in_text(command: str, text: str) -> bool:
     return False
 
 
+def _config_files(root: Path) -> list[Path]:
+    files = [
+        root / ".gitlab-ci.yml",
+        root / ".circleci" / "config.yml",
+        root / "azure-pipelines.yml",
+        root / ".travis.yml",
+        root / ".buildkite" / "pipeline.yml",
+        root / ".buildkite" / "pipeline.yaml",
+        root / "Jenkinsfile",
+        root / ".drone.yml",
+        root / "lefthook.yml",
+        root / ".husky" / "pre-commit",
+        root / ".git" / "hooks" / "pre-commit",
+        root / ".git" / "hooks" / "pre-push",
+        root / ".pre-commit-config.yaml",
+        root / ".pre-commit-config.yml",
+        root / "commitlint.config.js",
+        root / "commitlint.config.cjs",
+        root / ".commitlintrc",
+        root / ".commitlintrc.json",
+        root / ".commitlintrc.yml",
+        root / ".commitlintrc.yaml",
+    ]
+    workflows = list((root / ".github" / "workflows").glob("*.yml"))
+    workflows += list((root / ".github" / "workflows").glob("*.yaml"))
+    return files + workflows
+
+
+_COMMAND_START_RE = re.compile(
+    r"(?i)^(?:uv|python3?|pytest|tox|nox|make|just|task|npm|pnpm|yarn|bun|"
+    r"cargo|go|mvn|gradle|dotnet|bundle|rspec|phpunit|mix|swift|"
+    r"pre-commit|ruff|eslint|mypy|tsc|git)\b"
+)
+
+
+def _config_commands(text: str) -> list[str]:
+    commands: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip().lstrip("-").strip()
+        line = re.sub(
+            r"(?i)^(?:run|script|command|entry|steps?):\s*",
+            "",
+            line,
+        ).strip()
+        if not line or line.startswith("#"):
+            continue
+        if _COMMAND_START_RE.match(line):
+            commands.append(line[:300])
+    return list(dict.fromkeys(commands))[:20]
+
+
+def enforcement_inventory(root: Path | None) -> dict[str, object]:
+    if root is None or not root.is_dir():
+        return {}
+    root = root.resolve()
+    configs = []
+    for path in _config_files(root):
+        text = _text(path)
+        if not text:
+            continue
+        commands = _config_commands(text)
+        if commands:
+            configs.append(
+                {
+                    "path": path.relative_to(root).as_posix(),
+                    "commands": commands,
+                }
+            )
+    makefile = _text(root / "Makefile")
+    make_targets = sorted(
+        set(re.findall(r"^([A-Za-z0-9_.-]+)\s*:", makefile, re.M))
+    )
+    scripts: list[str] = []
+    package = root / "package.json"
+    if package.exists():
+        try:
+            scripts = sorted(json.loads(_text(package)).get("scripts", {}).keys())
+        except (json.JSONDecodeError, AttributeError):
+            scripts = []
+    return {
+        "configs": configs,
+        "make_targets": make_targets,
+        "package_scripts": scripts,
+        "hooks": [
+            path.relative_to(root).as_posix()
+            for path in (root / ".git" / "hooks").glob("*")
+            if path.is_file() and not path.name.endswith(".sample")
+        ],
+    }
+
+
 def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:
     """Return (status, source) for an existing enforcement mechanism.
 
@@ -143,31 +234,7 @@ def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:
     rule_text = rule.text.lower()
     is_commit_rule = bool(re.search(r"(?i)pr title|commit message|conventional commits", rule_text))
     configured: list[str] = []
-    config_files = [
-        root / ".gitlab-ci.yml",
-        root / ".circleci" / "config.yml",
-        root / "azure-pipelines.yml",
-        root / ".travis.yml",
-        root / ".buildkite" / "pipeline.yml",
-        root / ".buildkite" / "pipeline.yaml",
-        root / "Jenkinsfile",
-        root / ".drone.yml",
-        root / "lefthook.yml",
-        root / ".husky" / "pre-commit",
-        root / ".git" / "hooks" / "pre-commit",
-        root / ".git" / "hooks" / "pre-push",
-        root / ".pre-commit-config.yaml",
-        root / ".pre-commit-config.yml",
-        root / "commitlint.config.js",
-        root / "commitlint.config.cjs",
-        root / ".commitlintrc",
-        root / ".commitlintrc.json",
-        root / ".commitlintrc.yml",
-        root / ".commitlintrc.yaml",
-    ]
-    workflows = list((root / ".github" / "workflows").glob("*.yml"))
-    workflows += list((root / ".github" / "workflows").glob("*.yaml"))
-    config_files.extend(workflows)
+    config_files = _config_files(root)
     for config in config_files:
         content = _text(config).lower()
         if not content:

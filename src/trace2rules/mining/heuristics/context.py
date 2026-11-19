@@ -14,8 +14,12 @@ from ..core import (
     _repo_window,
 )
 from ..models import Finding
+from ...audit.enforcement import enforcement_inventory
 
-def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
+
+def prompt_context(
+    con: duckdb.DuckDBPyConnection, repo: str, root=None
+) -> dict:
     """Evidence blocks that are too specific to be generic findings."""
     pairs = con.execute(
         """
@@ -199,6 +203,7 @@ def prompt_context(con: duckdb.DuckDBPyConnection, repo: str) -> dict:
             {"target": target, "sessions": sessions, "calls": calls, "tokens": tokens}
             for target, sessions, calls, tokens in reads
         ],
+        "enforcement": enforcement_inventory(root),
         "outcomes": {
             "sessions": outcomes[0],
             "with_edit": outcomes[1],

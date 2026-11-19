@@ -48,7 +48,6 @@ def _report_command(
         if session_count == 0:
             console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
             raise typer.Exit(1)
-        label_count = con.execute("SELECT count(*) FROM target_labels").fetchone()[0]
         repo_rows = con.execute(
             "SELECT repo, count(*) FROM sessions GROUP BY repo ORDER BY repo"
         ).fetchall()
@@ -57,12 +56,12 @@ def _report_command(
         from ..mining.mine import mine as mine_friction
         from ..synthesis.models import EXACT_LENGTHS
         from ..synthesis.prompt import _finding_confidence, _prompt
-        from ..synthesis.selection import annotate_findings, label_summary, select_findings
+        from ..synthesis.selection import select_findings
 
         mined = mine_friction(con, top=None if (repo or prompt) else top)
         findings = [
             finding
-            for key in ("hotspots", "recovery", "context", "orientation", "selector_miss", "workaround", "stuck_loop", "noop_retry", "premature_completion", "low_validation", "site_edit_mismatch", "feedback", "failure_loop", "edit_rejection", "generated_edit", "blind_edit", "environment_thrash", "destructive_command", "no_reproduction", "false_completion", "correction_loop")
+            for key in ("hotspots", "recovery", "context", "orientation", "selector_miss", "workaround", "stuck_loop", "noop_retry", "premature_completion", "low_validation", "site_edit_mismatch", "feedback", "failure_loop", "edit_rejection", "generated_edit", "dependency_drift", "blind_edit", "environment_thrash", "destructive_command", "no_reproduction", "false_completion", "correction_loop")
             for finding in mined[key]
         ]
         exact = []
@@ -109,11 +108,8 @@ def _report_command(
                         return found
                 return None
             for repo_name, _count in repo_rows:
-                selected_findings = annotate_findings(
-                    con,
-                    select_findings(
-                        exact, mined, repo_name, min_sessions=min_support
-                    ),
+                selected_findings = select_findings(
+                    exact, mined, repo_name, min_sessions=min_support
                 )
                 selected_findings = [
                     finding
@@ -122,14 +118,23 @@ def _report_command(
                 ]
                 repo_agents = agents_for(repo_name)
                 existing = audit_payload(con, repo_name, repo_agents) if repo_agents else None
+                repo_root = None
+                if repo_agents:
+                    repo_root = Path(repo_agents[0]).resolve().parent
+                else:
+                    cwd_row = con.execute(
+                        "SELECT cwd FROM sessions WHERE repo = ? AND cwd <> '' LIMIT 1",
+                        [repo_name],
+                    ).fetchone()
+                    if cwd_row and Path(cwd_row[0]).is_dir():
+                        repo_root = Path(cwd_row[0])
                 chunks.append(
                     f"# Repository: {repo_name}\n\n"
                     + _prompt(
                         selected_findings,
                         repo_name,
-                        label_summary(con, repo_name),
                         max_rules=5,
-                        context=prompt_context(con, repo_name),
+                        context=prompt_context(con, repo_name, repo_root),
                         existing=existing,
                     )
                 )
@@ -157,7 +162,6 @@ def _report_command(
             "db": str(db),
             "sessions": session_count,
             "instances": instance_count,
-            "labels": label_count,
             "repos": [{"repo": name, "sessions": count} for name, count in repo_rows],
             "findings": [
                 {**asdict(finding), "evidence": finding.evidence}

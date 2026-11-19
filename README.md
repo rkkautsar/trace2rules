@@ -72,26 +72,26 @@ Fresh agent synthesis from the actual report prompts:
 **`swc-project/swc`**
 
 - Validate with `RUSTUP_TOOLCHAIN=1.84.1 cargo test -p <crate> --offline`; bare `cargo` tried to download nightly and failed in 21 sessions. Add a required CI wrapper that sets the toolchain.
-- Locate symbols with `rg -n` and read only the enclosing range in `crates/swc_ecma_codegen/src/lib.rs` and `crates/swc/src/config/mod.rs`; they were re-read 112 times across 27 sessions and 60 times across 25 sessions. Harness-only.
+- Locate symbols with `rg -n` and read only the enclosing range in `crates/swc_ecma_codegen/src/lib.rs` and `crates/swc/src/config/mod.rs`; they were re-read 112 times across 27 sessions and 60 times across 25 sessions.
 - Enforce the snapshot rule: 11/171 sessions used `UPDATE=1 cargo test`; 124 ran no test. Run it in pre-commit/CI and fail on uncommitted fixture outputs.
 - Run the touched crate’s tests after the first edit, not only at the end; 26 sessions had no test/lint after their first edit.
 
 **`rkkautsar/trace2rules`**
 
 - Trace the pipeline `cli.py -> ingest.py -> detectors.py/patterns.py -> cluster.py -> synthesize.py`; confirm command flags with `uv run trace2rules <subcommand> --help`. There were 13 selector misses across 5 sessions.
-- Read `ingest.py` and `cli.py` by symbol with `rg -n` and enclosing ranges; `ingest.py` had 60 extra reads across 13 sessions and `cli.py` 41 across 9. Harness-only.
+- Read `ingest.py` and `cli.py` by symbol with `rg -n` and enclosing ranges; `ingest.py` had 60 extra reads across 13 sessions and `cli.py` 41 across 9.
 - Make `uv run pytest -q` a required check; only 1 of 4 edit sessions ran it after the final edit. Add a CI required check.
 
 **`rkkautsar/louibot`**
 
 - Validate with `npx tsc --noEmit && npm test` followed by `npm run build`; 5 of 7 edit sessions were validated. Add a CI required check.
-- Never whole-read `src/agent.ts`; use `rg -n` and 40–80 line windows. It had 225 reads across 9 sessions and 216 extra re-reads across 6. Harness-only.
-- Inspect one benchmark run’s manifest/log by path instead of listing and re-reading the artifact tree; it was read-only in 7/23 sessions. Harness warning only.
+- Never whole-read `src/agent.ts`; use `rg -n` and 40–80 line windows. It had 225 reads across 9 sessions and 216 extra re-reads across 6.
+- Inspect one benchmark run’s manifest/log by path instead of listing and re-reading the artifact tree; it was read-only in 7/23 sessions.
 
 **`rkkautsar/personal-website`**
 
-- Replace copied `trace2rules` rules: all four audited rules reference paths that do not exist here, and 5/5 editing sessions ended unvalidated. Add a repo-specific validation command and a CI guard against copying `src/trace2rules`/`uv run pytest` rules.
-- Read `scripts/generate-blog.mjs` by targeted range instead of whole-file bash reads; 3 sessions showed ~7.4k read tokens. Harness warning only.
+- Remove copied `trace2rules` rules (`src/trace2rules/*`, `uv run pytest`): they target another repository, and 5/5 editing sessions had no matching validation command. Replace them with this website's actual build/regeneration checks.
+- Read `scripts/generate-blog.mjs` by targeted range instead of whole-file bash reads; 3 sessions showed ~7.4k read tokens.
 
 Rules are capped at 5 rules, 160 lines, and 12,000 characters per repo.
 

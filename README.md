@@ -6,31 +6,6 @@ Mine and audit coding-agent sessions into evidence-backed `AGENTS.md` rules.
 
 Status: beta. The output is a proposal, not an automatically applied `AGENTS.md`.
 
-## Project layout
-
-- `mining/heuristics/`: one focused detector per file, such as `repeated_reads.py`.
-- `audit/parsing.py`: AGENTS.md parsing and rule categories.
-- `audit/enforcement.py`: CI, pre-commit, Makefile, and package-script discovery.
-- `audit/scope.py`: source/test scope inference.
-- `audit/reads.py`: read-hygiene and stale-path helpers.
-- `audit/engine.py`: audit execution and payload assembly.
-- `audit/heuristics/`: one audit category per file, with a shared `AuditOutcome`.
-- `ingest_normalize.py`: source normalization and event evidence extraction.
-- `ingest_writer.py`: canonical sessions/events writer.
-- `ingest.py`: ingestion orchestration and compatibility facade.
-- `commands/`: extracted multi-step CLI handlers; `cli.py` keeps Typer wiring.
-- `detectors_core.py`: shared `Finding` model, session summary, and evidence-window helpers.
-- `detectors.py`: stable facade for detector imports and the aggregate `all_findings`.
-- `session_signals.py`: compatibility facade for the session-signal heuristics.
-- `agents.py`: auditing, rule parsing, enforcement, and audit payloads.
-- `synthesis_models.py`: `Rule` and `Synthesis` schemas.
-- `synthesis_selection.py`: finding ranking, labeling, and selection.
-- `synthesis_prompt.py`: prompt rendering and LLM client.
-- `synthesis_offline.py`: deterministic rule construction and validation.
-- `synthesize.py`: runtime orchestration and output caps; the main workflow remains `run`/`report`.
-
-New heuristics should live in `mining/heuristics/<name>.py` and be exported from `mining/heuristics/__init__.py`.
-
 ## Quick start: audit existing rules
 
 Run from the target checkout. `AGENTS.md` and `CLAUDE.md` are auto-detected.

@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from .models import AgentRule
-from .parsing import COMMAND_RE, PATH_RE, _normalize_command
+from .parsing import PATH_RE, _normalize_command
 
 
 def enforcement_for(rule: AgentRule) -> str:

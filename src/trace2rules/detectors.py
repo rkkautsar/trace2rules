@@ -22,17 +22,6 @@ from .session_signals import (
     repeated_reads,
 )
 
-__all__ = [
-    "Finding",
-    "session_summary",
-    "command_errors",
-    "edit_churn",
-    "feedback_loops",
-    "permission_denials",
-    "repeated_reads",
-]
-
-
 def hotspots(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     query = """
         WITH per_session AS (

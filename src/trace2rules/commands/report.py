@@ -10,7 +10,7 @@ from typing import Annotated
 import typer
 
 from ..agents import audit_payload, resolve_agents
-from ..cli_common import _ensure_local_sessions, _repo_matches_cwd, _resolve_repo_label, console
+from ..cli_common import _ensure_local_sessions, _repo_matches_cwd, console
 from ..db import DB_PATH, connect
 from ..patterns import mine_sequences
 

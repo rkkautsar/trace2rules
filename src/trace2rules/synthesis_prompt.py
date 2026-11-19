@@ -6,7 +6,7 @@ import re
 
 from .detectors import Finding
 from .redact import redact_value
-from .synthesis_models import MAX_CHARS, MAX_LINES, MAX_RULES, Rule, Synthesis
+from .synthesis_models import MAX_CHARS, MAX_LINES, MAX_RULES, Synthesis
 
 PROMPT_FINDINGS = 10
 PROMPT_WINDOW_EVENTS = 3

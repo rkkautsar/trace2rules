@@ -6,13 +6,14 @@ import os
 import re
 import shlex
 import urllib.request
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
-from .models import Session, ToolCall
+import duckdb
+from rich.progress import Progress
+
 
 SOURCE = "hf://datasets/nebius/SWE-rebench-openhands-trajectories/trajectories.parquet"
 _OPEN_SWE_BASE = (

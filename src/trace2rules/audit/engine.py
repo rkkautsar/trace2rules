@@ -30,10 +30,7 @@ from .reads import (
 )
 from .scope import _infer_scope
 from .parsing import (
-    COMMAND_RE,
     DOC_TARGET_RE,
-    NEGATIVE_RULE_RE,
-    PATH_RE,
     SCRATCH_RE,
     TEST_RUN_RE,
     VALIDATION_RE,
@@ -296,19 +293,14 @@ def audit_agents(
                 violations += outcome.violations
                 examples.extend(outcome.examples)
             elif rule.category == "hook_bypass":
-                commit_events = [
-                    raw for _sid, _step, action, raw, _target, _object, _outcome in events
-                    if action == "exec" and re.search(r"\bgit\s+commit\b", raw)
-                ]
-                if not commit_events:
+                outcome = evaluate_hook_bypass(rule, events)
+                if outcome is None:
                     continue
-                applicable += 1
-                observed += 1
-                examples.extend(commit_events[:2])
-                if any("--no-verify" in raw for raw in commit_events):
-                    violations += 1
-                else:
-                    compliant += 1
+                applicable += outcome.applicable
+                observed += outcome.observed
+                compliant += outcome.compliant
+                violations += outcome.violations
+                examples.extend(outcome.examples)
             elif rule.category == "context_hygiene":
                 outcome = evaluate_context_hygiene(
                     rule,

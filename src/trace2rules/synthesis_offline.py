@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from .detectors import Finding
 from .synthesis_models import MAX_RULES, Rule, Synthesis

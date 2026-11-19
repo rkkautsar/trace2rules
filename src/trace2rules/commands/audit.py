@@ -120,7 +120,7 @@ def _audit_command(
     finally:
         con.close()
     if prompt_output:
-        from .agents import audit_prompt
+        from ..agents import audit_prompt
 
         sys.stdout.write(audit_prompt(payload))
         return

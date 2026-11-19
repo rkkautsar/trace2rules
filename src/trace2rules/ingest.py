@@ -41,6 +41,7 @@ __all__ = [
     "OPEN_SWE_SOURCE",
     "SOURCE",
     "ingest",
+    "normalize_path",
     "write_sessions",
 ]
 

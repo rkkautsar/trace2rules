@@ -1,20 +1,16 @@
 from __future__ import annotations
 
 import io
-import json
 import os
 import platform
 import shutil
 import subprocess
 import sys
-from dataclasses import asdict
-from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated
 
 import duckdb
-import sys
 
 import typer
 from dotenv import load_dotenv
@@ -23,8 +19,8 @@ from rich.markup import escape
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from .agents import audit_commit, audit_payload, latest_agents_commit, resolve_agents
-from .cli_common import _ensure_local_sessions, _repo_matches_cwd, _resolve_repo_label, console
+from .agents import resolve_agents
+from .cli_common import _ensure_local_sessions, _repo_matches_cwd, console
 from .commands.report import _report_command, _run_command
 from .commands.audit import _audit_command
 from .db import DB_PATH, connect

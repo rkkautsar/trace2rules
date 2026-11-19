@@ -575,3 +575,37 @@ def test_parse_agents_keeps_command_bearing_nonimperative_bullets(tmp_path: Path
     assert len(rules) == 3
     assert any("cargo test -p <crate>" in rule.commands for rule in rules)
     assert any(any("cargo clippy" in command for command in rule.commands) for rule in rules)
+
+
+def test_optional_guidance_is_not_a_rule(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Testing\n\n- You can do `UPDATE=1 cargo test` to refresh fixtures.\n")
+    assert parse_agents(path) == []
+
+
+def test_crate_test_rule_is_scoped_to_crate_edits(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Testing\n\n- For each touched crate, run `cargo test -p <crate>`.\n")
+    db = tmp_path / "crate.duckdb"
+    write_sessions(
+        db,
+        [
+            Session("a", "acme/repo", calls=[ToolCall("Edit", "README.md", action_type="edit")]),
+            Session("b", "acme/repo", calls=[ToolCall("Edit", "crates/x/src/lib.rs", action_type="edit")]),
+            Session(
+                "b2",
+                "acme/repo",
+                calls=[
+                    ToolCall("Edit", "crates/x/src/lib.rs", action_type="edit"),
+                    ToolCall("Bash", "cargo test -p x", action_type="exec", is_error=False),
+                ],
+            ),
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.opportunities == 2
+    assert audit.followed == 1

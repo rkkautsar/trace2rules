@@ -47,6 +47,7 @@ IMPERATIVE_RE = re.compile(
     r"verify|confirm|open|close|edit|format|reduce|simplify)\b"
 )
 RULE_CUE_RE = re.compile(r"(?i)\b(must|should|required|never|avoid|do not|don't)\b")
+OPTIONAL_RULE_RE = re.compile(r"(?i)^(?:you can|you may|optionally|feel free|consider)\b")
 
 
 @dataclass(slots=True)
@@ -280,7 +281,7 @@ def parse_agents_text(text: str, source: str = "AGENTS.md") -> list[AgentRule]:
                 ):
                     continue
                 text = stripped
-        if not text or len(text) < 12:
+        if not text or len(text) < 12 or OPTIONAL_RULE_RE.search(text):
             continue
         if (
             not IMPERATIVE_RE.search(text)
@@ -621,6 +622,29 @@ def _large_source(path: str, root: Path | None, names: set[str]) -> bool:
         return False
 
 
+def _scoped_test_edits(rule: AgentRule, edit_events: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    lower = rule.text.lower()
+    if "<crate>" in lower or ("cargo test" in lower and "crate" in lower):
+        return [
+            (step, target)
+            for step, target in edit_events
+            if target.endswith(".rs") and re.search(r"(^|/)crates/", target)
+        ]
+    if "snapshot" in lower:
+        return [
+            (step, target)
+            for step, target in edit_events
+            if re.search(r"(?i)(^|/)(?:tests?|fixtures?|snapshots?)/|\.snap$", target)
+        ]
+    if "fixture" in lower:
+        return [
+            (step, target)
+            for step, target in edit_events
+            if re.search(r"(?i)(^|/)(?:tests?|fixtures?)/", target)
+        ]
+    return edit_events
+
+
 def _read_hygiene(events: list[tuple], root: Path | None, rule: AgentRule) -> tuple[list[str], bool]:
     names = {
         Path(name).name
@@ -732,6 +756,7 @@ def audit_agents(
                     (step, target) for step, target in edit_events
                     if scope or not DOC_TARGET_RE.search(target or "")
                 ]
+                edit_events = _scoped_test_edits(rule, edit_events)
                 if not edit_events:
                     continue
             edit_steps = [step for step, _target in edit_events]

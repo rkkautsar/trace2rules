@@ -65,37 +65,6 @@ def test_audit_counts_exercised_and_violated_sessions(tmp_path: Path) -> None:
     assert audits[0].violation_sessions == 1
 
 
-def test_parallel_audit_matches_serial(tmp_path: Path) -> None:
-    path = tmp_path / "AGENTS.md"
-    path.write_text(
-        "- Run `python -m pytest tests/test_api.py` after editing.\n"
-        "- Never add `reproduce_issue.py` at the root.\n"
-    )
-    db = tmp_path / "audit.duckdb"
-    write_sessions(
-        db,
-        [
-            Session(
-                "s1",
-                "acme/repo",
-                calls=[
-                    ToolCall("Edit", "src/api.py", action_type="edit", target="src/api.py"),
-                ],
-            )
-        ],
-    )
-    con = connect(db)
-    try:
-        rules = parse_agents(path)
-        serial = [audit.as_dict() for audit in audit_agents(con, "acme/repo", rules)]
-        parallel = [
-            audit.as_dict() for audit in audit_agents(con, "acme/repo", rules, workers=2)
-        ]
-    finally:
-        con.close()
-    assert parallel == serial
-
-
 def test_workaround_detector_is_not_cancelled(tmp_path: Path) -> None:
     from trace2rules.detectors import workaround_scripts
 

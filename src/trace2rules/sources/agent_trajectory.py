@@ -222,6 +222,14 @@ def extract_transcript_meta(path: Path, source: str, text: str) -> TranscriptMet
     return meta
 
 
+def _scan_transcript(path: Path, source: str):
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as error:
+        return path, None, error
+    return path, extract_transcript_meta(path, source, text), None
+
+
 def _normalize_parent(value: str) -> str:
     if not value:
         return ""
@@ -545,20 +553,21 @@ def ingest_agent_sessions(
                 if progress
                 else None
             )
-            for path in files:
-                try:
-                    text = path.read_text(encoding="utf-8", errors="replace")
-                except OSError as error:
-                    print(f"Skipping {path}: {error}")
-                    continue
-                meta = extract_transcript_meta(path, source_name, text)
-                meta.session_id = meta.session_id or _session_id(path)
-                if progress and scan_task is not None:
-                    progress.update(scan_task, advance=1)
-                if meta.session_id in metas_by_id:
-                    continue
-                metas_by_id[meta.session_id] = meta
-                transcript_metas.append((path, meta))
+            with ThreadPoolExecutor(max_workers=min(8, len(files))) as pool:
+                scanned = pool.map(
+                    lambda path: _scan_transcript(path, source_name), files
+                )
+                for path, meta, error in scanned:
+                    if error is not None:
+                        print(f"Skipping {path}: {error}")
+                        continue
+                    meta.session_id = meta.session_id or _session_id(path)
+                    if progress and scan_task is not None:
+                        progress.update(scan_task, advance=1)
+                    if meta.session_id in metas_by_id:
+                        continue
+                    metas_by_id[meta.session_id] = meta
+                    transcript_metas.append((path, meta))
             for meta in metas_by_id.values():
                 meta.instance_id = _resolve_instance(meta.session_id, metas_by_id)
 

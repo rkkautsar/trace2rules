@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from rich.progress import Progress
@@ -46,6 +48,70 @@ __all__ = [
 ]
 
 
+def _parse_prefix(
+    source: str,
+    prefix: str,
+    limit: int,
+    progress: Progress | None,
+    source_format: str,
+    classify_cache: dict[tuple[str, str], tuple[str, str, str, str]],
+    source_label: str,
+) -> tuple[int, list[dict], list[tuple]]:
+    matched = 0
+    sessions: list[dict] = []
+    events: list[tuple] = []
+    for row in _stream_rows(
+        source,
+        prefix,
+        limit,
+        progress=progress,
+        refresh=False,
+        source_format=source_format,
+    ):
+        matched += 1
+        session, calls = _parse_row(row)
+        if not session.get("source_ref"):
+            session["source_ref"] = f"{source_label}#trajectory_id={session['session_id']}"
+        sessions.append(session)
+        events.extend(_events_for_calls(calls, classify_cache))
+    return matched, sessions, events
+
+
+def _store_prefix(
+    con,
+    prefix: str,
+    matched: int,
+    sessions: list[dict],
+    events: list[tuple],
+) -> IngestStats:
+    for start in range(0, len(sessions), 64):
+        _flush_sessions(con, sessions[start:start + 64])
+    con.execute("DELETE FROM tool_events WHERE session_id IN (SELECT session_id FROM new_sessions)")
+    con.execute("DELETE FROM sessions WHERE session_id IN (SELECT session_id FROM new_sessions)")
+    con.execute(
+        "INSERT INTO sessions (session_id, repo, instance_id, resolved, total_turns, source_ref, started_at) "
+        "SELECT session_id, repo, instance_id, resolved, total_turns, source_ref, started_at FROM new_sessions"
+    )
+    if events:
+        _insert_rows(
+            con,
+            "tool_events",
+            events,
+            columns=[
+                "event_id", "session_id", "repo", "step_idx", "tool_name",
+                "action_type", "verb", "object_id", "target", "raw_target",
+                "outcome", "exit_code", "error_signature", "is_error",
+                "approx_out_tokens", "obs_excerpt", "obs_cause",
+                "error_detail", "error_site", "error_message",
+                "error_family", "error_origin", "event_hash",
+                "assistant_context",
+            ],
+        )
+    session_count = con.execute("SELECT count(*) FROM new_sessions").fetchone()[0]
+    con.execute("DELETE FROM new_sessions")
+    return IngestStats(prefix, matched, session_count, len(events))
+
+
 def ingest(
     repos: list[str] | None = None,
     limit: int = 200,
@@ -54,8 +120,13 @@ def ingest(
     progress: Progress | None = None,
     refresh_cache: bool = False,
     source_format: str = "swe-rebench",
+    workers: int | None = None,
 ) -> list[IngestStats]:
     repos = repos or DEFAULT_REPOS
+    workers = workers or min(8, len(repos), os.cpu_count() or 1)
+    resolved_source = (
+        source if source_format == "open-swe" else _cached_source(source, progress, refresh=refresh_cache)
+    )
     con = connect(db_path)
     con.execute(
         "CREATE OR REPLACE TEMP TABLE new_sessions "
@@ -64,60 +135,44 @@ def ingest(
     )
     stats: list[IngestStats] = []
     classify_cache: dict[tuple[str, str], tuple[str, str, str, str]] = {}
+    task_ids: list[int | None] = []
     con.execute("BEGIN TRANSACTION")
     try:
         for prefix in repos:
-            matched = 0
-            events_for_prefix: list[tuple] = []
-            new_sessions_batch: list[dict] = []
-            task_id = progress.add_task(f"{prefix}", total=limit or None) if progress else None
-            for row in _stream_rows(
-                source,
-                prefix,
-                limit,
-                progress=progress,
-                refresh=refresh_cache,
-                source_format=source_format,
-            ):
-                matched += 1
-                if progress and task_id is not None and matched % 25 == 0:
-                    progress.update(
-                        task_id,
-                        completed=matched,
-                        description=f"{prefix}  {matched:,} rows",
-                    )
-                session, calls = _parse_row(row)
-                if not session.get("source_ref"):
-                    session["source_ref"] = f"{source}#trajectory_id={session['session_id']}"
-                new_sessions_batch.append(session)
-                events_for_prefix.extend(_events_for_calls(calls, classify_cache))
-                if len(new_sessions_batch) >= 64:
-                    _flush_sessions(con, new_sessions_batch)
-                    new_sessions_batch.clear()
-            _flush_sessions(con, new_sessions_batch)
-            con.execute("DELETE FROM tool_events WHERE session_id IN (SELECT session_id FROM new_sessions)")
-            con.execute("DELETE FROM sessions WHERE session_id IN (SELECT session_id FROM new_sessions)")
-            con.execute(
-                "INSERT INTO sessions (session_id, repo, instance_id, resolved, total_turns, source_ref, started_at) "
-                "SELECT session_id, repo, instance_id, resolved, total_turns, source_ref, started_at FROM new_sessions"
+            task_ids.append(
+                progress.add_task(f"{prefix}", total=limit or None) if progress else None
             )
-            if events_for_prefix:
-                _insert_rows(
-                    con,
-                    "tool_events",
-                    events_for_prefix,
-                    columns=[
-                        "event_id", "session_id", "repo", "step_idx", "tool_name",
-                        "action_type", "verb", "object_id", "target", "raw_target",
-                        "outcome", "exit_code", "error_signature", "is_error",
-                        "approx_out_tokens", "obs_excerpt", "obs_cause",
-                        "error_detail", "error_site", "error_message",
-                        "error_family", "error_origin", "event_hash",
-                        "assistant_context",
-                    ],
+        if workers > 1 and len(repos) > 1:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [
+                    pool.submit(
+                        _parse_prefix,
+                        resolved_source,
+                        prefix,
+                        limit,
+                        progress,
+                        source_format,
+                        classify_cache,
+                        source,
+                    )
+                    for prefix in repos
+                ]
+                parsed = [future.result() for future in futures]
+        else:
+            parsed = [
+                _parse_prefix(
+                    resolved_source,
+                    prefix,
+                    limit,
+                    progress,
+                    source_format,
+                    classify_cache,
+                    source,
                 )
-            session_count = con.execute("SELECT count(*) FROM new_sessions").fetchone()[0]
-            event_count = len(events_for_prefix)
+                for prefix in repos
+            ]
+        for prefix, task_id, (matched, sessions, events) in zip(repos, task_ids, parsed):
+            stats.append(_store_prefix(con, prefix, matched, sessions, events))
             if progress and task_id is not None:
                 progress.update(
                     task_id,
@@ -125,8 +180,6 @@ def ingest(
                     total=matched or None,
                     description=f"{prefix}  {matched:,} rows",
                 )
-            stats.append(IngestStats(prefix, matched, session_count, event_count))
-            con.execute("DELETE FROM new_sessions")
         con.execute("COMMIT")
         return stats
     except Exception:

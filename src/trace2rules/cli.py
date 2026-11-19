@@ -23,6 +23,7 @@ from .agents import resolve_agents
 from .cli_common import _ensure_local_sessions, _repo_matches_cwd, console
 from .commands.report import _report_command, _run_command
 from .commands.audit import _audit_command
+from .commands.holdout import _holdout_command
 from .db import DB_PATH, connect
 from .ingest import DEFAULT_REPOS, SOURCE, ingest as ingest_traces
 from .labels import label_targets
@@ -400,6 +401,7 @@ app.command("run")(_run_command)
 
 
 app.command("audit")(_audit_command)
+app.command("holdout")(_holdout_command)
 
 
 def _doctor_command(

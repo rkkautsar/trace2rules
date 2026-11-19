@@ -138,6 +138,8 @@ source: .github/workflows/package-test.yml
 
 `available` means a Makefile/package target exists but is not wired into CI. `missing` means no mechanism was found. `--prompt` emits a self-contained review prompt for a fresh-context agent.
 
+`holdout` fits the same rules on an earlier train slice and a later time holdout, then reports both. This catches rules that only fit the sessions that produced them; it is not a synthesis backtest.
+
 `trace2rules synthesize --agents AGENTS.md` reconciles proposed rules against the audit: duplicates are dropped, configured enforcement is reused, and soft rules are upgraded with concrete enforcement. When run from the target checkout, `--agents` is optional.
 
 Use `trace2rules synthesize --json` for machine-readable proposals. Each rule carries `support_sessions`, `support_instances`, `confidence`, `finding_kinds`, `evidence_quotes`, and source references; the deterministic path also labels non-window evidence as `finding:<kind>:<title>`.
@@ -218,6 +220,7 @@ The repository label is inferred from the git remote or working-directory basena
 | `exact` | Show exact recurring sequences with evidence |
 | `synthesize` | Print per-repo rules to stdout |
 | `audit` | Audit existing `AGENTS.md` rules against sessions and suggest enforcement |
+| `holdout` | Audit rules on an earlier train split and a later time holdout |
 
 Useful options:
 
@@ -233,6 +236,7 @@ trace2rules synthesize
 trace2rules audit --agents AGENTS.md
 trace2rules audit --agents AGENTS.md --commit HEAD --json
 trace2rules audit --agents AGENTS.md --prompt
+trace2rules holdout --agents AGENTS.md --fraction 0.3
 trace2rules report --prompt --agents AGENTS.md
 trace2rules report --prompt --min-support 5
 trace2rules run --out-dir reports/ --agents AGENTS.md

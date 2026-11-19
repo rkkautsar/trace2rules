@@ -233,11 +233,21 @@ Implemented from Wave 1:
 - `environment_thrash`
 - `destructive_command`
 - `no_reproduction`
+- `generated_edit`
+- `dependency_drift`
 
 Implemented from Wave 2:
 
 - `false_completion`, using the last non-empty `assistant_context` and the last
   test event after the last edit.
+- `correction_loop`, using local user corrections rather than benchmark labels.
+- `test_regression`, using local test summaries stored in `test_results`.
+- `test_shrink`, comparing local test totals around test-path edits.
+
+Also added an enforcement inventory for existing CI, pre-commit, hook, and
+repository-script checks. Offline synthesis, built-in label backends, and the
+eval command were removed; `synthesize --report` is a thin LLM wrapper over an
+existing report prompt.
 
 Deliberately not implemented yet:
 

@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from .agents import PATH_RE
+from .audit.parsing import PATH_RE
 from .synthesize import Rule
 
 COMMAND_RE = re.compile(r"`([^`]+)`")

@@ -19,7 +19,7 @@ def enforcement_for(rule: AgentRule) -> str:
     if rule.category == "read_before_edit":
         return "A pre-edit hook requiring source reads before edits."
     if rule.category == "ordering":
-        return "A pre-commit hook or CI check enforcing command order."
+        return "A harness/tool-use hook enforcing agent command order; pre-commit and CI cannot enforce it."
     if rule.category == "architecture_map":
         return "Import-boundary lint, CODEOWNERS, or a CI forbidden-path check."
     if rule.category == "context_hygiene":

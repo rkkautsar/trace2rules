@@ -47,16 +47,14 @@ Then give `reports/*.md` to your agent to synthesize the rules. `run` ingests lo
 
 On SWC (Rust), auditing the repository’s real `AGENTS.md` against 188 local sessions found 66 rules, 9 measured, 1 partial, and 56 unmeasured:
 
-| Rule | Coverage | Opportunities | Followed | Violations | Undecided | Confidence | Enforcement | Required |
-|---|---|---:|---:|---:|---:|---|---|---|
-| Read source before editing | measured | 185 | 121 | 64 | 0 | high | unknown | unknown |
-| Verify assumptions by reading source | measured | 185 | 121 | 64 | 0 | high | unknown | unknown |
-| `git commit` only after `git add` | measured | 14 | 8 | 6 | 0 | low | missing | no |
-| Submodule update before tests | measured | 32 | 0 | 32 | 0 | low | missing | no |
-| `cargo test -p <crate>` | measured | 171 | 5 | 158 | 8 | high | missing | no |
-| `cargo fmt --all` | measured | 185 | 0 | 185 | 0 | high | configured | unknown |
-| `cargo clippy ...` | measured | 185 | 0 | 185 | 0 | high | configured | unknown |
-| `--no-verify` guard | partial | 14 | 13 | 1 | 0 | low | missing | no |
+| Rule | Coverage | Followed | Violations | Confidence | Enforcement |
+|---|---|---:|---|---|---|---|
+| Read source before editing | measured | 121 | 64/185 (35%) | high | missing |
+| `git commit` only after `git add` | measured | 8 | 6/14 (43%) | low | harness plugin only |
+| Submodule update before tests | measured | 0 | 32/32 (100%) | low | missing |
+| `cargo test -p <crate>` | measured | 5 | 158/171 (92%) | high | missing |
+| `cargo fmt` / `cargo clippy` | measured | 0 | 185/185 (100%) | high | CI configured |
+| `--no-verify` guard | partial | 13 | 1/14 (7%) | low | missing |
 
 Test evidence is also reported per rule, so `cargo test -p <crate>` is not just “5 followed”:
 
@@ -67,7 +65,7 @@ alternate_form:      8
 exact_form:          5
 ```
 
-`cargo fmt` and `cargo clippy` are CI-configured but were never run locally. `configured` does not mean required: the branch rulesets do not define required status checks, so those two rules remain `required: unknown`.
+`cargo fmt` and `cargo clippy` are CI-configured but were never run locally. `configured` does not mean required: the branch rulesets do not define required status checks.
 
 The same sessions produce suggested rules:
 

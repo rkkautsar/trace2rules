@@ -321,6 +321,22 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
             )
         console.print(table)
 
+    prevention = mined.get("prevention_delta", [])[:limit]
+    if prevention:
+        table = Table(title="Prevention deltas", header_style="bold", expand=True)
+        table.add_column("Repo")
+        table.add_column("Delta")
+        table.add_column("Sessions", justify="right")
+        table.add_column("Detail")
+        for finding in prevention:
+            table.add_row(
+                escape(finding.repo),
+                escape(finding.title[:100]),
+                str(finding.sessions),
+                escape(finding.detail),
+            )
+        console.print(table)
+
     patterns = mined.get("attribute_pattern", [])[:limit]
     if patterns:
         table = Table(title="Repo-local sequential rules", header_style="bold", expand=True)

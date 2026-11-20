@@ -35,6 +35,7 @@ from .heuristics import (
 )
 from .mine import mine
 from .models import Finding
+from .prevention import prevention_deltas
 from .sequences import cluster_friction, exact_sequences, friction_windows
 
 __all__ = [
@@ -64,6 +65,7 @@ __all__ = [
     "orientation",
     "permission_denials",
     "premature_completion",
+    "prevention_deltas",
     "prompt_context",
     "recovery_loops",
     "repeated_reads",

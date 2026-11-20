@@ -86,7 +86,7 @@ def _report_command(
         mined = mine_friction(con, top=top)
         findings = [
             finding
-            for key in ("hotspots", "recovery", "context", "orientation", "selector_miss", "workaround", "stuck_loop", "noop_retry", "premature_completion", "low_validation", "site_edit_mismatch", "feedback", "failure_loop", "edit_rejection", "generated_edit", "dependency_drift", "blind_edit", "environment_thrash", "destructive_command", "no_reproduction", "false_completion", "correction_loop", "test_regression", "test_shrink", "attribute_pattern")
+            for key in ("hotspots", "recovery", "context", "orientation", "selector_miss", "workaround", "stuck_loop", "premature_completion", "low_validation", "site_edit_mismatch", "feedback", "failure_loop", "edit_rejection", "generated_edit", "dependency_drift", "blind_edit", "environment_thrash", "destructive_command", "no_reproduction", "false_completion", "correction_loop", "test_regression", "test_shrink", "prevention_delta")
             for finding in mined[key]
         ]
         exact = exact_sequences(

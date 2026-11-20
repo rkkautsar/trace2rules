@@ -55,6 +55,7 @@ def _candidate_score(finding: Finding) -> float:
         "premature_completion": 1.8,
         "low_validation": 1.6,
         "noop_retry": 1.2,
+        "prevention_delta": 2.2,
         "recovery": 1.0,
         "context": 0.7,
         "hotspot": 0.8,
@@ -80,7 +81,7 @@ def _candidate_score(finding: Finding) -> float:
     support = max(finding.sessions, 1)
     impact = max(finding.tokens, finding.cost, 1)
     score = support * math.log1p(impact) * weights.get(finding.kind, 0.8)
-    if finding.kind == "attribute_pattern":
+    if finding.kind in {"attribute_pattern", "prevention_delta"}:
         score *= max(1.0, min(finding.lift, 10.0))
     return score
 
@@ -122,6 +123,7 @@ def select_findings(
         "test_regression",
         "test_shrink",
         "attribute_pattern",
+        "prevention_delta",
     ):
         candidates.extend(
             finding

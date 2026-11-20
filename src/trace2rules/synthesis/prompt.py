@@ -76,7 +76,7 @@ def _finding_markdown(finding: Finding, index: int) -> list[str]:
         lines.append("- Evidence window:")
         window_events = (
             6
-            if finding.kind in {"attribute_pattern", "recovery"}
+            if finding.kind in {"attribute_pattern", "prevention_delta", "recovery"}
             else PROMPT_WINDOW_EVENTS
         )
         for event in finding.window[:window_events]:
@@ -247,8 +247,8 @@ def _prompt(
         "- Rules about agent read behavior, tool-call ordering, or context usage are guidance-only.",
         '- Use 1-2 imperative sentences with concrete command or file names. No generic platitudes ("be careful", "read the docs").', 
         "- Ignore task-specific verifier scripts, one-off filenames, and normal edit -> test-fail loops.",
-        "- For any failure, loop, recovery, or attribute_pattern finding, write the rule that prevents the failure before it happens: setup, import path, test selection, or CI check. Do not restate the obvious recovery step, such as 'fix the error', 'rerun after correcting', or 'do not repeat the command'. If the evidence does not support a concrete prevention, omit the finding.",
-        "- For attribute_pattern findings, the final error is the event to prevent; use the antecedent only as the reproduction context. A rule that merely tells the agent to fix the error it just observed is invalid.",
+        "- For any failure, loop, recovery, attribute_pattern, or prevention_delta finding, write the rule that prevents the failure before it happens: setup, import path, test selection, or CI check. Do not restate the obvious recovery step, such as 'fix the error', 'rerun after correcting', or 'do not repeat the command'. If the evidence does not support a concrete prevention, omit the finding.",
+        "- For prevention_delta findings, the delta is the prevention action; make it repo-side and cite its session support. For attribute_pattern findings, the final error is the event to prevent; use the antecedent only as reproduction context.",
         "- For recovery findings, use the representative failure-to-success window and cite its support count. Do not infer intent not shown by tool calls.",
         "- Prefer high or medium confidence findings; low findings need corroboration or should be omitted.",
         "- A window is one illustrative occurrence, not proof of intent. Never encode an identifier that appears in fewer than two sessions.",

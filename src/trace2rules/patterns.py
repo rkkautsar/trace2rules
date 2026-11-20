@@ -321,8 +321,9 @@ def mine_attribute_patterns(
                         and later_event[4] == event[4]
                         and later_event[5] == event[5]
                         and (
-                            later_event[7] == event[7]
-                            or later_event[6] == event[6]
+                            later_event[8] == event[8]
+                            if event[8] and later_event[8]
+                            else later_event[7] == event[7]
                         )
                     ):
                         recovery_step = int(later_event[1])

@@ -85,6 +85,7 @@ def _v1_calls(con: sqlite3.Connection, session_id: str) -> list[ToolCall]:
     ).fetchall()
     calls: list[ToolCall] = []
     segment = 0
+    assistant_text = ""
     for _message, _ordinal, part_data in rows:
         if not part_data:
             continue
@@ -95,12 +96,18 @@ def _v1_calls(con: sqlite3.Connection, session_id: str) -> list[ToolCall]:
         if data.get("type") == "compaction":
             segment += 1
             continue
+        if data.get("type") == "text":
+            assistant_text = str(data.get("text") or "")[:800]
+            continue
         if data.get("type") != "tool":
             continue
         call = _tool_call(data)
         if call is not None:
             call.segment_idx = segment
+            call.assistant_context = assistant_text
             calls.append(call)
+    if calls and assistant_text:
+        calls[-1].assistant_context = assistant_text
     return calls
 
 
@@ -119,6 +126,11 @@ def _v2_calls(con: sqlite3.Connection, session_id: str) -> list[ToolCall]:
         content = data.get("content") if isinstance(data, dict) else None
         if not isinstance(content, list):
             continue
+        assistant_text = " ".join(
+            str(part.get("text") or "")
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        ).strip()[:800]
         for part in content:
             if not isinstance(part, dict):
                 continue
@@ -130,7 +142,10 @@ def _v2_calls(con: sqlite3.Connection, session_id: str) -> list[ToolCall]:
             call = _tool_call(part)
             if call is not None:
                 call.segment_idx = segment
+                call.assistant_context = assistant_text
                 calls.append(call)
+        if calls and assistant_text:
+            calls[-1].assistant_context = assistant_text
     return calls
 
 

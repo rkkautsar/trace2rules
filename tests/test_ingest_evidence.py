@@ -169,3 +169,47 @@ def test_writer_splits_compaction_segments(tmp_path) -> None:
         assert con.execute("SELECT session_id FROM sessions").fetchall() == [("s1",)]
     finally:
         con.close()
+
+
+def test_writer_replaces_only_targeted_split_sessions(tmp_path) -> None:
+    from trace2rules.db import connect
+    from trace2rules.ingest import write_sessions
+    from trace2rules.models import Session, ToolCall
+
+    db = tmp_path / "shared-source.duckdb"
+    first = Session(
+        "s1",
+        "acme/repo",
+        source_ref="/tmp/shared.jsonl",
+        calls=[
+            ToolCall("Read", "src/a.py", action_type="read", target="src/a.py", segment_idx=0),
+            ToolCall("Edit", "src/a.py", action_type="edit", target="src/a.py", segment_idx=1),
+        ],
+    )
+    second = Session(
+        "s2",
+        "acme/repo",
+        source_ref="/tmp/shared.jsonl",
+        calls=[ToolCall("Read", "src/b.py", action_type="read", target="src/b.py")],
+    )
+    write_sessions(db, [first, second], split_compactions=True)
+    write_sessions(
+        db,
+        [
+            Session(
+                "s1",
+                "acme/repo",
+                source_ref="/tmp/shared.jsonl",
+                calls=[ToolCall("Read", "src/a.py", action_type="read", target="src/a.py")],
+            )
+        ],
+        split_compactions=True,
+    )
+    con = connect(db)
+    try:
+        assert con.execute("SELECT session_id FROM sessions ORDER BY session_id").fetchall() == [
+            ("s1",),
+            ("s2",),
+        ]
+    finally:
+        con.close()

@@ -167,7 +167,7 @@ def ingest_opencode(
                     repo=repo or (Path(directory).name if directory else "unknown"),
                     instance_id=parent_id or session_id,
                     source="opencode",
-                    source_ref=str(path),
+                    source_ref=f"{path}#{session_id}",
                     agent="opencode",
                     calls=calls,
                     started_at=(

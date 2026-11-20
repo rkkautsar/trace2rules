@@ -4,46 +4,39 @@ import duckdb
 
 from ..core import _representative_window
 from ..models import Finding
+from ..error_family import ErrorFamilyConfig, error_family_findings
 
 COMMAND_ERROR_RE = r"(?i)(unrecognized arguments|unrecognized command|unknown option|invalid option|command not found|usage: )"
 
 
 def command_errors(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
-    query = f"""
-        SELECT repo, target,
-               count(DISTINCT session_id) AS sessions,
-               count(*) AS events,
-               sum(approx_out_tokens) AS tokens,
-               arg_min(session_id, step_idx) AS example_session,
-               arg_min(step_idx, step_idx) AS example_step,
-               arg_min(error_message, step_idx) AS example_error
-        FROM tool_events
-        WHERE outcome = 'err'
-          AND action_type IN ('exec', 'read')
-          AND regexp_matches(coalesce(error_message, ''), '{COMMAND_ERROR_RE}')
-        GROUP BY 1, 2
-        HAVING count(DISTINCT session_id) >= 2
-        ORDER BY sessions DESC, events DESC
-    """
-    if limit is not None:
-        query += f" LIMIT {int(limit)}"
     findings: list[Finding] = []
-    for repo, target, sessions, events, tokens, session, step, error in con.execute(query).fetchall():
+    for item in error_family_findings(
+        con,
+        ErrorFamilyConfig(
+            scope="repo_target",
+            regex=COMMAND_ERROR_RE,
+            min_sessions=2,
+            action_filter="AND action_type IN ('exec', 'read')",
+        ),
+    ):
         findings.append(
             Finding(
                 kind="command_error",
-                repo=repo,
-                title=target,
-                sessions=sessions,
-                tokens=int(tokens or 0),
-                detail=f"{events} malformed command invocations across {sessions} sessions",
+                repo=item.repo,
+                title=item.target,
+                sessions=item.sessions,
+                tokens=item.tokens,
+                detail=f"{item.events} malformed command invocations across {item.sessions} sessions",
                 recommendation=(
-                    f"Verify the flags for `{target[:100]}` with one bounded help call; "
+                    f"Verify the flags for `{item.target[:100]}` with one bounded help call; "
                     "do not retry the same malformed invocation."
                 ),
-                cause=(error or "")[:240],
+                cause=(item.error or "")[:240],
                 side="agent",
-                window=_representative_window(con, session, step),
+                window=_representative_window(
+                    con, item.example_session, item.example_step
+                ),
             )
         )
-    return findings
+    return findings[:limit] if limit is not None else findings

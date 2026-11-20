@@ -14,39 +14,34 @@ from ..core import (
     _repo_window,
 )
 from ..models import Finding
+from ..error_family import ErrorFamilyConfig, error_family_findings
 
 def selector_misses(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
-    query = """
-        SELECT repo, count(*) AS events, count(DISTINCT session_id) AS sessions,
-               sum(approx_out_tokens) AS tokens, any_value(raw_target) AS exemplar
-        FROM tool_events
-        WHERE is_error AND action_type = 'exec'
-          AND regexp_matches(coalesce(error_message, '') || ' ' || coalesce(obs_cause, ''),
-                             '(?i)deselected|no tests ran|collected 0 items')
-        GROUP BY 1
-        ORDER BY sessions DESC, tokens DESC
-    """
-    if limit is not None:
-        query += f" LIMIT {int(limit)}"
-    return [
+    findings = [
         Finding(
             kind="selector_miss",
-            repo=repo,
-            title=exemplar or "test selector",
-            sessions=sessions,
-            tokens=int(tokens or 0),
-            detail=f"{events} selector misses in {sessions} sessions",
+            repo=item.repo,
+            title=item.target or "test selector",
+            sessions=item.sessions,
+            tokens=item.tokens,
+            detail=f"{item.events} selector misses in {item.sessions} sessions",
             side="agent",
             recommendation="When a selector reports 0 selected/deselected, inspect the runner's collection output and use the printed node ID; selectors match test names, not arbitrary file text.",
             window=_repo_window(
                 con,
-                repo,
+                item.repo,
                 "is_error AND action_type = 'exec' AND regexp_matches(coalesce(error_message, '') || ' ' || coalesce(obs_cause, ''), '(?i)deselected|no tests ran|collected 0 items')",
             ),
         )
-        for repo, events, sessions, tokens, exemplar in con.execute(query).fetchall()
+        for item in error_family_findings(
+            con,
+            ErrorFamilyConfig(
+                scope="repo",
+                regex="(?i)deselected|no tests ran|collected 0 items",
+            ),
+        )
     ]
-
+    return findings[:limit] if limit is not None else findings
 def workaround_scripts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     query = """
         SELECT repo, count(*) AS sessions, sum(edits) AS edits, sum(runs) AS runs,

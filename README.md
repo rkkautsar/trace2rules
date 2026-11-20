@@ -161,7 +161,24 @@ The repository label is inferred from the git remote (`owner/name`) when availab
 trace2rules report --prompt --out-dir reports/
 ```
 
-Local ingest treats each compaction segment as its own session by default, so a long session with multiple contexts counts as multiple mining units. Use `--no-split-compactions` to keep the original session boundaries.
+### Compaction boundaries
+
+Local transcripts often contain several context windows separated by compaction. By default, local ingest splits each segment into its own canonical session, so a long session counts as multiple mining units instead of one.
+
+This works for every local source that records compaction boundaries:
+
+- OMP and Pi: `{"type":"compaction"}`
+- Codex: `response_item` with `payload.type == "compaction"`
+- Claude Code: `summary`, `compaction`, or `isCompactSummary`
+- OpenCode: v1/v2 compaction records
+
+Sessions without compaction are unchanged. Disable splitting with:
+
+```bash
+trace2rules ingest --no-split-compactions
+```
+
+On this repository, splitting the main 8-segment session changed 70 sessions to 77 and surfaced additional medium-confidence findings.
 
 `run` and `mine` auto-ingest local sessions when the database is empty. `ingest` writes to `$TMPDIR/trace2rules/trace2rules.duckdb` by default. Set `TRACE2RULES_DB` to use a persistent path.
 

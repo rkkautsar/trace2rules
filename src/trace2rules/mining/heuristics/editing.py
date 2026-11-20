@@ -14,6 +14,10 @@ from ..core import (
     _repo_window,
 )
 from ..models import Finding
+from ..precondition import (
+    PreconditionConfig,
+    missing_precondition_findings,
+)
 from ..repetition import repetition_findings
 
 def stuck_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
@@ -137,67 +141,62 @@ def edit_rejections(con: duckdb.DuckDBPyConnection, limit: int | None = None) ->
 
 def blind_edits(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     columns = {
-        row[0]
+        row[1]
         for row in con.execute("PRAGMA table_info('tool_events')").fetchall()
     }
     create_filter = "AND verb <> 'create'" if "verb" in columns else ""
-    query = f"""
-        WITH edits AS (
-            SELECT session_id, repo, step_idx, target, approx_out_tokens
-            FROM tool_events
-            WHERE action_type = 'edit'
-              AND target NOT IN ('', '.')
-              AND target NOT LIKE '<%'
-              AND target NOT LIKE '% %'
-              AND target NOT LIKE '%>%'
-              AND NOT regexp_matches(target, '^(xd|proc|agent|mcp|https?):')
-              AND raw_target NOT LIKE 'create%'
-              {create_filter}
-        )
-        SELECT repo,
-               count(*) AS edits,
-               count(DISTINCT session_id) AS sessions,
-               sum(approx_out_tokens) AS tokens,
-               arg_max(target, approx_out_tokens) AS example_target,
-               arg_min(session_id, step_idx) AS example_session,
-               arg_min(step_idx, step_idx) AS example_step
-        FROM edits e
-        WHERE NOT EXISTS (
+    source_filter = f"""
+        AND target NOT IN ('', '.')
+        AND target NOT LIKE '<%'
+        AND target NOT LIKE '% %'
+        AND target NOT LIKE '%>%'
+        AND NOT regexp_matches(target, '^(xd|proc|agent|mcp|https?):')
+        AND raw_target NOT LIKE 'create%'
+        {create_filter}
+    """
+    config = PreconditionConfig(
+        source_mode="all",
+        before="""
+        AND NOT EXISTS (
             SELECT 1 FROM tool_events r
-            WHERE r.session_id = e.session_id
+            WHERE r.session_id = s.session_id
               AND r.action_type = 'read'
-              AND r.target = e.target
-              AND r.step_idx < e.step_idx
+              AND r.target = s.target
+              AND r.step_idx < s.step_idx
         )
         AND NOT EXISTS (
             SELECT 1 FROM tool_events c
-            WHERE c.session_id = e.session_id
+            WHERE c.session_id = s.session_id
               AND c.action_type = 'edit'
               AND c.raw_target LIKE 'create%'
-              AND c.target = e.target
-              AND c.step_idx < e.step_idx
-        )
-        GROUP BY 1
-        HAVING count(DISTINCT session_id) >= 2
-        ORDER BY sessions DESC, edits DESC
-    """
-    if limit is not None:
-        query += f" LIMIT {int(limit)}"
-    return [
+              AND c.target = s.target
+              AND c.step_idx < s.step_idx
+        )""",
+        min_sessions=2,
+        token_mode="source",
+    )
+    findings = [
         Finding(
             kind="blind_edit",
-            repo=repo,
+            repo=item.repo,
             title="edits without a preceding read",
-            sessions=sessions,
-            tokens=int(tokens or 0),
-            detail=f"{edits} edits with no prior read of the target; example {example_target[:120]}",
+            sessions=item.sessions,
+            tokens=item.tokens,
+            detail=(
+                f"{item.events} edits with no prior read of the target; "
+                f"example {item.example_target[:120]}"
+            ),
             side="agent",
             recommendation="Read the target before editing it. For a new file, state that it is new and avoid patching unseen existing content.",
-            window=_representative_window(con, example_session, example_step),
+            window=_representative_window(
+                con, item.example_session, item.example_step
+            ),
         )
-        for repo, edits, sessions, tokens, example_target, example_session, example_step in con.execute(query).fetchall()
+        for item in missing_precondition_findings(
+            con, config, source_filter=source_filter
+        )
     ]
-
+    return findings[:limit] if limit is not None else findings
 
 def generated_edits(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     query = r"""

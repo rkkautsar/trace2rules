@@ -14,99 +14,88 @@ from ..core import (
     _repo_window,
 )
 from ..models import Finding
+from ..precondition import (
+    PreconditionConfig,
+    missing_precondition_findings,
+)
 
 def premature_completion(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
-    query = """
-        WITH last_edit AS (
-            SELECT session_id, max(step_idx) AS step
-            FROM tool_events WHERE action_type = 'edit' GROUP BY 1
+    items = missing_precondition_findings(
+        con,
+        PreconditionConfig(
+            source_mode="last",
+            after="""
+            AND NOT EXISTS (
+                SELECT 1 FROM tool_events e
+                WHERE e.session_id = s.session_id
+                  AND e.step_idx > s.step_idx
+                  AND e.action_type = 'exec'
+                  AND e.outcome = 'ok'
+            )""",
+            token_mode="session",
         ),
-        session_tokens AS (
-            SELECT session_id, sum(approx_out_tokens) AS tokens
-            FROM tool_events GROUP BY 1
-        )
-        SELECT s.repo, count(*) AS sessions,
-               coalesce(sum(t.tokens), 0) AS tokens
-        FROM sessions s
-        JOIN last_edit l USING (session_id)
-        LEFT JOIN session_tokens t USING (session_id)
-        WHERE NOT EXISTS (
-            SELECT 1 FROM tool_events e
-            WHERE e.session_id = s.session_id
-              AND e.step_idx > l.step
-              AND e.action_type = 'exec'
-              AND e.outcome = 'ok'
-        )
-        GROUP BY 1 ORDER BY sessions DESC
-    """
-    if limit is not None:
-        query += f" LIMIT {int(limit)}"
-    return [
+        source_filter="",
+    )
+    findings = [
         Finding(
             kind="premature_completion",
-            repo=repo,
+            repo=item.repo,
             title="session ends after an edit without validation",
-            sessions=sessions,
-            tokens=int(tokens or 0),
-            detail=f"{sessions} sessions; no successful exec after last edit; ~{int(tokens or 0):,} tokens",
+            sessions=item.sessions,
+            tokens=item.tokens,
+            detail=f"{item.sessions} sessions; no successful exec after last edit; ~{item.tokens:,} tokens",
             side="agent",
             recommendation="After the final edit, run the narrowest relevant test or lint command and confirm it passes before finishing.",
             window=_repo_window(
                 con,
-                repo,
+                item.repo,
                 "action_type = 'edit' "
                 "AND NOT regexp_matches(target, '^(xd|proc|agent|mcp|https?):')",
             ),
         )
-        for repo, sessions, tokens in con.execute(query).fetchall()
+        for item in items
     ]
-
+    return findings[:limit] if limit is not None else findings
 def low_validation(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
-    query = """
-        WITH first_edit AS (
-            SELECT session_id, min(step_idx) AS step
-            FROM tool_events WHERE action_type = 'edit' GROUP BY 1
+    items = missing_precondition_findings(
+        con,
+        PreconditionConfig(
+            source_mode="first",
+            after="""
+            AND NOT EXISTS (
+                SELECT 1 FROM tool_events e
+                WHERE e.session_id = s.session_id
+                  AND e.step_idx > s.step_idx
+                  AND e.action_type = 'exec'
+                  AND regexp_matches(e.raw_target, '(?i)(pytest|unittest|test|lint|typecheck|mypy|ruff|tox|vitest|jest|cargo test|go test|dotnet test|rspec|phpunit|mix test|swift test)')
+            )""",
+            token_mode="session",
         ),
-        session_tokens AS (
-            SELECT session_id, sum(approx_out_tokens) AS tokens
-            FROM tool_events GROUP BY 1
-        )
-        SELECT s.repo, count(*) AS sessions,
-               coalesce(sum(t.tokens), 0) AS tokens
-        FROM sessions s
-        JOIN first_edit f USING (session_id)
-        LEFT JOIN session_tokens t USING (session_id)
-        WHERE NOT EXISTS (
-            SELECT 1 FROM tool_events e
-            WHERE e.session_id = s.session_id
-              AND e.step_idx > f.step
-              AND e.action_type = 'exec'
-              AND regexp_matches(e.raw_target, '(?i)(pytest|unittest|test|lint|typecheck|mypy|ruff|tox|vitest|jest|cargo test|go test|dotnet test|rspec|phpunit|mix test|swift test)')
-        )
-        GROUP BY 1 ORDER BY sessions DESC
-    """
-    if limit is not None:
-        query += f" LIMIT {int(limit)}"
-    return [
+        source_filter="",
+    )
+    findings = [
         Finding(
             kind="low_validation",
-            repo=repo,
+            repo=item.repo,
             title="edits without a validation command",
-            sessions=sessions,
-            tokens=int(tokens or 0),
-            detail=f"{sessions} sessions; no test/lint exec after first edit; ~{int(tokens or 0):,} tokens",
+            sessions=item.sessions,
+            tokens=item.tokens,
+            detail=(
+                f"{item.sessions} sessions; no test/lint exec after first edit; "
+                f"~{item.tokens:,} tokens"
+            ),
             side="agent",
             recommendation="After changing code, run the narrowest test/lint command that exercises the change.",
             window=_repo_window(
                 con,
-                repo,
+                item.repo,
                 "action_type = 'edit' "
                 "AND NOT regexp_matches(target, '^(xd|proc|agent|mcp|https?):')",
             ),
         )
-        for repo, sessions, tokens in con.execute(query).fetchall()
+        for item in items
     ]
-
+    return findings[:limit] if limit is not None else findings
 def false_completions(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     query = r"""
         WITH last_claim AS (
@@ -199,64 +188,55 @@ def false_completions(con: duckdb.DuckDBPyConnection, limit: int | None = None) 
     ]
 
 def no_reproduction(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
-    query = r"""
-        WITH first_edit AS (
-            SELECT session_id, repo, min(step_idx) AS step
-            FROM tool_events
-            WHERE action_type = 'edit'
-              AND target NOT IN ('', '.')
-              AND target NOT LIKE '<%'
-              AND NOT regexp_matches(target, '^(xd|proc|agent|mcp|https?):')
-              AND NOT regexp_matches(
-                  target,
-                  '(?i)(^|/)(tests?|specs?|__tests__)(/|$)|(^|/)(test_|conftest\.|.*_test\.)|(^|/)(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)'
-              )
-            GROUP BY 1, 2
-        ),
-        session_tokens AS (
-            SELECT session_id, sum(approx_out_tokens) AS tokens
-            FROM tool_events GROUP BY 1
+    source_filter = """
+        AND target NOT IN ('', '.')
+        AND target NOT LIKE '<%'
+        AND NOT regexp_matches(target, '^(xd|proc|agent|mcp|https?):')
+        AND NOT regexp_matches(
+            target,
+            '(?i)(^|/)(tests?|specs?|__tests__)(/|$)|(^|/)(test_|conftest\\.|.*_test\\.)|(^|/)(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)'
         )
-        SELECT s.repo, count(*) AS sessions, coalesce(sum(t.tokens), 0) AS tokens,
-               arg_min(s.session_id, f.step) AS example_session,
-               arg_min(f.step, f.step) AS example_step
-        FROM sessions s
-        JOIN first_edit f USING (session_id)
-        LEFT JOIN session_tokens t USING (session_id)
-        WHERE NOT EXISTS (
-            SELECT 1 FROM tool_events e
-            WHERE e.session_id = s.session_id
-              AND e.step_idx < f.step
-              AND e.action_type = 'exec'
-              AND e.outcome = 'err'
-        )
-        GROUP BY 1
-        HAVING count(*) >= 3
-        ORDER BY sessions DESC, tokens DESC
     """
-    if limit is not None:
-        query += f" LIMIT {int(limit)}"
-    return [
+    items = missing_precondition_findings(
+        con,
+        PreconditionConfig(
+            source_mode="first",
+            before="""
+            AND NOT EXISTS (
+                SELECT 1 FROM tool_events e
+                WHERE e.session_id = s.session_id
+                  AND e.step_idx < s.step_idx
+                  AND e.action_type = 'exec'
+                  AND e.outcome = 'err'
+            )""",
+            min_sessions=3,
+            token_mode="session",
+        ),
+        source_filter=source_filter,
+    )
+    findings = [
         Finding(
             kind="no_reproduction",
-            repo=repo,
+            repo=item.repo,
             title="source edits before any failing reproduction",
-            sessions=sessions,
-            tokens=int(tokens or 0),
-            detail=f"{sessions} sessions edited source without a preceding failing exec",
+            sessions=item.sessions,
+            tokens=item.tokens,
+            detail=(
+                f"{item.sessions} sessions edited source without a preceding "
+                "failing exec"
+            ),
             side="agent",
             recommendation="For a bug fix, reproduce the failure first with the narrowest command or test; only then edit the source.",
             window=_repo_window(
                 con,
-                repo,
+                item.repo,
                 "action_type = 'edit' "
                 "AND NOT regexp_matches(target, '^(xd|proc|agent|mcp|https?):')",
             ),
         )
-        for repo, sessions, tokens, example_session, example_step in con.execute(query).fetchall()
+        for item in items
     ]
-
-
+    return findings[:limit] if limit is not None else findings
 def regressions_after_green(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     query = """
         SELECT t.repo,

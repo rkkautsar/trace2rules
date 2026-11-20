@@ -17,7 +17,7 @@ def _source_index(root: Path) -> list[str]:
         return _SOURCE_CACHE[resolved]
     paths: list[str] = []
     for path in resolved.rglob("*"):
-        if not path.is_file() or path.suffix not in _SOURCE_SUFFIXES:
+        if path.is_symlink() or not path.is_file() or path.suffix not in _SOURCE_SUFFIXES:
             continue
         relative = path.relative_to(resolved)
         if "tests" in relative.parts or "test" in relative.parts:

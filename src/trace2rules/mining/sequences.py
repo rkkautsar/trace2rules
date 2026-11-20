@@ -9,11 +9,11 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_distances
 
 from .core import normalize_event_token
-from .heuristics.hotspots import context_blasts, hotspots
+from .heuristics.hotspots import context_blast_targets, hotspots
 from .models import Finding
 
 
-@dataclass
+@dataclass(slots=True)
 class _Window:
     repo: str
     encoded: str
@@ -24,24 +24,12 @@ class _Window:
     keys: tuple[tuple[str, str, str], ...] = field(default_factory=tuple)
 
 
-def _encode(window: list[tuple]) -> str:
-    parts = []
-    for position, event in enumerate(window, start=1):
-        _session, _repo, _step, _tool, action, verb, object_id, outcome = event[:8]
-        token = normalize_event_token(
-            action, verb, object_id, event[10], event[11], outcome
-        )
-        parts.append(f"s{position}:{token}")
-    return " | ".join(parts)
-
-
-def _tokens(window: list[tuple]) -> tuple[str, ...]:
-    return tuple(
-        normalize_event_token(
-            event[4], event[5], event[6], event[10], event[11], event[7]
-        )
-        for event in window
-    )
+def _encode_tokens(window: list[tuple]) -> tuple[str, tuple[str, ...]]:
+    tokens = tuple(event[13] for event in window)
+    return " | ".join(
+        f"s{position}:{token}"
+        for position, token in enumerate(tokens, start=1)
+    ), tokens
 
 
 def _example(window: list[tuple]) -> str:
@@ -54,56 +42,101 @@ def friction_windows(
     con: duckdb.DuckDBPyConnection,
     min_session_count: int = 2,
     lengths: tuple[int, ...] = (3, 4),
+    require_error: bool = False,
 ) -> list[_Window]:
     hotspot_targets: dict[str, set[str]] = defaultdict(set)
     for finding in hotspots(con):
         hotspot_targets[finding.repo].add(finding.title)
-    blast_targets = {(f.repo, f.title) for f in context_blasts(con)}
+    blast_targets = context_blast_targets(con)
 
-    rows = con.execute(
-        """
-        SELECT session_id, repo, step_idx, tool_name, action_type, verb, object_id,
-               outcome, error_signature, approx_out_tokens, target, raw_target,
-               segment_idx
-        FROM tool_events
-        WHERE target <> '' AND action_type <> 'other'
-        ORDER BY session_id, step_idx
-        """
-    ).fetchall()
-    sessions: dict[str, list[tuple]] = defaultdict(list)
-    for row in rows:
-        sessions[row[0]].append(row)
+    def iter_sessions():
+        cursor = con.execute(
+            """
+            SELECT session_id, repo, step_idx, tool_name, action_type, verb, object_id,
+                   outcome, error_signature, approx_out_tokens, target, raw_target,
+                   segment_idx
+            FROM tool_events
+            WHERE target <> '' AND action_type <> 'other'
+            ORDER BY session_id, step_idx
+            """
+        )
+        current = None
+        events: list[tuple] = []
+        while True:
+            batch = cursor.fetchmany(2048)
+            if not batch:
+                if current is not None:
+                    yield current, events
+                return
+            for row in batch:
+                token = normalize_event_token(
+                    row[4], row[5], row[6], row[10], row[11], row[7]
+                )
+                event = (*row, token)
+                if current is None:
+                    current = row[0]
+                elif row[0] != current:
+                    yield current, events
+                    current = row[0]
+                    events = []
+                events.append(event)
 
-    aggregates: dict[tuple[str, str], _Window] = {}
-    for session_id, events in sessions.items():
-        for k in lengths:
-            for start in range(len(events) - k + 1):
-                window = events[start : start + k]
-                if len({event[12] for event in window}) > 1:
+    def window_key(window: list[tuple]) -> tuple[str, tuple[str, ...]] | None:
+        if len({event[12] for event in window}) > 1:
+            return None
+        relevant = any(event[7] == "err" for event in window)
+        if not relevant:
+            relevant = any(
+                event[4] in ("read", "search")
+                and event[10] in hotspot_targets[event[1]]
+                for event in window
+            )
+        if not relevant:
+            relevant = any(
+                event[9] >= 1500
+                or (event[1], event[10]) in blast_targets
+                for event in window
+            )
+        if not relevant:
+            return None
+        if require_error and not any(event[7] == "err" for event in window):
+            return None
+        return window[0][1], tuple(event[13] for event in window)
+
+    support: dict[tuple[str, tuple[str, ...]], tuple[str, int]] = {}
+    for session_id, events in iter_sessions():
+        for length in lengths:
+            for start in range(len(events) - length + 1):
+                key = window_key(events[start : start + length])
+                if key is None:
                     continue
-                relevant = any(event[7] == "err" for event in window)
-                if not relevant:
-                    relevant = any(
-                        event[4] in ("read", "search") and event[10] in hotspot_targets[event[1]]
-                        for event in window
-                    )
-                if not relevant:
-                    relevant = any(
-                        event[9] >= 1500
-                        or (event[1], event[10]) in blast_targets
-                        for event in window
-                    )
-                if not relevant:
-                    continue
+                entry = support.get(key)
+                if entry is None:
+                    support[key] = (session_id, 1)
+                elif entry[0] != session_id:
+                    support[key] = (session_id, entry[1] + 1)
+    candidates = {
+        key
+        for key, (_last, count) in support.items()
+        if count >= min_session_count
+    }
+    del support
 
-                encoded = _encode(window)
-                key = (window[0][1], encoded)
+    aggregates: dict[tuple[str, tuple[str, ...]], _Window] = {}
+    for session_id, events in iter_sessions():
+        for length in lengths:
+            for start in range(len(events) - length + 1):
+                window = events[start : start + length]
+                key = window_key(window)
+                if key is None or key not in candidates:
+                    continue
+                encoded, tokens = _encode_tokens(window)
                 agg = aggregates.get(key)
                 if agg is None:
                     agg = aggregates[key] = _Window(
                         repo=window[0][1],
                         encoded=encoded,
-                        tokens=_tokens(window),
+                        tokens=tokens,
                         keys=tuple(
                             (event[3], event[4], event[10]) for event in window
                         ),
@@ -120,7 +153,7 @@ def friction_windows(
                 if len(agg.examples) < 3 and example not in agg.examples:
                     agg.examples.append(example)
 
-    return [w for w in aggregates.values() if len(w.sessions) >= 1]
+    return list(aggregates.values())
 
 
 def exact_sequences(
@@ -133,6 +166,7 @@ def exact_sequences(
     min_rework: int = 0,
     min_lift: float = 1.5,
     retry_weight: int = 1000,
+    lengths: tuple[int, ...] | None = None,
 ) -> list[Finding]:
     repo_sessions = dict(
         con.execute("SELECT repo, count(*) FROM sessions GROUP BY repo").fetchall()
@@ -161,40 +195,73 @@ def exact_sequences(
             session_rework[session_id] += errors - 1
 
     session_setup: dict[str, int] = {}
-    grouped = defaultdict(list)
-    for row in con.execute(
+    current_session = None
+    current_events: list[tuple] = []
+
+    def finish_setup() -> None:
+        if current_session is None:
+            return
+        setup = sum(event[5] for event in current_events)
+        for index, event in enumerate(current_events):
+            if (event[2] == "edit" and event[4] == "ok") or (
+                event[3] == "pytest" and event[4] == "ok"
+            ):
+                setup = sum(item[5] for item in current_events[:index])
+                break
+        session_setup[current_session] = setup
+
+    cursor = con.execute(
         """
         SELECT session_id, step_idx, action_type, verb, outcome, approx_out_tokens
         FROM tool_events
         WHERE action_type <> 'other'
         ORDER BY session_id, step_idx
         """
-    ).fetchall():
-        grouped[row[0]].append(row)
-    for session_id, events in grouped.items():
-        setup = sum(event[5] for event in events)
-        for index, event in enumerate(events):
-            if (event[2] == "edit" and event[4] == "ok") or (
-                event[3] == "pytest" and event[4] == "ok"
-            ):
-                setup = sum(item[5] for item in events[:index])
-                break
-        session_setup[session_id] = setup
-    token_sessions: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
-    for session_id, repo, action, verb, object_id, target, raw_target, outcome in con.execute(
+    )
+    while True:
+        batch = cursor.fetchmany(2048)
+        if not batch:
+            finish_setup()
+            break
+        for row in batch:
+            if current_session is None:
+                current_session = row[0]
+            elif row[0] != current_session:
+                finish_setup()
+                current_session = row[0]
+                current_events = []
+            current_events.append(row)
+    token_sessions: dict[str, dict[str, tuple[str, int]]] = defaultdict(dict)
+    token_cursor = con.execute(
         """
         SELECT session_id, repo, action_type, verb, object_id, target,
                raw_target, outcome
         FROM tool_events
         WHERE target <> '' AND action_type <> 'other'
+        ORDER BY session_id
         """
-    ).fetchall():
-        token_sessions[repo][
-            normalize_event_token(action, verb, object_id, target, raw_target, outcome)
-        ].add(session_id)
+    )
+    while True:
+        batch = token_cursor.fetchmany(2048)
+        if not batch:
+            break
+        for session_id, repo, action, verb, object_id, target, raw_target, outcome in batch:
+            token = normalize_event_token(
+                action, verb, object_id, target, raw_target, outcome
+            )
+            previous = token_sessions[repo].get(token)
+            if previous is None:
+                token_sessions[repo][token] = (session_id, 1)
+            elif previous[0] != session_id:
+                token_sessions[repo][token] = (session_id, previous[1] + 1)
 
     scored: list[tuple[float, Finding]] = []
-    for window in friction_windows(con, lengths=(length,)):
+    for window in friction_windows(
+        con,
+        min_session_count=min_sessions,
+        lengths=lengths or (length,),
+        require_error=require_error,
+    ):
         if require_error and ":err" not in window.encoded:
             continue
         if len(window.sessions) < min_sessions:
@@ -210,7 +277,8 @@ def exact_sequences(
         n = repo_sessions.get(window.repo, 0)
         expected = float(n)
         for token in window.tokens:
-            expected *= len(token_sessions[window.repo].get(token, ())) / n if n else 0
+            token_count = token_sessions[window.repo].get(token, ("", 0))[1]
+            expected *= token_count / n if n else 0
         lift = len(window.sessions) / expected if expected else 0.0
         if lift < min_lift:
             continue
@@ -249,7 +317,7 @@ def exact_sequences(
             sessions=len(window.sessions),
             tokens=window.wasted_tokens,
             detail=(
-                f"exact {length}-step; lift {lift:.1f}; cost {cost:,}; "
+                f"exact {len(window.tokens)}-step; lift {lift:.1f}; cost {cost:,}; "
                 f"rework {rework}; setup {setup_tax:,}; paired {paired}; "
                 f"delta_rework {delta_rework:+.1f}; delta_setup {delta_setup:+,.0f}"
             ),

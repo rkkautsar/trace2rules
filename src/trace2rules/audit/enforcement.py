@@ -35,6 +35,8 @@ def enforcement_for(rule: AgentRule) -> str:
 
 
 def _text(path: Path) -> str:
+    if path.is_symlink():
+        return ""
     try:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):

@@ -89,18 +89,14 @@ def _report_command(
             for key in ("hotspots", "recovery", "context", "orientation", "selector_miss", "workaround", "stuck_loop", "noop_retry", "premature_completion", "low_validation", "site_edit_mismatch", "feedback", "failure_loop", "edit_rejection", "generated_edit", "dependency_drift", "blind_edit", "environment_thrash", "destructive_command", "no_reproduction", "false_completion", "correction_loop", "test_regression", "test_shrink")
             for finding in mined[key]
         ]
-        exact = []
-        for length in EXACT_LENGTHS:
-            exact.extend(
-                exact_sequences(
-                    con,
-                    length=length,
-                    min_sessions=min_support,
-                    top=100,
-                    min_instances=2,
-                    min_lift=1.5,
-                )
-            )
+        exact = exact_sequences(
+            con,
+            lengths=EXACT_LENGTHS,
+            min_sessions=min_support,
+            top=100,
+            min_instances=2,
+            min_lift=1.5,
+        )
         findings.extend(exact)
         if repo:
             findings = [finding for finding in findings if finding.repo == repo]

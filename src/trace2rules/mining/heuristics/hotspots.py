@@ -66,8 +66,7 @@ def hotspots(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[F
         for repo, target, sessions, read_only, repo_sessions, wasted in con.execute(query).fetchall()
     ]
 
-def context_blasts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
-    query = """
+CONTEXT_BLAST_QUERY = """
         SELECT repo, target, tool_name, action_type,
                count(DISTINCT session_id) AS sessions,
                count(*) AS calls,
@@ -92,6 +91,20 @@ def context_blasts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
            AND count(*) >= 2
         ORDER BY total_tokens DESC
     """
+
+
+def context_blast_targets(con: duckdb.DuckDBPyConnection) -> set[tuple[str, str]]:
+    return {
+        (repo, target)
+        for repo, target, _tool, _action, _sessions, _calls, _avg, _total, _session, _step in con.execute(
+            CONTEXT_BLAST_QUERY
+        ).fetchall()
+        if not _DOC_TARGET_RE.search(target) and not _BOUNDED_RE.search(target)
+    }
+
+
+def context_blasts(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
+    query = CONTEXT_BLAST_QUERY
     if limit is not None:
         query += f" LIMIT {int(limit)}"
     findings: list[Finding] = []

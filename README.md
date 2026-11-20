@@ -6,6 +6,30 @@ Mine and audit coding-agent sessions into evidence-backed `AGENTS.md` rules.
 
 Status: beta. The output is a proposal, not an automatically applied `AGENTS.md`.
 
+## Quick start
+
+Audit the current checkout:
+
+```bash
+trace2rules audit
+trace2rules audit --prompt > audit.txt
+```
+
+Mine your local sessions and write one report prompt per detected repo:
+
+```bash
+uv tool install trace2rules
+trace2rules run --out-dir reports/
+```
+
+Include an existing `AGENTS.md` audit in each prompt:
+
+```bash
+trace2rules run --out-dir reports/ --agents AGENTS.md
+```
+
+Then give `reports/*.md` to your own coding agent to synthesize the rules. `run` ingests local sessions automatically when the database is empty. `trace2rules synthesize --report reports/acme__repo.md` is an optional thin wrapper for the same prompt.
+
 ## Examples
 
 ### Auditing a real `AGENTS.md`
@@ -62,30 +86,6 @@ It targets two destinations:
 - **Stable AGENTS rules**: durable repo or global policy that future agents should follow even though it is not mechanically checkable.
 
 It deliberately does not mine memories, historical decisions, ownership, dates, task state, or "what happened" summaries. Those are contextual and belong in a memory system, not in `AGENTS.md`. If evidence is descriptive rather than prescriptive, the tool should omit it.
-
-## Quick start
-
-Audit the current checkout:
-
-```bash
-trace2rules audit
-trace2rules audit --prompt > audit.txt
-```
-
-Mine your local sessions and write one report prompt per detected repo:
-
-```bash
-uv tool install trace2rules
-trace2rules run --out-dir reports/
-```
-
-Include an existing `AGENTS.md` audit in each prompt:
-
-```bash
-trace2rules run --out-dir reports/ --agents AGENTS.md
-```
-
-Then give `reports/*.md` to your own coding agent to synthesize the rules. `run` ingests local sessions automatically when the database is empty. `trace2rules synthesize --report reports/acme__repo.md` is an optional thin wrapper for the same prompt.
 
 ## How it works
 

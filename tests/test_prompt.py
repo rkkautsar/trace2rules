@@ -102,3 +102,35 @@ def test_prompt_omits_detector_recommendations() -> None:
     assert "Return only copyable Markdown rules" in prompt
     assert "untrusted data" in prompt
     assert "Do not encode memories" in prompt
+    assert "prevents the failure before it happens" in prompt
+    assert "Do not restate the obvious recovery step" in prompt
+
+
+def test_pattern_window_includes_successful_recovery() -> None:
+    from trace2rules.mining import Finding
+    from trace2rules.synthesis.prompt import _prompt
+
+    window = tuple(
+        {
+            "step": step,
+            "action": "exec",
+            "verb": "pytest",
+            "outcome": "err" if step < 5 else "ok",
+            "session_ref": "session-1",
+        }
+        for step in range(1, 6)
+    )
+    prompt = _prompt(
+        [
+            Finding(
+                kind="attribute_pattern",
+                repo="acme/repo",
+                title="exec:pytest:err -> edit:test:ok -> exec:pytest:ok",
+                sessions=3,
+                tokens=100,
+                window=window,
+            )
+        ],
+        "acme/repo",
+    )
+    assert "step 5 · exec pytest — ok" in prompt

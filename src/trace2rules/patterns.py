@@ -23,6 +23,8 @@ class SequencePattern:
     confidence: float = 0.0
     example_session: str = ""
     example_step: int = 0
+    recovery_step: int = 0
+    recovery_sessions: int = 0
 
 
 def _token(
@@ -299,15 +301,38 @@ def mine_attribute_patterns(
                     rule_key,
                     {
                         "sessions": set(),
+                        "recovered_sessions": set(),
                         "occurrences": 0,
                         "tokens": 0,
                         "example": "",
                         "example_session": session_id,
                         "example_step": int(event[1]),
+                        "recovery_step": 0,
                     },
                 )
                 rule["sessions"].add(session_id)
                 rule["occurrences"] += 1
+                recovery_step = 0
+                for later in range(end + 1, min(len(events), end + 7)):
+                    later_event = events[later]
+                    if (
+                        later_event[9] == "ok"
+                        and later_event[2] == event[2]
+                        and later_event[4] == event[4]
+                        and later_event[5] == event[5]
+                        and (
+                            later_event[7] == event[7]
+                            or later_event[6] == event[6]
+                        )
+                    ):
+                        recovery_step = int(later_event[1])
+                        break
+                if recovery_step:
+                    rule["recovered_sessions"].add(session_id)
+                    if not rule["recovery_step"] or recovery_step < rule["recovery_step"]:
+                        rule["recovery_step"] = recovery_step
+                        rule["example_session"] = session_id
+                        rule["example_step"] = int(event[1])
                 rule["tokens"] += sum(
                     events[i][10] for i in range(start, end + 1)
                 )
@@ -324,7 +349,8 @@ def mine_attribute_patterns(
     patterns: list[SequencePattern] = []
     for (repo, antecedent, error_token), value in rules.items():
         sessions_count = len(value["sessions"])
-        if sessions_count < min_sessions:
+        recovery_sessions = len(value["recovered_sessions"])
+        if sessions_count < min_sessions or recovery_sessions < min_sessions:
             continue
         antecedent_key = (repo, antecedent)
         antecedent_support = antecedent_counts.get(antecedent_key, ("", 0))[1]
@@ -352,6 +378,8 @@ def mine_attribute_patterns(
                 confidence=confidence,
                 example_session=value["example_session"],
                 example_step=value["example_step"],
+                recovery_step=value["recovery_step"],
+                recovery_sessions=recovery_sessions,
             )
         )
 
@@ -395,7 +423,9 @@ def attribute_pattern_findings(
             detail=(
                 f"repo-local sequential rule; lift {pattern.lift:.1f}; "
                 f"confidence {pattern.confidence:.0%}; "
-                f"occurrences {pattern.occurrences}"
+                f"occurrences {pattern.occurrences}; "
+                f"recovery observed in {pattern.recovery_sessions} sessions; "
+                "prevention target is the final error, not the recovery step"
             ),
             sequence=pattern.sequence,
             variants=(pattern.example,),
@@ -404,6 +434,7 @@ def attribute_pattern_findings(
                     con,
                     pattern.example_session,
                     pattern.example_step,
+                    pattern.recovery_step or None,
                     include_scratch=True,
                 )
                 if pattern.example_session

@@ -385,6 +385,11 @@ def test_attribute_patterns_allow_small_gaps() -> None:
             "'exception:AssertionError')",
             [session],
         )
+        con.execute(
+            "INSERT INTO tool_events VALUES (?, 4, 0, 'acme/repo', 'exec', 'pytest', "
+            "'pytest', 'pytest tests/test_a.py', 'pytest tests/test_a.py', 'ok', 10, '')",
+            [session],
+        )
     patterns = mine_attribute_patterns(con, max_gap=2, min_sessions=2, min_lift=1.0)
     assert any(
         "edit:test:ok" in pattern.sequence

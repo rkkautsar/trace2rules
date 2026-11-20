@@ -36,7 +36,7 @@ trace2rules run --out-dir reports/
 
 An existing `AGENTS.md` or `CLAUDE.md` in a session’s `cwd` is discovered automatically and included in that repo’s prompt. Use `--agents PATH` only to override discovery from a different checkout.
 
-Then give `reports/*.md` to your own coding agent to synthesize the rules. `run` ingests local sessions automatically when the database is empty. `trace2rules synthesize --report reports/acme__repo.md` is an optional thin wrapper for the same prompt.
+Then give `reports/*.md` to your own coding agent to synthesize the rules. `run` ingests local sessions automatically when the database is empty.
 
 ## Examples
 
@@ -58,7 +58,7 @@ On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` 
 
 `configured` means the command appears in `.github/workflows/CI.yml`; it does not prove the check is required by branch protection. `available` means a Makefile/package target exists but is not wired into CI. `missing` means no mechanism was found.
 
-### Rules synthesized from report prompts
+### Rules generated from report prompts
 
 **`swc-project/swc`**
 
@@ -70,7 +70,7 @@ On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` 
 
 - [enforceable] Make `uv run pytest -q` a required check in `.github/workflows/ci.yml`.
 - [enforceable] Keep dependencies declared in `pyproject.toml` and install with `uv sync --frozen`; `environment_thrash` found 29 package-manager calls across 7 sessions, 5 failed.
-- [guidance] Read the owning package module by symbol or range, not whole-file: `src/trace2rules/synthesize.py` and `src/trace2rules/ingest.py` were read-only hotspots in 25/77 and 24/77 sessions.
+- [guidance] Read the owning package module by symbol or range, not whole-file: `src/trace2rules/cli.py` and `src/trace2rules/ingest.py` were read-only hotspots in 26/77 and 24/77 sessions.
 - [guidance] Read the target file or exact range before editing: 6 sessions made 274 edits with no prior read of the target, concentrated in `src/trace2rules/cli.py` and `src/trace2rules/ingest.py`.
 - [guidance] For bug fixes, reproduce the failure first: 4 sessions edited source without a preceding failing exec. Run the narrowest failing test before changing source.
 
@@ -102,10 +102,10 @@ It deliberately does not mine memories, historical decisions, ownership, dates, 
 1. **Ingest** normalizes tool calls into DuckDB (`sessions`, `tool_events`, `feedback_events`, `test_results`).
 2. **Mining** finds hotspots, recovery loops, validation gaps, edit rejections, blind edits, environment thrash, destructive commands, generated-path edits, dependency drift, and correction loops.
 3. **Sequence mining** normalizes commands and paths, anchors patterns at errors, allows small gaps, and reports support/failure context. Exact sequences use lift and paired-rework evidence; windows never cross a compaction boundary.
-4. **Report** selects bounded findings and writes one readable Markdown evidence prompt per repo. The optional `synthesize --report` wrapper adds a JSON output contract and sends the prompt to an LLM; it does not re-mine.
+4. **Report** selects bounded findings and writes one readable Markdown evidence prompt per repo.
 5. **Audit** checks existing `AGENTS.md` rules against sessions. `holdout` splits sessions by time and audits the same rules on an earlier train slice and later holdout.
 
-Generated verifier scripts and low-support task-specific sequences are filtered before synthesis.
+Generated verifier scripts and low-support task-specific sequences are filtered before reporting.
 
 ## Commands
 
@@ -115,10 +115,9 @@ Generated verifier scripts and low-support task-specific sequences are filtered 
 | `mine` | Show friction findings and failure signals |
 | `report` | Emit findings and evidence as JSON or a Markdown report prompt |
 | `run` | Ingest if needed, then write one evidence prompt per detected repo |
-| `doctor` | Check install, Node, credentials, source stores, and database schema |
+| `doctor` | Check install, Node, source stores, and database schema |
 | `patterns` | Mine error-anchored, normalized attribute patterns |
 | `exact` | Show recurring normalized sequences with evidence |
-| `synthesize` | Add a JSON output contract to a report prompt and send it to an LLM |
 | `audit` | Audit existing `AGENTS.md` rules against sessions and suggest enforcement |
 | `holdout` | Audit rules on an earlier train split and a later time holdout |
 
@@ -128,8 +127,6 @@ Useful options:
 trace2rules ingest                         # ~, all detected local stores
 trace2rules ingest --format swe-rebench    # opt into the public dataset
 trace2rules ingest --source PATH --limit 200
-trace2rules synthesize --report reports/acme__repo.md
-trace2rules synthesize --report reports/acme__repo.md --json
 trace2rules exact --length 4 --per-repo 2
 trace2rules patterns --top 10
 trace2rules audit --agents AGENTS.md
@@ -193,39 +190,20 @@ Supported ingestion formats:
 
 Datasets are not included in this repository.
 
-## Synthesis wrapper
-
-`run`/`report --prompt` produce the evidence prompt. The normal path is to hand that prompt to your own coding agent.
-
-`trace2rules synthesize --report reports/acme__repo.md` reads the Markdown prompt, appends a JSON output contract for structured parsing, and sends it to an OpenAI-compatible chat model. It does not query DuckDB, re-mine sessions, or reconstruct the prompt.
-
-Provider selection:
-
-1. `TRACE2RULES_LLM_API_KEY` — custom OpenAI-compatible endpoint.
-2. `GEMINI_API_KEY` or `GOOGLE_API_KEY` — Gemini OpenAI-compatible endpoint.
-3. `OPENAI_API_KEY` — OpenAI.
-
-`TRACE2RULES_BASE_URL` makes any OpenAI-compatible endpoint usable, including a LiteLLM proxy.
-
 ## Configuration
+
+Variables are read from the process environment. trace2rules does not load `.env` files.
 
 | Variable | Purpose |
 |---|---|
-| `GEMINI_API_KEY` | Gemini synthesis provider |
-| `GOOGLE_API_KEY` | Alternate Gemini key |
-| `OPENAI_API_KEY` | OpenAI synthesis provider |
-| `TRACE2RULES_LLM_API_KEY` | API key for a custom OpenAI-compatible endpoint |
-| `TRACE2RULES_BASE_URL` | OpenAI-compatible base URL (including LiteLLM) |
-| `TRACE2RULES_MODEL` | Synthesis model, e.g. `gemini-4-hydrogen` |
-| `TRACE2RULES_MAX_RULES` | Maximum rules per prompt; defaults to `10` |
+| `TRACE2RULES_DB` | Override the default DuckDB path |
 | `TRACE2RULES_CACHE_DIR` | Local parquet cache; defaults to `~/.cache/trace2rules` |
-| `HF_TOKEN` | Used by `hf download` for gated datasets; not read by trace2rules |
+| `TRACE2RULES_WINDOWS_STORES` | Set to `1` to scan Windows agent stores from WSL |
 
 ## Data and privacy
 
 - Session data stays in your local DuckDB database.
-- `synthesize --report` sends only the report prompt and its JSON output contract, not the full raw session database.
-- `report`/`run` perform no LLM calls. Findings can still contain commands, paths, and repository names; review before using an external provider.
+- `report`/`run` perform no LLM calls. Findings can still contain commands, paths, and repository names; review before sharing a prompt externally.
 - `data/` is gitignored.
 
 ## Known limits

@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import json
-import os
-import re
-
 from ..mining.models import Finding
 from ..redact import redact_text
-from .models import DEFAULT_MAX_RULES, MAX_CHARS, MAX_LINES, Synthesis
+from .models import DEFAULT_MAX_RULES, MAX_CHARS, MAX_LINES
 
 PROMPT_FINDINGS = 10
 PROMPT_WINDOW_EVENTS = 3
@@ -268,62 +264,3 @@ def _prompt(
         ]
     )
     return "\n".join(sections)
-
-
-def _json_contract(repo: str | None = None) -> str:
-    repository = json.dumps(repo or "<repository>")
-    return f"""
-
-## Machine-readable output
-
-Ignore the Markdown output format above. Return JSON only, shaped exactly as:
-{{"repo": {repository}, "rules": [{{"category": "...", "rule_markdown": "...", "evidence_summary": "...", "estimated_tokens_saved_per_session": 0, "sources": ["<session_ref> (step N)"], "enforceable": true, "enforcement": "<CI/pre-commit/lint check>"}}]}}
-- Include at least one source copied exactly from an evidence window; never invent a source."""
-
-
-def _client() -> tuple[object, str] | None:
-    key = os.getenv("TRACE2RULES_LLM_API_KEY") or os.getenv("TRACE2RULES_API_KEY")
-    base = os.getenv("TRACE2RULES_BASE_URL")
-    model = os.getenv("TRACE2RULES_MODEL")
-    if key:
-        return _make_client(key, base, model or "gemini-2.5-pro")
-    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if gemini_key:
-        return _make_client(
-            gemini_key,
-            base or "https://generativelanguage.googleapis.com/v1beta/openai/",
-            model or "gemini-2.5-pro",
-        )
-    openai_key = os.getenv("OPENAI_API_KEY")
-    if openai_key:
-        return _make_client(openai_key, base, model or "gpt-5")
-    return None
-
-
-def _make_client(key: str, base: str | None, model: str):
-    from openai import OpenAI
-
-    client = OpenAI(api_key=key, base_url=base) if base else OpenAI(api_key=key)
-    return client, model
-
-
-def _llm_prompt(prompt: str) -> Synthesis | None:
-    resolved = _client()
-    if resolved is None:
-        return None
-    client, model = resolved
-    response = client.chat.completions.create(
-        model=model,
-        temperature=0,
-        response_format={"type": "json_object"},
-        messages=[
-            {
-                "role": "system",
-                "content": "You convert observed coding-agent friction into terse, durable AGENTS.md rules.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-    )
-    content = (response.choices[0].message.content or "").strip()
-    content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content)
-    return Synthesis.model_validate(json.loads(content))

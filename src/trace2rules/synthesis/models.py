@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -24,21 +23,3 @@ class Rule(BaseModel):
     confidence: Literal["low", "medium", "high"] = "low"
     finding_kinds: list[str] = Field(default_factory=list)
     evidence_quotes: list[str] = Field(default_factory=list)
-
-
-class Synthesis(BaseModel):
-    repo: str
-    rules: list[Rule]
-
-
-def configured_max_rules(default: int = DEFAULT_MAX_RULES) -> int:
-    raw = os.getenv("TRACE2RULES_MAX_RULES")
-    if not raw:
-        return default
-    try:
-        value = int(raw)
-    except ValueError as error:
-        raise ValueError("TRACE2RULES_MAX_RULES must be a positive integer") from error
-    if value < 1:
-        raise ValueError("TRACE2RULES_MAX_RULES must be a positive integer")
-    return value

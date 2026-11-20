@@ -13,7 +13,6 @@ from typing import Annotated
 import duckdb
 
 import typer
-from dotenv import load_dotenv
 from rich.console import Console
 from rich.markup import escape
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -26,8 +25,6 @@ from .commands.audit import _audit_command
 from .commands.holdout import _holdout_command
 from .db import DB_PATH, connect
 from .ingest import DEFAULT_REPOS, SOURCE, ingest as ingest_traces
-
-load_dotenv(Path.cwd() / ".env")
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Mine coding-agent trajectories for AGENTS.md rules.")
 
@@ -469,17 +466,6 @@ def _doctor_command(
             node_version = "unavailable"
         checks.append(("Node.js", "ok", node_version or node))
 
-    for key in (
-        "TRACE2RULES_LLM_API_KEY",
-        "TRACE2RULES_API_KEY",
-        "GEMINI_API_KEY",
-        "GOOGLE_API_KEY",
-        "OPENAI_API_KEY",
-    ):
-        checks.append(
-            (key, "ok" if os.getenv(key) else "warn", "set" if os.getenv(key) else "unset")
-        )
-
     from .ingest.sources.agent_trajectory import _source_roots
 
     try:
@@ -661,43 +647,6 @@ app.command("exact")(_exact_command)
 
 
 
-def _synthesize_command(
-    report: Annotated[
-        Path,
-        typer.Option(
-            "--report",
-            exists=True,
-            dir_okay=False,
-            readable=True,
-            help="Report prompt emitted by `trace2rules run` or `report --prompt`.",
-        ),
-    ],
-    json_output: Annotated[bool, typer.Option("--json", help="Emit the parsed synthesis as JSON.")] = False,
-    max_rules: Annotated[
-        int | None,
-        typer.Option(
-            "--max-rules",
-            min=1,
-            max=50,
-            help="Maximum rules to keep; defaults to TRACE2RULES_MAX_RULES or 10.",
-        ),
-    ] = None,
-) -> None:
-    from .synthesis import synthesize_report
-    from .synthesis.service import render
-
-    try:
-        synthesis = synthesize_report(report.read_text(encoding="utf-8"), max_rules=max_rules)
-    except (OSError, RuntimeError, ValueError) as error:
-        console.print(f"[red]{escape(str(error))}[/red]")
-        raise typer.Exit(1) from None
-    if json_output:
-        typer.echo(json.dumps(synthesis.model_dump(), indent=2))
-        return
-    typer.echo(render(synthesis, synthesis.repo, 0))
-
-
-app.command("synthesize")(_synthesize_command)
 
 
 if __name__ == "__main__":

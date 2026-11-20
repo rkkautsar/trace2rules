@@ -370,56 +370,6 @@ def test_ingest_continues_after_a_bad_source(monkeypatch) -> None:
     assert "/good" in result.output
 
 
-def test_synthesize_reads_a_report_prompt(tmp_path: Path, monkeypatch) -> None:
-    from trace2rules.synthesis.models import Rule, Synthesis
-
-    report = tmp_path / "acme__repo.md"
-    report.write_text("# Repository: acme/repo\n\nRepo: acme/repo\n")
-    synthesis = Synthesis(
-        repo="acme/repo",
-        rules=[
-            Rule(
-                category="convention",
-                rule_markdown="Do X.",
-                evidence_summary="3 sessions",
-                estimated_tokens_saved_per_session=0,
-            )
-        ],
-    )
-    monkeypatch.setattr(
-        "trace2rules.synthesis.synthesize_report", lambda prompt, **kwargs: synthesis
-    )
-    result = runner.invoke(app, ["synthesize", "--report", str(report)])
-    assert result.exit_code == 0
-    assert "Do X." in result.output
-
-
-def test_synthesize_json_emits_the_parsed_result(tmp_path: Path, monkeypatch) -> None:
-    from trace2rules.synthesis.models import Rule, Synthesis
-
-    report = tmp_path / "acme__repo.md"
-    report.write_text("# Repository: acme/repo\n")
-    synthesis = Synthesis(
-        repo="acme/repo",
-        rules=[
-            Rule(
-                category="convention",
-                rule_markdown="Do X.",
-                evidence_summary="3 sessions",
-                estimated_tokens_saved_per_session=0,
-            )
-        ],
-    )
-    monkeypatch.setattr(
-        "trace2rules.synthesis.synthesize_report", lambda prompt, **kwargs: synthesis
-    )
-    result = runner.invoke(app, ["synthesize", "--report", str(report), "--json"])
-    assert result.exit_code == 0
-    payload = json.loads(result.output)
-    assert payload["repo"] == "acme/repo"
-    assert payload["rules"][0]["rule_markdown"] == "Do X."
-
-
 def test_report_does_not_audit_cwd_agents_for_other_repo(tmp_path: Path, monkeypatch) -> None:
     db = tmp_path / "scope.duckdb"
     write_sessions(

@@ -1,17 +1,7 @@
 from __future__ import annotations
 
 from trace2rules.mining import Finding
-from trace2rules.synthesis.prompt import _client
 from trace2rules.synthesis.selection import _sequence_tokens, select_findings
-
-
-def test_custom_llm_key_uses_explicit_endpoint(monkeypatch) -> None:
-    monkeypatch.setenv("TRACE2RULES_LLM_API_KEY", "test-key")
-    monkeypatch.setenv("TRACE2RULES_BASE_URL", "http://localhost:4000/v1")
-    monkeypatch.setenv("TRACE2RULES_MODEL", "test-model")
-    client, model = _client()
-    assert client is not None
-    assert model == "test-model"
 
 
 def test_nested_exact_sequences_keep_the_longer_workflow() -> None:
@@ -111,47 +101,3 @@ def test_prompt_omits_detector_recommendations() -> None:
     assert '"confidence":' not in prompt
     assert "Return only copyable Markdown rules" in prompt
     assert "Do not encode memories" in prompt
-
-
-
-
-def test_synthesize_wrapper_caps_rules(monkeypatch) -> None:
-    from trace2rules.synthesis import service
-    from trace2rules.synthesis.models import Rule, Synthesis
-
-    rules = [
-        Rule(
-            category="convention",
-            rule_markdown=f"rule {index}",
-            evidence_summary="evidence",
-            estimated_tokens_saved_per_session=1,
-        )
-        for index in range(12)
-    ]
-    monkeypatch.setattr(
-        service,
-        "_llm_prompt",
-        lambda prompt: Synthesis(repo="acme/repo", rules=rules),
-    )
-    assert len(service.synthesize_report("# Repository: acme/repo").rules) == 10
-    assert len(service.synthesize_report("# Repository: acme/repo", max_rules=3).rules) == 3
-    monkeypatch.setenv("TRACE2RULES_MAX_RULES", "4")
-    assert len(service.synthesize_report("# Repository: acme/repo").rules) == 4
-
-
-def test_synthesize_adds_json_contract(monkeypatch) -> None:
-    from trace2rules.synthesis import service
-
-    captured = {}
-
-    def fake(prompt):
-        captured["prompt"] = prompt
-        return None
-
-    monkeypatch.setattr(service, "_llm_prompt", fake)
-    try:
-        service.synthesize_report("# Repository: acme/repo")
-    except RuntimeError:
-        pass
-    assert "Machine-readable output" in captured["prompt"]
-    assert "Return JSON only" in captured["prompt"]

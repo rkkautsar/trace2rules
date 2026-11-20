@@ -110,3 +110,25 @@ def test_prompt_omits_detector_recommendations() -> None:
     assert "Do not encode memories" in prompt
 
 
+
+
+def test_synthesize_wrapper_caps_rules(monkeypatch) -> None:
+    from trace2rules.synthesis import service
+    from trace2rules.synthesis.models import Rule, Synthesis
+
+    rules = [
+        Rule(
+            category="convention",
+            rule_markdown=f"rule {index}",
+            evidence_summary="evidence",
+            estimated_tokens_saved_per_session=1,
+        )
+        for index in range(7)
+    ]
+    monkeypatch.setattr(
+        service,
+        "_llm_prompt",
+        lambda prompt: Synthesis(repo="acme/repo", rules=rules),
+    )
+    result = service.synthesize_report("# Repository: acme/repo", repo="acme/repo")
+    assert len(result.rules) == 5

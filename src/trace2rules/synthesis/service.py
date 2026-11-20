@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from .models import Synthesis
+from .models import MAX_RULES, Synthesis
 from .prompt import _llm_prompt
 
 
@@ -45,6 +45,4 @@ def synthesize_report(prompt: str, repo: str | None = None) -> Synthesis:
             "No LLM client configured. Set TRACE2RULES_LLM_API_KEY, "
             "GEMINI_API_KEY, GOOGLE_API_KEY, or OPENAI_API_KEY."
         )
-    if repo and result.repo != repo:
-        return Synthesis(repo=repo, rules=result.rules)
-    return result
+    return Synthesis(repo=repo or result.repo, rules=result.rules[:MAX_RULES])

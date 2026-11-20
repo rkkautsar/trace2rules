@@ -15,11 +15,23 @@ trace2rules audit
 trace2rules audit --prompt > audit.txt
 ```
 
+Or paste this into your coding agent:
+
+```text
+Install trace2rules if missing (`uv tool install trace2rules`). Audit this repo's AGENTS.md and CLAUDE.md against my local sessions with `trace2rules audit`. Report unobserved, violated, and unenforced rules, and propose existing CI/pre-commit checks without duplicating configured enforcement.
+```
+
 Mine your local sessions and write one report prompt per detected repo:
 
 ```bash
 uv tool install trace2rules
 trace2rules run --out-dir reports/
+```
+
+Or paste this into your coding agent:
+
+```text
+Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules run --out-dir reports/` for my local agent sessions. Read the report files and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
 ```
 
 Include an existing `AGENTS.md` audit in each prompt:

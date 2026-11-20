@@ -130,7 +130,12 @@ def edit_rejections(con: duckdb.DuckDBPyConnection, limit: int | None = None) ->
     ]
 
 def blind_edits(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
-    query = """
+    columns = {
+        row[0]
+        for row in con.execute("PRAGMA table_info('tool_events')").fetchall()
+    }
+    create_filter = "AND verb <> 'create'" if "verb" in columns else ""
+    query = f"""
         WITH edits AS (
             SELECT session_id, repo, step_idx, target, approx_out_tokens
             FROM tool_events
@@ -141,6 +146,7 @@ def blind_edits(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> lis
               AND target NOT LIKE '%>%'
               AND NOT regexp_matches(target, '^(xd|proc|agent|mcp|https?):')
               AND raw_target NOT LIKE 'create%'
+              {create_filter}
         )
         SELECT repo,
                count(*) AS edits,

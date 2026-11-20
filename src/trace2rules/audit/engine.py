@@ -537,8 +537,25 @@ def available_text(existing: str) -> str:
     return existing if existing else "An existing target"
 
 
+def _agents_root(start: Path) -> Path:
+    current = start.resolve()
+    if current.is_file():
+        current = current.parent
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return current
+
+
 def resolve_agents(path: str | Path | None = None) -> list[Path]:
-    candidates = [Path(path)] if path is not None else [Path("AGENTS.md"), Path("CLAUDE.md")]
+    if path is not None and Path(path).is_dir():
+        root = _agents_root(Path(path))
+        candidates = [root / "AGENTS.md", root / "CLAUDE.md"]
+    elif path is not None:
+        candidates = [Path(path)]
+    else:
+        root = _agents_root(Path.cwd())
+        candidates = [root / "AGENTS.md", root / "CLAUDE.md"]
     paths: list[Path] = []
     seen: set[Path] = set()
     for candidate in candidates:

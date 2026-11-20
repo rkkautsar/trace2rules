@@ -70,6 +70,13 @@ CREATE TABLE IF NOT EXISTS test_results (
     approx_out_tokens INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS ingest_files (
+    source_ref        VARCHAR PRIMARY KEY,
+    mtime_ns          BIGINT NOT NULL,
+    size              BIGINT NOT NULL,
+    split_compactions BOOLEAN NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS feedback_events (
     session_id        VARCHAR NOT NULL,
     step_idx          INTEGER NOT NULL,

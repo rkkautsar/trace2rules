@@ -367,7 +367,10 @@ def _iter_files(root: Path, source: str, limit: int | None) -> list[Path]:
         if path.is_file() and path.name not in skip
     ]
     if limit:
-        files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+        files.sort(
+            key=lambda path: (path.stat().st_mtime, path.as_posix()),
+            reverse=True,
+        )
         return files[:limit]
     return files
 
@@ -598,6 +601,25 @@ def ingest_agent_sessions(
                 continue
             metas_by_id: dict[str, TranscriptMeta] = {}
             transcript_metas: list[tuple[Path, TranscriptMeta]] = []
+            from ...db import connect as _connect
+
+            manifest_con = _connect(db_path)
+            try:
+                manifest = {
+                    row[0]: (row[1], row[2], row[3])
+                    for row in manifest_con.execute(
+                        "SELECT source_ref, mtime_ns, size, split_compactions FROM ingest_files"
+                    ).fetchall()
+                }
+                ingested_refs = {
+                    row[0]
+                    for row in manifest_con.execute(
+                        "SELECT DISTINCT source_ref FROM sessions WHERE source_ref <> ''"
+                    ).fetchall()
+                }
+            finally:
+                manifest_con.close()
+            selected_paths: list[Path] = []
             scan_task = (
                 progress.add_task(f"Scanning {source_name}", total=len(files))
                 if progress
@@ -612,6 +634,22 @@ def ingest_agent_sessions(
                         print(f"Skipping {path}: {error}")
                         continue
                     meta.session_id = meta.session_id or _session_id(path)
+                    try:
+                        stat = path.stat()
+                    except OSError:
+                        continue
+                    selected_paths.append(path)
+                    cached = manifest.get(str(path))
+                    if (
+                        cached
+                        and cached[0] == stat.st_mtime_ns
+                        and cached[1] == stat.st_size
+                        and cached[2] == split_compactions
+                        and str(path) in ingested_refs
+                    ):
+                        if progress and scan_task is not None:
+                            progress.update(scan_task, advance=1)
+                        continue
                     if progress and scan_task is not None:
                         progress.update(scan_task, advance=1)
                     if meta.session_id not in metas_by_id:
@@ -733,6 +771,19 @@ def ingest_agent_sessions(
                     source_calls,
                 )
             )
+            manifest_con = _connect(db_path)
+            try:
+                for path in selected_paths:
+                    try:
+                        stat = path.stat()
+                    except OSError:
+                        continue
+                    manifest_con.execute(
+                        "INSERT OR REPLACE INTO ingest_files VALUES (?, ?, ?, ?)",
+                        [str(path), stat.st_mtime_ns, stat.st_size, split_compactions],
+                    )
+            finally:
+                manifest_con.close()
     except NodeUnavailableError as error:
         raise RuntimeError(
             "agent-trajectory requires Node.js 20 or newer on PATH."

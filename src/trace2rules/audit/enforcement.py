@@ -66,12 +66,15 @@ def _execution_blocks(text: str) -> list[str]:
     return blocks
 
 
+_IGNORED_FLAGS = {"-q", "--quiet", "-v", "--verbose"}
+
+
 def _command_in_text(command: str, text: str) -> bool:
     command = command.strip().lower()
     if not command:
         return False
     text = text.lower()
-    tokens = command.split()
+    tokens = [token for token in command.split() if token not in _IGNORED_FLAGS]
     patterns = [tokens]
     if len(tokens) > 1 and tokens[0] in {"cargo", "uv", "npm", "pnpm", "yarn", "bun"}:
         patterns.append(tokens[1:])

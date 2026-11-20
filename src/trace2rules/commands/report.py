@@ -123,8 +123,7 @@ def _report_command(
                 ).fetchall()
                 for (cwd,) in cwd_rows:
                     candidate = Path(cwd)
-                    found = resolve_agents(candidate / "AGENTS.md")
-                    found += resolve_agents(candidate / "CLAUDE.md")
+                    found = resolve_agents(candidate)
                     if found:
                         return found
                 return None
@@ -167,8 +166,11 @@ def _report_command(
             if out_dir is None:
                 sys.stdout.write("\n\n---\n\n".join(chunks))
             else:
-                if out_dir.is_symlink():
-                    raise typer.BadParameter("--out-dir must not be a symlink")
+                for parent in (out_dir, *out_dir.parents):
+                    if parent.is_symlink():
+                        raise typer.BadParameter(
+                            "--out-dir must not contain symlink components"
+                        )
                 out_dir.mkdir(parents=True, exist_ok=True)
                 for repo_name, _count in repo_rows:
                     safe_repo = repo_name.replace("\n", " ").replace("\r", " ")

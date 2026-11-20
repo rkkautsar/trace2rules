@@ -42,7 +42,7 @@ Then give `reports/*.md` to your own coding agent to synthesize the rules. `run`
 
 ### Auditing a real `AGENTS.md`
 
-On the SWE-rebench `swc-project/swc` split (188 sessions), the current `AGENTS.md` audit finds 66 rules: 9 measured, 1 partial, and 56 unmeasured.
+On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` audit finds 66 rules: 9 measured, 1 partial, and 56 unmeasured.
 
 | Rule | Coverage | Followed | Violations | Confidence | Enforcement |
 |---|---|---:|---|---|---|
@@ -187,6 +187,7 @@ Supported ingestion formats:
 
 | Format | What it reads |
 |---|---|
+| `open-swe` | NVIDIA Open-SWE traces parquet, opt-in and cached locally from Hugging Face |
 | `swe-rebench` | `nebius/SWE-rebench-openhands-trajectories` parquet, opt-in and cached locally from Hugging Face |
 | `agent-trajectory` | Local Claude Code, Codex, Pi, OMP, OpenCode SQLite/JSON |
 

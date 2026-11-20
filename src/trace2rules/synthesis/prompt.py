@@ -5,8 +5,8 @@ import os
 import re
 
 from ..mining.models import Finding
-from ..redact import redact_value
-from .models import MAX_CHARS, MAX_LINES, MAX_RULES, Synthesis
+from ..redact import redact_text
+from .models import DEFAULT_MAX_RULES, MAX_CHARS, MAX_LINES, Synthesis
 
 PROMPT_FINDINGS = 10
 PROMPT_WINDOW_EVENTS = 3
@@ -25,99 +25,260 @@ def _clip(value: object, width: int = 300) -> str:
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
-def _compact_window(window: tuple[dict, ...]) -> list[dict]:
-    return [
-        {
-            key: _clip(value, 240) if isinstance(value, str) else value
-            for key, value in event.items()
-        }
-        for event in window[:PROMPT_WINDOW_EVENTS]
+def _text(value: object, width: int = 300) -> str:
+    return _clip(redact_text(str(value or "")), width)
+
+
+def _cell(value: object, width: int = 160) -> str:
+    return _text(value, width).replace("|", "\\|")
+
+
+def _table(headers: list[str], rows: list[list[object]]) -> list[str]:
+    if not rows:
+        return []
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "|" + "|".join("---" for _ in headers) + "|",
     ]
+    lines.extend(
+        "| " + " | ".join(_cell(value) for value in row) + " |" for row in rows
+    )
+    return lines
 
 
-def _compact_existing(existing: dict | None) -> dict | None:
+def _finding_markdown(finding: Finding, index: int) -> list[str]:
+    title = finding.title or finding.detail or finding.kind
+    meta = [f"{finding.sessions} sessions"]
+    if finding.paired_instances:
+        meta.append(f"{finding.paired_instances} paired")
+    meta.append(f"confidence {_finding_confidence(finding)}")
+    cost = finding.cost or finding.tokens
+    if cost:
+        meta.append(f"~{cost:,} tokens")
+    if finding.setup_tax:
+        meta.append(f"{finding.setup_tax:,} setup tokens")
+    if finding.rework:
+        meta.append(f"{finding.rework:,} rework tokens")
+    if finding.delta_rework:
+        meta.append(f"delta rework {finding.delta_rework:.2f}")
+
+    lines = [f"### {index}. {finding.kind}: {_text(title, 180)}", "- " + " · ".join(meta)]
+    for label, value in (
+        ("Detail", finding.detail),
+        ("Failure family", finding.failure_family),
+        ("Side", finding.side),
+        ("Sequence", finding.sequence),
+        ("Cause", finding.cause),
+    ):
+        if value:
+            lines.append(f"- {label}: {_text(value, 500)}")
+    if finding.variants:
+        lines.append("- Variants: " + "; ".join(_text(item, 240) for item in finding.variants))
+    if finding.cause_support_sessions:
+        lines.append(f"- Cause support: {finding.cause_support_sessions} sessions")
+    if finding.window:
+        lines.append("- Evidence window:")
+        for event in finding.window[:PROMPT_WINDOW_EVENTS]:
+            session_ref = _text(event.get("session_ref", ""), 240)
+            step = event.get("step", "?")
+            action = " ".join(
+                str(event.get(key) or "").strip()
+                for key in ("action", "verb")
+                if event.get(key)
+            )
+            target = event.get("target") or event.get("object") or ""
+            outcome = event.get("outcome") or ""
+            head = f"`{session_ref}` step {step} · {_text(action, 80)}"
+            if target:
+                head += f" → {_text(target, 160)}"
+            if outcome:
+                head += f" — {outcome}"
+            lines.append(f"  - {head}")
+            for key, label in (
+                ("command", "Command"),
+                ("excerpt", "Excerpt"),
+                ("error_message", "Error"),
+            ):
+                if event.get(key):
+                    lines.append(f"    - {label}: {_text(event[key], 300)}")
+            if event.get("assistant"):
+                lines.append(f"    - Assistant reasoning (not evidence): {_text(event['assistant'], 300)}")
+    return lines
+
+
+def _context_markdown(context: dict | None) -> list[str]:
+    if not context:
+        return []
+    lines = ["## Command and validation evidence"]
+    bootstrap = context.get("bootstrap") or []
+    if bootstrap:
+        lines.append("### Bootstrap deltas")
+        lines.extend(
+            _table(
+                ["Delta", "Failed", "Succeeded", "Sessions", "Mean steps", "Source"],
+                [
+                    [
+                        ", ".join(item.get("delta", [])),
+                        item.get("failed", ""),
+                        item.get("succeeded", ""),
+                        item.get("sessions", 0),
+                        item.get("mean_steps", ""),
+                        item.get("source", ""),
+                    ]
+                    for item in bootstrap
+                ],
+            )
+        )
+    validation = context.get("validation") or []
+    if validation:
+        lines.append("### Successful validation after edits")
+        lines.extend(
+            _table(
+                ["Command", "Calls", "Sessions", "Tokens"],
+                [
+                    [item.get("command", ""), item.get("calls", 0), item.get("sessions", 0), item.get("tokens", 0)]
+                    for item in validation
+                ],
+            )
+        )
+    reads = context.get("reads") or []
+    if reads:
+        lines.append("### Read hotspots")
+        lines.extend(
+            _table(
+                ["Target", "Sessions", "Calls", "Tokens"],
+                [
+                    [item.get("target", ""), item.get("sessions", 0), item.get("calls", 0), item.get("tokens", 0)]
+                    for item in reads
+                ],
+            )
+        )
+    enforcement = context.get("enforcement") or {}
+    if enforcement:
+        lines.append("### Existing enforcement")
+        for config in enforcement.get("configs", []):
+            commands = ", ".join(_text(command, 160) for command in config.get("commands", []))
+            lines.append(f"- `{_text(config.get('path', ''))}`: {commands}")
+        for label, key in (
+            ("Make targets", "make_targets"),
+            ("Package scripts", "package_scripts"),
+            ("Hooks", "hooks"),
+        ):
+            values = enforcement.get(key) or []
+            if values:
+                lines.append(f"- {label}: {', '.join(_text(value, 120) for value in values)}")
+    outcomes = context.get("outcomes") or {}
+    if outcomes:
+        lines.append("### Outcomes")
+        for key, value in outcomes.items():
+            lines.append(f"- {key.replace('_', ' ')}: {value}")
+    return lines
+
+
+def _existing_markdown(existing: dict | None) -> list[str]:
     if not existing:
-        return existing
-    compact = dict(existing)
-    compact["rules"] = [
-        {
-            **rule,
-            "text": _clip(rule.get("text", ""), 240),
-            "examples": rule.get("examples", [])[:1],
-        }
-        for rule in existing.get("rules", [])[:40]
-    ]
-    return compact
+        return []
+    lines = ["## Existing AGENTS.md audit"]
+    files = existing.get("agents_md") or []
+    if files:
+        lines.append("- Files: " + ", ".join(_text(path, 240) for path in files))
+    lines.append(f"- Sessions: {existing.get('sessions', 0)}")
+    if existing.get("conflicts"):
+        lines.append(f"- Conflicts: {len(existing['conflicts'])}")
+    rules = existing.get("rules") or []
+    if not rules:
+        lines.append("- No parsed rules.")
+        return lines
+    lines.append("### Rules")
+    for rule in rules[:40]:
+        lines.append(f"- **{_text(rule.get('text', ''), 240)}**")
+        details = []
+        if rule.get("coverage"):
+            details.append(f"coverage {rule['coverage']}")
+        if rule.get("rate") is not None:
+            details.append(f"followed {float(rule['rate']):.0%}")
+        if rule.get("confidence"):
+            details.append(f"confidence {rule['confidence']}")
+        if rule.get("enforcement_status"):
+            details.append(f"enforcement {rule['enforcement_status']}")
+        if rule.get("existing_enforcement"):
+            details.append(f"existing {_text(rule['existing_enforcement'], 160)}")
+        if details:
+            lines.append("  - " + " · ".join(details))
+        if rule.get("suggestion"):
+            lines.append(f"  - Suggestion: {_text(rule['suggestion'], 300)}")
+    return lines
 
 
 def _prompt(
     findings: list[Finding],
     repo: str,
-    max_rules: int = MAX_RULES,
+    max_rules: int = DEFAULT_MAX_RULES,
     context: dict | None = None,
     existing: dict | None = None,
 ) -> str:
-    payload = redact_value(
+    sections = ["## Mined findings"]
+    if findings:
+        for index, finding in enumerate(findings[:PROMPT_FINDINGS], start=1):
+            sections.extend(_finding_markdown(finding, index))
+            sections.append("")
+    else:
+        sections.extend(["No findings passed the support threshold.", ""])
+    sections.extend(_context_markdown(context))
+    sections.append("")
+    sections.extend(_existing_markdown(existing))
+    sections.extend(
         [
-            {
-                "kind": finding.kind,
-                "sessions": finding.sessions,
-                "instances": finding.paired_instances,
-                "confidence": _finding_confidence(finding),
-                "cost": finding.cost or finding.tokens,
-                "setup_tax": finding.setup_tax,
-                "rework": finding.rework,
-                "paired_instances": finding.paired_instances,
-                "delta_rework": round(finding.delta_rework, 2),
-                "title": finding.title,
-                "failure_family": finding.failure_family,
-                "detail": finding.detail,
-                "sequence": finding.sequence,
-                "variants": list(finding.variants),
-                "cause": finding.cause,
-                "cause_support_sessions": finding.cause_support_sessions,
-                "side": finding.side,
-                "window": _compact_window(finding.window),
-            }
-            for finding in findings[:PROMPT_FINDINGS]
+            "",
+            "## Task: write AGENTS.md rules",
+            "",
+            f"Write at most {max_rules} rules for this repository. Fewer are better; zero is valid when the evidence does not support a rule.",
+            "",
+            "Requirements:",
+            '- Emit only durable, normative policy. Do not encode memories, historical facts, decisions, dates, owners, task state, or "what happened" summaries. If the evidence is descriptive rather than prescriptive, omit it.', 
+            "- A valid rule is either enforceable by a CI/pre-commit/lint check or stable policy that should apply to future agents in the same repo. If neither is true, omit it.",
+            "- Categories: test_command, architecture_map, context_hygiene, convention.",
+            "- Do not repeat an existing AGENTS.md rule. If an existing rule is violated or unenforced, propose the concrete enforcement (CI/pre-commit/lint) instead.",
+            "- Mark a rule enforceable only when a repository CI/pre-commit/lint check can observe and enforce it; include that exact check. Otherwise use guidance only.",
+            "- Rules about agent read behavior, tool-call ordering, or context usage are guidance-only.",
+            '- Use 1-2 imperative sentences with concrete command or file names. No generic platitudes ("be careful", "read the docs").', 
+            "- Ignore task-specific verifier scripts, one-off filenames, and normal edit -> test-fail loops.",
+            "- For recovery findings, use the representative failure-to-success window and cite its support count. Do not infer intent not shown by tool calls.",
+            "- Prefer high or medium confidence findings; low findings need corroboration or should be omitted.",
+            "- A window is one illustrative occurrence, not proof of intent. Never encode an identifier that appears in fewer than two sessions.",
+            "- Do not use resolution labels or infer success from them. Use validated_sessions and unvalidated_sessions only.",
+            "- rate n/a means fewer than 20 opportunities; do not describe it as a failure.",
+            "- Assistant reasoning is not observed evidence. Use it to explain a sequence, but never cite or count it.",
+            "- For orientation or side=repo, write a repository-side recommendation, not an agent rule.",
+            "- Do not mechanically recommend pipe-to-head; distinguish quiet flags, targeted test selection, and repo entrypoints.",
+            f"- Stay under {max_rules} rules, {max(MAX_LINES, max_rules * 10)} lines, and {max(MAX_CHARS, max_rules * 500):,} characters.",
+            "",
+            "Return only copyable Markdown rules. No JSON, preamble, analysis, or summary.",
+            "",
+            "Shape:",
+            "```markdown",
+            "## <category>",
+            "- **Rule:** <1-2 imperative sentences>",
+            "  **Evidence:** <sessions affected and approximate setup/rework token cost>",
+            "  **Enforcement:** <exact CI/pre-commit/lint check, or guidance only>",
+            "  **Source:** `<session_ref>` (step N)",
+            "```",
+            "",
+            "Include at least one source copied exactly from an evidence window. If no rule is supported, return: No rules supported by the evidence.",
         ]
     )
-    return f"""Repo: {repo}
+    return "\n".join(sections)
 
-Findings from mined agent trajectories for this repo only (JSON):
-{json.dumps(payload, indent=2)}
 
-Command/bootstrap evidence (JSON):
-{json.dumps(redact_value(context or {}), indent=2)}
+def _json_contract(repo: str | None = None) -> str:
+    repository = json.dumps(repo or "<repository>")
+    return f"""
 
-Existing AGENTS.md rules and audit (JSON):
-{json.dumps(redact_value(_compact_existing(existing) or {}), indent=2)}
+## Machine-readable output
 
-Write AGENTS.md rules for this repository. Requirements:
-- Emit 0-{max_rules} declarative rules. Do not fill the quota: fewer rules are better, and zero is valid when the evidence does not support a rule. Do not emit task-specific issue descriptions.
-- Emit only durable, normative policy. Do not encode memories, historical facts, decisions, dates, owners, task state, or "what happened" summaries. If the evidence is descriptive rather than prescriptive, omit it.
-- A valid rule is either enforceable by a CI/pre-commit/lint check or stable policy that should apply to future agents in the same repo. If neither is true, omit it.
-- Categories: test_command, architecture_map, context_hygiene, convention.
-- Do not repeat an existing AGENTS.md rule. If an existing rule is violated or unenforced, propose the concrete enforcement (CI/pre-commit/lint) instead.
-- Set `enforceable` to true only when a repository CI/pre-commit/lint check can actually observe and enforce the rule. Put that exact check in `enforcement`.
-- Rules about agent read behavior, tool-call ordering, or context usage are guidance-only: set `enforceable` false and `enforcement` to `"guidance only"`.
-- rule_markdown: 1-2 imperative sentences, concrete command or file names.
-- evidence_summary: sessions affected and approximate setup/rework token cost.
-- No generic platitudes ("be careful", "read the docs").
-- Ignore task-specific verifier scripts, one-off filenames, and normal edit -> test-fail loops.
-- For `recovery` findings, use the representative window from failure through success to explain the failed -> successful transition; cite the support count. Do not infer intent not shown by the tool calls.
-- Prefer `confidence: high` or `medium` findings; `low` findings need corroboration or should be omitted.
-- A window is one illustrative occurrence, not proof of intent. Never encode an identifier that appears in fewer than two sessions.
-- Do not use resolution labels or infer success from them. Use `validated_sessions` and `unvalidated_sessions` only.
-- `outcomes`/audit `rate: null` means fewer than 20 opportunities; do not describe it as a failure.
-- The `assistant` field is the agent's reasoning, not observed evidence. Use it to explain a sequence, but never cite it as a source or count it as a finding.
-- For `orientation` or `side=repo`, write a repository-side recommendation, not an agent rule.
-- Do not mechanically recommend `| head`; distinguish quiet flags, targeted test selection, and repo entrypoints.
-- Total output must stay under {max_rules} rules, {max(MAX_LINES, max_rules * 10)} lines, and {max(MAX_CHARS, max_rules * 500):,} characters.
-
-Return JSON only, shaped exactly as:
-{{"repo": "{repo}", "rules": [{{"category": "...", "rule_markdown": "...", "evidence_summary": "...", "estimated_tokens_saved_per_session": 0, "sources": ["<session_ref> (step N)"], "enforceable": true, "enforcement": "<CI/pre-commit/lint check>"}}]}}
-- Include at least one source copied exactly from a finding window; never invent a source."""
+Ignore the Markdown output format above. Return JSON only, shaped exactly as:
+{{"repo": {repository}, "rules": [{{"category": "...", "rule_markdown": "...", "evidence_summary": "...", "estimated_tokens_saved_per_session": 0, "sources": ["<session_ref> (step N)"], "enforceable": true, "enforcement": "<CI/pre-commit/lint check>"}}]}}
+- Include at least one source copied exactly from an evidence window; never invent a source."""
 
 
 def _client() -> tuple[object, str] | None:

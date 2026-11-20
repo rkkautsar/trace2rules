@@ -13,6 +13,15 @@ from ..agents import audit_payload, resolve_agents
 from ..cli_common import _ensure_local_sessions, _repo_matches_cwd, console
 from ..db import DB_PATH, connect
 from ..patterns import mine_sequences
+from ..synthesis.models import configured_max_rules
+
+
+def _resolve_max_rules(value: int | None) -> int:
+    try:
+        return value if value is not None else configured_max_rules()
+    except ValueError as error:
+        raise typer.BadParameter(str(error)) from error
+
 
 def _report_command(
     top: Annotated[int, typer.Option(help="Rows per detector / pattern cap.")] = 25,
@@ -36,10 +45,20 @@ def _report_command(
         int,
         typer.Option("--min-support", min=1, max=100, help="Minimum sessions per prompt finding."),
     ] = 3,
+    max_rules: Annotated[
+        int | None,
+        typer.Option(
+            "--max-rules",
+            min=1,
+            max=50,
+            help="Maximum rules requested per prompt; defaults to TRACE2RULES_MAX_RULES or 10.",
+        ),
+    ] = None,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     if out_dir is not None and not prompt:
         raise typer.BadParameter("--out-dir requires --prompt.")
+    rule_limit = _resolve_max_rules(max_rules)
     con = connect(db)
     try:
         session_count, instance_count = con.execute(
@@ -133,7 +152,7 @@ def _report_command(
                     + _prompt(
                         selected_findings,
                         repo_name,
-                        max_rules=5,
+                        max_rules=rule_limit,
                         context=prompt_context(con, repo_name, repo_root),
                         existing=existing,
                     )
@@ -197,6 +216,15 @@ def _run_command(
         int,
         typer.Option("--min-support", min=1, max=100, help="Minimum sessions per prompt finding."),
     ] = 3,
+    max_rules: Annotated[
+        int | None,
+        typer.Option(
+            "--max-rules",
+            min=1,
+            max=50,
+            help="Maximum rules requested per prompt; defaults to TRACE2RULES_MAX_RULES or 10.",
+        ),
+    ] = None,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     _ensure_local_sessions(db, source, limit)
@@ -207,6 +235,7 @@ def _run_command(
         agents=agents,
         out_dir=out_dir,
         min_support=min_support,
+        max_rules=max_rules,
         db=db,
     )
 

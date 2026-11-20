@@ -387,7 +387,7 @@ def test_synthesize_reads_a_report_prompt(tmp_path: Path, monkeypatch) -> None:
         ],
     )
     monkeypatch.setattr(
-        "trace2rules.synthesis.synthesize_report", lambda prompt: synthesis
+        "trace2rules.synthesis.synthesize_report", lambda prompt, **kwargs: synthesis
     )
     result = runner.invoke(app, ["synthesize", "--report", str(report)])
     assert result.exit_code == 0
@@ -411,7 +411,7 @@ def test_synthesize_json_emits_the_parsed_result(tmp_path: Path, monkeypatch) ->
         ],
     )
     monkeypatch.setattr(
-        "trace2rules.synthesis.synthesize_report", lambda prompt: synthesis
+        "trace2rules.synthesis.synthesize_report", lambda prompt, **kwargs: synthesis
     )
     result = runner.invoke(app, ["synthesize", "--report", str(report), "--json"])
     assert result.exit_code == 0

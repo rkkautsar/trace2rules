@@ -100,7 +100,7 @@ It deliberately does not mine memories, historical decisions, ownership, dates, 
 1. **Ingest** normalizes tool calls into DuckDB (`sessions`, `tool_events`, `feedback_events`, `test_results`).
 2. **Mining** finds hotspots, recovery loops, validation gaps, edit rejections, blind edits, environment thrash, destructive commands, generated-path edits, dependency drift, and correction loops.
 3. **Sequence mining** normalizes commands and paths, anchors patterns at errors, allows small gaps, and reports support/failure context. Exact sequences use lift and paired-rework evidence; windows never cross a compaction boundary.
-4. **Report** selects bounded findings and writes one evidence prompt per repo. The optional `synthesize --report` wrapper sends that prompt to an LLM; it does not re-mine.
+4. **Report** selects bounded findings and writes one readable Markdown evidence prompt per repo. The optional `synthesize --report` wrapper adds a JSON output contract and sends the prompt to an LLM; it does not re-mine.
 5. **Audit** checks existing `AGENTS.md` rules against sessions. `holdout` splits sessions by time and audits the same rules on an earlier train slice and later holdout.
 
 Generated verifier scripts and low-support task-specific sequences are filtered before synthesis.
@@ -111,12 +111,12 @@ Generated verifier scripts and low-support task-specific sequences are filtered 
 |---|---|
 | `ingest` | Load sessions and tool events into DuckDB |
 | `mine` | Show friction findings and failure signals |
-| `report` | Emit findings and evidence as JSON or a report prompt |
+| `report` | Emit findings and evidence as JSON or a Markdown report prompt |
 | `run` | Ingest if needed, then write one evidence prompt per detected repo |
 | `doctor` | Check install, Node, credentials, source stores, and database schema |
 | `patterns` | Mine error-anchored, normalized attribute patterns |
 | `exact` | Show recurring normalized sequences with evidence |
-| `synthesize` | Send an existing report prompt to an LLM |
+| `synthesize` | Add a JSON output contract to a report prompt and send it to an LLM |
 | `audit` | Audit existing `AGENTS.md` rules against sessions and suggest enforcement |
 | `holdout` | Audit rules on an earlier train split and a later time holdout |
 
@@ -135,7 +135,8 @@ trace2rules audit --agents AGENTS.md --commit HEAD --json
 trace2rules audit --agents AGENTS.md --prompt
 trace2rules holdout --agents AGENTS.md --fraction 0.3
 trace2rules report --prompt --min-support 5
-trace2rules run --out-dir reports/
+trace2rules report --prompt --max-rules 5
+trace2rules run --out-dir reports/ --max-rules 10
 ```
 
 ## Local sessions
@@ -191,7 +192,7 @@ Datasets are not included in this repository.
 
 `run`/`report --prompt` produce the evidence prompt. The normal path is to hand that prompt to your own coding agent.
 
-`trace2rules synthesize --report reports/acme__repo.md` reads the file and sends that exact prompt to an OpenAI-compatible chat model. It does not query DuckDB, re-mine sessions, or reconstruct the prompt.
+`trace2rules synthesize --report reports/acme__repo.md` reads the Markdown prompt, appends a JSON output contract for structured parsing, and sends it to an OpenAI-compatible chat model. It does not query DuckDB, re-mine sessions, or reconstruct the prompt.
 
 Provider selection:
 
@@ -211,13 +212,14 @@ Provider selection:
 | `TRACE2RULES_LLM_API_KEY` | API key for a custom OpenAI-compatible endpoint |
 | `TRACE2RULES_BASE_URL` | OpenAI-compatible base URL (including LiteLLM) |
 | `TRACE2RULES_MODEL` | Synthesis model, e.g. `gemini-4-hydrogen` |
+| `TRACE2RULES_MAX_RULES` | Maximum rules per prompt; defaults to `10` |
 | `TRACE2RULES_CACHE_DIR` | Local parquet cache; defaults to `~/.cache/trace2rules` |
 | `HF_TOKEN` | Used by `hf download` for gated datasets; not read by trace2rules |
 
 ## Data and privacy
 
 - Session data stays in your local DuckDB database.
-- `synthesize --report` sends only the report prompt, not the full raw session database.
+- `synthesize --report` sends only the report prompt and its JSON output contract, not the full raw session database.
 - `report`/`run` perform no LLM calls. Findings can still contain commands, paths, and repository names; review before using an external provider.
 - `data/` is gitignored.
 

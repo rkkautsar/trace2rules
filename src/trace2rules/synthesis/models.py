@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import os
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-MAX_RULES = 5
+DEFAULT_MAX_RULES = 10
 MAX_LINES = 160
 MAX_CHARS = 12_000
 EXACT_LENGTHS = (3, 4, 5)
@@ -28,3 +29,16 @@ class Rule(BaseModel):
 class Synthesis(BaseModel):
     repo: str
     rules: list[Rule]
+
+
+def configured_max_rules(default: int = DEFAULT_MAX_RULES) -> int:
+    raw = os.getenv("TRACE2RULES_MAX_RULES")
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ValueError("TRACE2RULES_MAX_RULES must be a positive integer") from error
+    if value < 1:
+        raise ValueError("TRACE2RULES_MAX_RULES must be a positive integer")
+    return value

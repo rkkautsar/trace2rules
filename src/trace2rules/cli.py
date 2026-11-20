@@ -665,12 +665,21 @@ def _synthesize_command(
         ),
     ],
     json_output: Annotated[bool, typer.Option("--json", help="Emit the parsed synthesis as JSON.")] = False,
+    max_rules: Annotated[
+        int | None,
+        typer.Option(
+            "--max-rules",
+            min=1,
+            max=50,
+            help="Maximum rules to keep; defaults to TRACE2RULES_MAX_RULES or 10.",
+        ),
+    ] = None,
 ) -> None:
     from .synthesis import synthesize_report
     from .synthesis.service import render
 
     try:
-        synthesis = synthesize_report(report.read_text(encoding="utf-8"))
+        synthesis = synthesize_report(report.read_text(encoding="utf-8"), max_rules=max_rules)
     except (OSError, RuntimeError, ValueError) as error:
         console.print(f"[red]{escape(str(error))}[/red]")
         raise typer.Exit(1) from None

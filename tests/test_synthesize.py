@@ -106,7 +106,10 @@ def test_prompt_omits_detector_recommendations() -> None:
     )
     prompt = _prompt([finding], "acme/repo")
     assert "ADD A TEST-ONE TARGET" not in prompt
-    assert '"confidence": "medium"' in prompt
+    assert "### 1. context: make unit" in prompt
+    assert "confidence medium" in prompt
+    assert '"confidence":' not in prompt
+    assert "Return only copyable Markdown rules" in prompt
     assert "Do not encode memories" in prompt
 
 
@@ -123,12 +126,32 @@ def test_synthesize_wrapper_caps_rules(monkeypatch) -> None:
             evidence_summary="evidence",
             estimated_tokens_saved_per_session=1,
         )
-        for index in range(7)
+        for index in range(12)
     ]
     monkeypatch.setattr(
         service,
         "_llm_prompt",
         lambda prompt: Synthesis(repo="acme/repo", rules=rules),
     )
-    result = service.synthesize_report("# Repository: acme/repo", repo="acme/repo")
-    assert len(result.rules) == 5
+    assert len(service.synthesize_report("# Repository: acme/repo").rules) == 10
+    assert len(service.synthesize_report("# Repository: acme/repo", max_rules=3).rules) == 3
+    monkeypatch.setenv("TRACE2RULES_MAX_RULES", "4")
+    assert len(service.synthesize_report("# Repository: acme/repo").rules) == 4
+
+
+def test_synthesize_adds_json_contract(monkeypatch) -> None:
+    from trace2rules.synthesis import service
+
+    captured = {}
+
+    def fake(prompt):
+        captured["prompt"] = prompt
+        return None
+
+    monkeypatch.setattr(service, "_llm_prompt", fake)
+    try:
+        service.synthesize_report("# Repository: acme/repo")
+    except RuntimeError:
+        pass
+    assert "Machine-readable output" in captured["prompt"]
+    assert "Return JSON only" in captured["prompt"]

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 
-from .models import MAX_RULES, Synthesis
-from .prompt import _llm_prompt
+from .models import Synthesis, configured_max_rules
+from .prompt import _json_contract, _llm_prompt
 
 
 def render(synthesis: Synthesis, repo: str, sessions: int) -> str:
@@ -29,7 +29,11 @@ def render(synthesis: Synthesis, repo: str, sessions: int) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def synthesize_report(prompt: str, repo: str | None = None) -> Synthesis:
+def synthesize_report(
+    prompt: str,
+    repo: str | None = None,
+    max_rules: int | None = None,
+) -> Synthesis:
     """Call the configured LLM with an existing report prompt.
 
     This is the thin optional wrapper around `report --prompt`; it does not
@@ -39,10 +43,11 @@ def synthesize_report(prompt: str, repo: str | None = None) -> Synthesis:
         match = re.search(r"(?m)^(?:# Repository|Repo):\s*(.+?)\s*$", prompt)
         if match:
             repo = match.group(1)
-    result = _llm_prompt(prompt)
+    result = _llm_prompt(prompt + _json_contract(repo))
     if result is None:
         raise RuntimeError(
             "No LLM client configured. Set TRACE2RULES_LLM_API_KEY, "
             "GEMINI_API_KEY, GOOGLE_API_KEY, or OPENAI_API_KEY."
         )
-    return Synthesis(repo=repo or result.repo, rules=result.rules[:MAX_RULES])
+    limit = max_rules if max_rules is not None else configured_max_rules()
+    return Synthesis(repo=repo or result.repo, rules=result.rules[:limit])

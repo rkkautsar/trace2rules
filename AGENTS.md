@@ -2,11 +2,11 @@
 
 ## Architecture
 
-`src/trace2rules/sources/` adapters feed `ingest.py` canonical events; `detectors.py` emits findings; `cluster.py` groups patterns; `synthesize.py` renders rules; `cli.py` wires commands. Change the owning module and its `tests/test_<module>.py` instead of editing every stage.
+`src/trace2rules/ingest/` adapters and service produce canonical events; `mining/` emits findings and sequences; `synthesis/` formats report prompts and optional rules; `cli.py` wires commands. Change the owning package module and its `tests/test_<module>.py` instead of editing every stage.
 
 ## Reading code
 
-Locate the symbol with `rg -n '^(def|class) ' src/trace2rules/<module>.py`, then read only the enclosing range. Avoid whole-file `cat -n` or `nl -ba` on `synthesize.py`, `cli.py`, `detectors.py`, and `cluster.py`.
+Locate the symbol with `rg -n '^(def|class) ' src/trace2rules/<package>/<module>.py`, then read only the enclosing range. Avoid whole-file `cat -n` or `nl -ba` on `synthesis/service.py`, `mining/core.py`, `mining/sequences.py`, `cli.py`, and `ingest/normalize.py`.
 
 ## Validation
 

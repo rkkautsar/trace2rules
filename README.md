@@ -54,57 +54,40 @@ trace2rules run --out-dir reports/ --agents AGENTS.md
 
 Then give `reports/*.md` to your agent to synthesize the rules. `run` ingests local sessions automatically when the database is empty.
 
-## Example finding
+## Example audit
 
-On SWC (Rust), auditing the repository’s real `AGENTS.md` against 188 local sessions found 66 rules, 9 measured, 1 partial, and 56 unmeasured:
+On this repository’s local sessions, auditing the current `AGENTS.md` against 12 applicable sessions found four rules:
 
 | Rule | Coverage | Followed | Violations | Confidence | Enforcement |
 |---|---|---:|---|---|---|
-| Read source before editing | measured | 121 | 64/185 (35%) | high | guidance only |
-| `git commit` only after `git add` | measured | 8 | 6/14 (43%) | low | guidance only |
-| Submodule update before tests | measured | 0 | 32/32 (100%) | low | guidance only |
-| `cargo test -p <crate>` | measured | 5 | 158/171 (92%) | high | missing |
-| `cargo fmt` / `cargo clippy` | measured | 0 | 185/185 (100%) | high | CI configured |
-| `--no-verify` guard | partial | 13 | 1/14 (7%) | low | missing |
+| Locate symbols with `rg -n`, then read the enclosing range | measured | 1 | 4/5 (80%) | low | guidance only |
+| Avoid whole-file reads on large modules | measured | 1 | 4/5 (80%) | low | guidance only |
+| Run `uv run pytest -q` | measured | 0 | - | none | missing |
+| Run `uv run pytest -q tests/test_cli.py -k <pattern>` | measured | 0 | - | none | missing |
 
-Test evidence is also reported per rule, so `cargo test -p <crate>` is not just “5 followed”:
+The unobserved test rules are still useful candidates: the audit recommends making them required CI/pre-commit checks instead of repeating them in `AGENTS.md`.
+
+## Example patterns
+
+After normalizing command families and path classes, error-anchored patterns look like this:
 
 ```text
-no_test:           147
-before_final_edit:  11
-alternate_form:      8
-exact_form:          5
+exec:python:ok -> exec:pytest:err
+edit:test:ok -> exec:python:err
+edit:scratch:ok -> exec:python:err
+edit:test:ok -> exec:python:ok -> exec:pytest:err
 ```
 
-`cargo fmt` and `cargo clippy` are CI-configured but were never run locally. `configured` does not mean required: the branch rulesets do not define required status checks.
+Raw variants remain available as evidence. Before normalization, these windows contained unique commands such as `pytest tests/dialects/test_snowflake.py -q`, so they did not cluster across sessions.
 
-Fresh agent synthesis from the actual report prompts:
+Useful commands:
 
-**`swc-project/swc`**
+```bash
+trace2rules patterns --top 10
+trace2rules exact --length 4 --per-repo 2
+```
 
-- Validate with `RUSTUP_TOOLCHAIN=1.84.1 cargo test -p <crate> --offline`; bare `cargo` tried to download nightly and failed in 21 sessions. Add a required CI job that sets the toolchain.
-- Locate symbols with `rg -n` and read only the enclosing range in hot files such as `crates/swc_ecma_codegen/src/lib.rs`; it had 112 extra reads across 27 sessions.
-- Enforce the snapshot workflow: 11/171 sessions used `UPDATE=1 cargo test`; 124 ran no test. Run it in pre-commit/CI and fail on uncommitted fixture outputs.
-
-**`rkkautsar/trace2rules`**
-
-- Orient from `SPEC.md`/`README.md`, then edit the owning pipeline module instead of re-exploring `src/trace2rules/`; `synthesize.py` and `cli.py` were read-only hotspots in 21/55 sessions.
-- Read `ingest.py` by function with `rg -n` and enclosing ranges; it had 60 extra reads across 13 sessions.
-- Make `uv run pytest -q` a required check; only 1 of 4 edit sessions ran it after the final edit.
-
-**`rkkautsar/louibot`**
-
-- Validate TypeScript edits with `npx tsc --noEmit && npm test`, then run `npm run build` only after both pass; 5 of 7 edit sessions used this loop.
-- Read `src/agent.ts` and `README.md` by symbol or line range instead of whole-file or repeated `git show` reads; `src/agent.ts` had 218 extra reads across 6 sessions.
-- Apply `src/agent.ts` changes with targeted edits, not scripted regex splices; one splice produced duplicate declarations and `TS1005` errors at lines 2121, 2132, 3052, and 3156.
-
-**`rkkautsar/personal-website`**
-
-- Add a typecheck/build command covering `functions/api/**/*.ts` before reporting; 5 editing sessions had no validation command and 0 validated.
-- Start from `functions/api/**/*.ts`, `src/blog/metadata.ts`, and `scripts/generate-blog.mjs`; one `node_modules`/`wrangler` search cost 2,525 tokens.
-- Read `scripts/generate-blog.mjs` and `functions/api/**` by range; whole-file reads averaged ~1.8k tokens per call.
-
-Rules are capped at 5 rules, 160 lines, and 12,000 characters per repo.
+`exact` balances output per repository; `patterns` uses normalized, error-anchored attribute sequences with up to two skipped events.
 
 ## Local session details
 
@@ -132,21 +115,6 @@ Agent synthesis from the report is the primary workflow. `run` writes the prompt
 trace2rules audit
 trace2rules audit --commit HEAD --json
 trace2rules audit --prompt
-```
-
-Real sqlglot example:
-
-```text
-Make sure all tests added to tests/dialects/*.py actually run...
-observed: 723  applicable: 1000  compliant: 705
-violations: 295  not observed: 277
-scope: sqlglot/dialects/snowflake.py
-```
-
-```text
-Run `make check`
-status: configured
-source: .github/workflows/package-test.yml
 ```
 
 `available` means a Makefile/package target exists but is not wired into CI. `missing` means no mechanism was found. `--prompt` emits a self-contained review prompt for a fresh-context agent.
@@ -233,8 +201,8 @@ The repository label is inferred from the git remote or working-directory basena
 | `report` | Emit all findings and patterns as evidence-rich JSON for an agent |
 | `run` | Ingest if needed, then write one evidence prompt per detected repo |
 | `doctor` | Check install, Node, credentials, source stores, and database schema |
-| `patterns` | Mine structural multi-step friction |
-| `exact` | Show exact recurring sequences with evidence |
+| `patterns` | Mine error-anchored, normalized attribute patterns |
+| `exact` | Show recurring normalized sequences with evidence |
 | `synthesize` | Send an existing report prompt to an LLM |
 | `audit` | Audit existing `AGENTS.md` rules against sessions and suggest enforcement |
 | `holdout` | Audit rules on an earlier train split and a later time holdout |
@@ -247,6 +215,8 @@ trace2rules ingest --format swe-rebench    # opt into the public dataset
 trace2rules ingest --source PATH --limit 200
 trace2rules synthesize --report reports/acme__repo.md
 trace2rules synthesize --report reports/acme__repo.md --json
+trace2rules exact --length 4 --per-repo 2
+trace2rules patterns --top 10
 trace2rules audit --agents AGENTS.md
 trace2rules audit --agents AGENTS.md --commit HEAD --json
 trace2rules audit --agents AGENTS.md --prompt
@@ -291,7 +261,7 @@ The optional `synthesize --report` wrapper sends that same prompt to one configu
 
 1. **Ingest** normalizes tool calls into DuckDB (`sessions`, `tool_events`).
 2. **Detectors** find high-coverage setup failures, repeated exception signatures, read-only hotspots, and large output calls.
-3. **Exact n-gram mining** groups recurring 3–5-step tool sequences with lift and paired-rework evidence. Windows never cross a compaction boundary; nested sequences are deduplicated before selection.
+3. **Sequence mining** normalizes commands and paths, anchors patterns at errors, allows small gaps, and reports support/failure context. Exact sequences use lift and paired-rework evidence; windows never cross a compaction boundary.
 5. **Report** selects gated findings and writes one evidence prompt per repo. The optional `synthesize --report` wrapper sends that prompt to an LLM; it does not re-mine.
 
 Generated verifier scripts and low-support task-specific sequences are filtered before synthesis.

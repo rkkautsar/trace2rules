@@ -187,8 +187,8 @@ Supported ingestion formats:
 
 | Format | What it reads |
 |---|---|
-| `open-swe` | NVIDIA Open-SWE traces parquet, opt-in and cached locally from Hugging Face |
-| `swe-rebench` | `nebius/SWE-rebench-openhands-trajectories` parquet, opt-in and cached locally from Hugging Face |
+| `open-swe` | [nvidia/Open-SWE-Traces](https://huggingface.co/datasets/nvidia/Open-SWE-Traces) parquet, opt-in and cached locally |
+| `swe-rebench` | [nebius/SWE-rebench-openhands-trajectories](https://huggingface.co/datasets/nebius/SWE-rebench-openhands-trajectories) parquet, opt-in and cached locally |
 | `agent-trajectory` | Local Claude Code, Codex, Pi, OMP, OpenCode SQLite/JSON |
 
 Datasets are not included in this repository.

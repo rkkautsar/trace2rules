@@ -42,7 +42,12 @@ def _ingest_command(
             help="agent-trajectory (default), swe-rebench, open-swe, or swe-chat.",
         ),
     ] = "agent-trajectory",
-    limit: Annotated[int, typer.Option(help="Max sessions (per source where applicable).")] = 200,
+    limit: Annotated[
+        int,
+        typer.Option(
+            help="Newest sessions per source per invocation; re-runs may select a different set. Use 0 for all."
+        ),
+    ] = 200,
     repo: Annotated[
         str | None,
         typer.Option("--repo", help="Override repo label for local/SWE-chat sessions."),

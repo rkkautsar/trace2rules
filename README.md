@@ -149,7 +149,7 @@ trace2rules run --out-dir reports/ --max-rules 10
 - `~/.omp/agent/sessions`
 - `~/.local/share/opencode`
 
-The default cap is 200 sessions per source and selects the most recently modified files; use `--limit 0` for all. OpenCode is read directly from its SQLite database; JSON exports are still accepted:
+The default cap is 200 sessions per source. `--limit N` selects the newest N files per invocation; re-runs can select a different set when files are added or touched. Use `--limit 0` for the full deterministic set. OpenCode is read directly from its SQLite database; JSON exports are still accepted:
 
 ```bash
 uv run trace2rules ingest --format agent-trajectory --source ~/.local/share/opencode

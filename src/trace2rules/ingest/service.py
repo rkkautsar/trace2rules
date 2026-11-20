@@ -33,6 +33,7 @@ from .normalize import (
     _stream_rows,
     normalize_path,
 )
+from .test_results import parse_test_result
 from .writer import _flush_sessions, _insert_rows, write_sessions
 from ..models import Session, ToolCall
 
@@ -56,10 +57,11 @@ def _parse_prefix(
     source_format: str,
     classify_cache: dict[tuple[str, str], tuple[str, str, str, str]],
     source_label: str,
-) -> tuple[int, list[dict], list[tuple]]:
+) -> tuple[int, list[dict], list[tuple], list[tuple]]:
     matched = 0
     sessions: list[dict] = []
     events: list[tuple] = []
+    test_rows: list[tuple] = []
     for row in _stream_rows(
         source,
         prefix,
@@ -73,8 +75,24 @@ def _parse_prefix(
         if not session.get("source_ref"):
             session["source_ref"] = f"{source_label}#trajectory_id={session['session_id']}"
         sessions.append(session)
-        events.extend(_events_for_calls(calls, classify_cache))
-    return matched, sessions, events
+        session_events = _events_for_calls(calls, classify_cache)
+        events.extend(session_events)
+        outcome_by_event = {event[0]: event[10] for event in session_events}
+        for call in calls:
+            parsed = parse_test_result(call["raw_target"], call["obs"])
+            if parsed is not None:
+                test_rows.append(
+                    (
+                        call["session_id"],
+                        call["repo"],
+                        call["step_idx"],
+                        call["raw_target"][:500],
+                        *parsed,
+                        outcome_by_event.get(call["event_id"], "unknown"),
+                        (len(call["obs"]) + 3) // 4,
+                    )
+                )
+    return matched, sessions, events, test_rows
 
 
 def _store_prefix(
@@ -83,15 +101,29 @@ def _store_prefix(
     matched: int,
     sessions: list[dict],
     events: list[tuple],
+    test_rows: list[tuple],
 ) -> IngestStats:
     for start in range(0, len(sessions), 64):
         _flush_sessions(con, sessions[start:start + 64])
     con.execute("DELETE FROM tool_events WHERE session_id IN (SELECT session_id FROM new_sessions)")
+    con.execute("DELETE FROM test_results WHERE session_id IN (SELECT session_id FROM new_sessions)")
+    con.execute("DELETE FROM feedback_events WHERE session_id IN (SELECT session_id FROM new_sessions)")
     con.execute("DELETE FROM sessions WHERE session_id IN (SELECT session_id FROM new_sessions)")
     con.execute(
         "INSERT INTO sessions (session_id, repo, instance_id, resolved, total_turns, source_ref, started_at) "
         "SELECT session_id, repo, instance_id, resolved, total_turns, source_ref, started_at FROM new_sessions"
     )
+    if test_rows:
+        _insert_rows(
+            con,
+            "test_results",
+            test_rows,
+            columns=[
+                "session_id", "repo", "step_idx", "command", "total",
+                "passed", "failed", "errors", "skipped", "outcome",
+                "approx_out_tokens",
+            ],
+        )
     if events:
         _insert_rows(
             con,
@@ -171,8 +203,37 @@ def ingest(
                 )
                 for prefix in repos
             ]
-        for prefix, task_id, (matched, sessions, events) in zip(repos, task_ids, parsed):
-            stats.append(_store_prefix(con, prefix, matched, sessions, events))
+        seen_sessions: set[str] = set()
+        seen_events: set[str] = set()
+        seen_tests: set[tuple[str, int]] = set()
+        for prefix, task_id, (matched, sessions, events, test_rows) in zip(repos, task_ids, parsed):
+            allowed: set[str] = set()
+            unique_sessions = []
+            for session in sessions:
+                session_id = session["session_id"]
+                if session_id in seen_sessions:
+                    continue
+                seen_sessions.add(session_id)
+                allowed.add(session_id)
+                unique_sessions.append(session)
+            unique_events = []
+            for event in events:
+                if event[1] not in allowed or event[0] in seen_events:
+                    continue
+                seen_events.add(event[0])
+                unique_events.append(event)
+            unique_tests = []
+            for row in test_rows:
+                key = (row[0], row[2])
+                if row[0] not in allowed or key in seen_tests:
+                    continue
+                seen_tests.add(key)
+                unique_tests.append(row)
+            events = unique_events
+            test_rows = unique_tests
+            stats.append(
+                _store_prefix(con, prefix, matched, unique_sessions, events, test_rows)
+            )
             if progress and task_id is not None:
                 progress.update(
                     task_id,

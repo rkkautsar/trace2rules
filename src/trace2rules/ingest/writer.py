@@ -34,14 +34,19 @@ def _split_compactions(sessions: list[Session]) -> list[Session]:
             split.append(session)
             continue
         step_segments = [call.segment_idx for call in session.calls]
+        feedback_by_segment: dict[int, list] = {segment: [] for segment in segments}
+        for item in session.feedback:
+            index = max(0, min(item.step_idx, len(step_segments)))
+            segment = (
+                step_segments[index]
+                if index < len(step_segments)
+                else step_segments[-1]
+            )
+            local_idx = sum(1 for value in step_segments[:index] if value == segment)
+            feedback_by_segment[segment].append(
+                replace(item, step_idx=local_idx)
+            )
         for segment in segments:
-            feedback = []
-            for item in session.feedback:
-                index = item.step_idx
-                if index >= len(step_segments):
-                    index = len(step_segments) - 1
-                if index >= 0 and step_segments[index] == segment:
-                    feedback.append(item)
             split.append(
                 replace(
                     session,
@@ -51,7 +56,7 @@ def _split_compactions(sessions: list[Session]) -> list[Session]:
                         for call in session.calls
                         if call.segment_idx == segment
                     ],
-                    feedback=feedback,
+                    feedback=feedback_by_segment[segment],
                 )
             )
     return split

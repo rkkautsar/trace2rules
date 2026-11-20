@@ -14,8 +14,10 @@ from trace2rules.ingest import write_sessions
 from trace2rules.models import Session, ToolCall
 from trace2rules.ingest.sources.agent_trajectory import (
     TranscriptMeta,
+    _assign_unique_session_ids,
     _detect_source,
     _records_to_session,
+    _relevant_line,
     _resolve_instance,
     extract_transcript_meta,
     ingest_agent_sessions,
@@ -559,3 +561,19 @@ def test_limit_selects_most_recent_files(tmp_path: Path) -> None:
     os.utime(old, (1, 1))
     os.utime(new, (2, 2))
     assert _iter_files(tmp_path, "omp", 1) == [new]
+
+
+def test_duplicate_session_ids_are_suffixed() -> None:
+    metas = [
+        (Path("/sessions/a.jsonl"), TranscriptMeta(session_id="same")),
+        (Path("/sessions/b.jsonl"), TranscriptMeta(session_id="same")),
+    ]
+    _assign_unique_session_ids(metas)
+    assert metas[0][1].session_id == "same"
+    assert metas[1][1].session_id.startswith("same#")
+    assert metas[1][1].session_id != "same"
+
+
+def test_compaction_markers_are_relevant() -> None:
+    assert _relevant_line('{"tool_call": "x"}', "omp")
+    assert _relevant_line('{"isCompactSummary": true}', "claude-code")

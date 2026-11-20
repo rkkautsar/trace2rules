@@ -136,6 +136,7 @@ def _relevant_line(line: str, source: str) -> bool:
                 '"type":"compaction"',
                 '"type": "compaction"',
                 '"toolCall"',
+                '"tool_call"',
             )
         )
     if source == "codex":
@@ -161,6 +162,7 @@ def _relevant_line(line: str, source: str) -> bool:
                 '"tool_use"',
                 '"type":"summary"',
                 '"type": "summary"',
+                '"isCompactSummary"',
                 '"compaction"',
             )
         )
@@ -228,6 +230,26 @@ def _scan_transcript(path: Path, source: str):
     except OSError as error:
         return path, None, error
     return path, extract_transcript_meta(path, source, text), None
+
+
+def _assign_unique_session_ids(
+    transcript_metas: list[tuple[Path, TranscriptMeta]],
+) -> None:
+    """Keep duplicate source session IDs from collapsing separate transcripts."""
+    used: set[str] = set()
+    for path, meta in transcript_metas:
+        base = meta.session_id
+        if base not in used:
+            used.add(base)
+            continue
+        digest = hashlib.sha1(str(path).encode()).hexdigest()[:8]
+        candidate = f"{base}#{digest}"
+        suffix = 2
+        while candidate in used:
+            candidate = f"{base}#{digest}-{suffix}"
+            suffix += 1
+        meta.session_id = candidate
+        used.add(candidate)
 
 
 def _normalize_parent(value: str) -> str:
@@ -574,12 +596,12 @@ def ingest_agent_sessions(
                     meta.session_id = meta.session_id or _session_id(path)
                     if progress and scan_task is not None:
                         progress.update(scan_task, advance=1)
-                    if meta.session_id in metas_by_id:
-                        continue
-                    metas_by_id[meta.session_id] = meta
+                    if meta.session_id not in metas_by_id:
+                        metas_by_id[meta.session_id] = meta
                     transcript_metas.append((path, meta))
             for meta in metas_by_id.values():
                 meta.instance_id = _resolve_instance(meta.session_id, metas_by_id)
+            _assign_unique_session_ids(transcript_metas)
 
             task_id = (
                 progress.add_task(

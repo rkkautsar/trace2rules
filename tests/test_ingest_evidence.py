@@ -122,7 +122,7 @@ def test_canonical_writer_persists_source_and_cause(tmp_path) -> None:
 def test_writer_splits_compaction_segments(tmp_path) -> None:
     from trace2rules.db import connect
     from trace2rules.ingest import write_sessions
-    from trace2rules.models import Session, ToolCall
+    from trace2rules.models import Feedback, Session, ToolCall
 
     db = tmp_path / "segments.duckdb"
     session = Session(
@@ -135,6 +135,7 @@ def test_writer_splits_compaction_segments(tmp_path) -> None:
             ToolCall("Read", "src/b.py", action_type="read", target="src/b.py", segment_idx=0),
             ToolCall("Edit", "src/a.py", action_type="edit", target="src/a.py", segment_idx=1),
         ],
+        feedback=[Feedback("keep this in segment one", 2)],
     )
     write_sessions(db, [session], split_compactions=True)
     con = connect(db)
@@ -148,6 +149,9 @@ def test_writer_splits_compaction_segments(tmp_path) -> None:
         assert con.execute(
             "SELECT count(*) FROM tool_events WHERE session_id = 's1#seg1'"
         ).fetchone() == (1,)
+        assert con.execute(
+            "SELECT session_id, step_idx FROM feedback_events"
+        ).fetchall() == [("s1#seg1", 0)]
     finally:
         con.close()
 
@@ -213,3 +217,50 @@ def test_writer_replaces_only_targeted_split_sessions(tmp_path) -> None:
         ]
     finally:
         con.close()
+
+
+def test_swe_ingest_dedupes_and_persists_test_results(tmp_path, monkeypatch) -> None:
+    from trace2rules.db import connect
+    from trace2rules.ingest import service
+
+    row = (
+        "traj-1",
+        "acme__repo-1",
+        "acme/repo",
+        True,
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "function": {
+                            "name": "execute_bash",
+                            "arguments": '{"command": "pytest -q"}',
+                        },
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "1 passed in 0.1s"},
+        ],
+    )
+    monkeypatch.setattr(service, "_stream_rows", lambda *args, **kwargs: iter([row, row]))
+    db = tmp_path / "swe.duckdb"
+    stats = service.ingest(
+        repos=["acme/repo", "acme/repo"],
+        limit=10,
+        db_path=db,
+        source="fake",
+        source_format="open-swe",
+    )
+    con = connect(db)
+    try:
+        assert con.execute("SELECT count(*) FROM sessions").fetchone() == (1,)
+        assert con.execute("SELECT count(*) FROM test_results").fetchone() == (1,)
+        assert con.execute(
+            "SELECT total, passed, failed FROM test_results"
+        ).fetchone() == (1, 1, 0)
+    finally:
+        con.close()
+    assert [stat.sessions for stat in stats] == [1, 0]

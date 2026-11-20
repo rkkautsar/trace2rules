@@ -139,6 +139,7 @@ def blind_edits(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> lis
               AND target NOT LIKE '<%'
               AND target NOT LIKE '% %'
               AND target NOT LIKE '%>%'
+              AND NOT regexp_matches(target, '^(xd|proc|agent|mcp|https?):')
               AND raw_target NOT LIKE 'create%'
         )
         SELECT repo,

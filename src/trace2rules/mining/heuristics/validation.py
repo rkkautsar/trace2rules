@@ -51,7 +51,12 @@ def premature_completion(con: duckdb.DuckDBPyConnection, limit: int | None = Non
             detail=f"{sessions} sessions; no successful exec after last edit; ~{int(tokens or 0):,} tokens",
             side="agent",
             recommendation="After the final edit, run the narrowest relevant test or lint command and confirm it passes before finishing.",
-            window=_repo_window(con, repo, "action_type = 'edit'"),
+            window=_repo_window(
+                con,
+                repo,
+                "action_type = 'edit' "
+                "AND NOT regexp_matches(target, '^(xd|proc|agent|mcp|https?):')",
+            ),
         )
         for repo, sessions, tokens in con.execute(query).fetchall()
     ]
@@ -92,7 +97,12 @@ def low_validation(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
             detail=f"{sessions} sessions; no test/lint exec after first edit; ~{int(tokens or 0):,} tokens",
             side="agent",
             recommendation="After changing code, run the narrowest test/lint command that exercises the change.",
-            window=_repo_window(con, repo, "action_type = 'edit'"),
+            window=_repo_window(
+                con,
+                repo,
+                "action_type = 'edit' "
+                "AND NOT regexp_matches(target, '^(xd|proc|agent|mcp|https?):')",
+            ),
         )
         for repo, sessions, tokens in con.execute(query).fetchall()
     ]
@@ -178,7 +188,12 @@ def false_completions(con: duckdb.DuckDBPyConnection, limit: int | None = None) 
             cause=(example or "")[:240],
             side="agent",
             recommendation="Only claim completion after a passing validation command that covers the final edit; otherwise state what remains unverified.",
-            window=_repo_window(con, repo, "action_type = 'edit'"),
+            window=_repo_window(
+                con,
+                repo,
+                "action_type = 'edit' "
+                "AND NOT regexp_matches(target, '^(xd|proc|agent|mcp|https?):')",
+            ),
         )
         for repo, sessions, tokens, example in con.execute(query).fetchall()
     ]
@@ -191,6 +206,7 @@ def no_reproduction(con: duckdb.DuckDBPyConnection, limit: int | None = None) ->
             WHERE action_type = 'edit'
               AND target NOT IN ('', '.')
               AND target NOT LIKE '<%'
+              AND NOT regexp_matches(target, '^(xd|proc|agent|mcp|https?):')
               AND NOT regexp_matches(
                   target,
                   '(?i)(^|/)(tests?|specs?|__tests__)(/|$)|(^|/)(test_|conftest\.|.*_test\.)|(^|/)(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)'
@@ -230,7 +246,12 @@ def no_reproduction(con: duckdb.DuckDBPyConnection, limit: int | None = None) ->
             detail=f"{sessions} sessions edited source without a preceding failing exec",
             side="agent",
             recommendation="For a bug fix, reproduce the failure first with the narrowest command or test; only then edit the source.",
-            window=_repo_window(con, repo, "action_type = 'edit'"),
+            window=_repo_window(
+                con,
+                repo,
+                "action_type = 'edit' "
+                "AND NOT regexp_matches(target, '^(xd|proc|agent|mcp|https?):')",
+            ),
         )
         for repo, sessions, tokens, example_session, example_step in con.execute(query).fetchall()
     ]

@@ -69,8 +69,10 @@ On the SWE-rebench `swc-project/swc` split (188 sessions), the current `AGENTS.m
 **`rkkautsar/trace2rules`**
 
 - [enforceable] Make `uv run pytest -q` a required check in `.github/workflows/ci.yml`.
-- [enforceable] Keep dependencies declared in `pyproject.toml` and install with `uv sync --frozen`; `environment_thrash` found 25 package-manager calls across 3 sessions, 4 failed.
-- [guidance] Read the owning package module by symbol or range, not whole-file: the synthesis and ingest modules were read-only hotspots in 22/62 and 20/62 sessions.
+- [enforceable] Keep dependencies declared in `pyproject.toml` and install with `uv sync --frozen`; `environment_thrash` found 29 package-manager calls across 7 sessions, 5 failed.
+- [guidance] Read the owning package module by symbol or range, not whole-file: `src/trace2rules/synthesize.py` and `src/trace2rules/ingest.py` were read-only hotspots in 25/77 and 24/77 sessions.
+- [guidance] Read the target file or exact range before editing: 6 sessions made 274 edits with no prior read of the target, concentrated in `src/trace2rules/cli.py` and `src/trace2rules/ingest.py`.
+- [guidance] For bug fixes, reproduce the failure first: 4 sessions edited source without a preceding failing exec. Run the narrowest failing test before changing source.
 
 **`rkkautsar/louibot`**
 
@@ -161,24 +163,7 @@ The repository label is inferred from the git remote (`owner/name`) when availab
 trace2rules report --prompt --out-dir reports/
 ```
 
-### Compaction boundaries
-
-Local transcripts often contain several context windows separated by compaction. By default, local ingest splits each segment into its own canonical session, so a long session counts as multiple mining units instead of one.
-
-This works for every local source that records compaction boundaries:
-
-- OMP and Pi: `{"type":"compaction"}`
-- Codex: `response_item` with `payload.type == "compaction"`
-- Claude Code: `summary`, `compaction`, or `isCompactSummary`
-- OpenCode: v1/v2 compaction records
-
-Sessions without compaction are unchanged. Disable splitting with:
-
-```bash
-trace2rules ingest --no-split-compactions
-```
-
-On this repository, splitting the main 8-segment session changed 70 sessions to 77 and surfaced additional medium-confidence findings.
+Local ingest treats each compaction segment as its own session by default; use `--no-split-compactions` to keep the original boundaries. This applies to OMP, Pi, Codex, Claude Code, and OpenCode.
 
 `run` and `mine` auto-ingest local sessions when the database is empty. `ingest` writes to `$TMPDIR/trace2rules/trace2rules.duckdb` by default. Set `TRACE2RULES_DB` to use a persistent path.
 

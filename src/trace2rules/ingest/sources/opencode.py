@@ -140,6 +140,7 @@ def ingest_opencode(
     *,
     limit: int | None = None,
     repo: str | None = None,
+    split_compactions: bool = True,
 ) -> list[IngestStats]:
     path = find_database(source)
     if path is None or not path.exists():
@@ -176,7 +177,7 @@ def ingest_opencode(
                     ),
                 )
             )
-        stats = write_sessions(db_path, sessions)
+        stats = write_sessions(db_path, sessions, split_compactions=split_compactions)
         return [IngestStats(f"opencode:{title}", len(rows), stats.sessions, stats.events)]
     finally:
         con.close()

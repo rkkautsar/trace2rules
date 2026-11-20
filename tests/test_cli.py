@@ -151,7 +151,7 @@ def test_ingest_defaults_to_home_agent(monkeypatch) -> None:
 
     calls: list[str] = []
 
-    def fake_ingest(source, db_path, *, limit=None, repo=None, progress=None):
+    def fake_ingest(source, db_path, *, limit=None, repo=None, progress=None, split_compactions=True):
         calls.append(str(source))
         return [IngestStats(str(source), 0, 0, 0)]
 
@@ -166,7 +166,7 @@ def test_ingest_accepts_repeated_sources(monkeypatch) -> None:
 
     calls: list[str] = []
 
-    def fake_ingest(source, db_path, *, limit=None, repo=None, progress=None):
+    def fake_ingest(source, db_path, *, limit=None, repo=None, progress=None, split_compactions=True):
         calls.append(str(source))
         return [IngestStats(str(source), 0, 0, 0)]
 
@@ -349,7 +349,7 @@ def test_doctor_survives_a_node_timeout(tmp_path: Path, monkeypatch) -> None:
 def test_ingest_continues_after_a_bad_source(monkeypatch) -> None:
     import trace2rules.ingest.sources.agent_trajectory as agent_source
 
-    def fake_ingest(source, db_path, *, limit=None, repo=None, progress=None):
+    def fake_ingest(source, db_path, *, limit=None, repo=None, progress=None, split_compactions=True):
         if str(source) == "/bad":
             raise FileNotFoundError("missing source")
         return [IngestStats(str(source), 1, 1, 1)]

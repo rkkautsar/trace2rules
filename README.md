@@ -161,6 +161,8 @@ The repository label is inferred from the git remote (`owner/name`) when availab
 trace2rules report --prompt --out-dir reports/
 ```
 
+Local ingest treats each compaction segment as its own session by default, so a long session with multiple contexts counts as multiple mining units. Use `--no-split-compactions` to keep the original session boundaries.
+
 `run` and `mine` auto-ingest local sessions when the database is empty. `ingest` writes to `$TMPDIR/trace2rules/trace2rules.duckdb` by default. Set `TRACE2RULES_DB` to use a persistent path.
 
 ## Install

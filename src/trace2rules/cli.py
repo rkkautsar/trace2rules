@@ -66,6 +66,13 @@ def _ingest_command(
             help="Parquet path, dataset directory, or local session root; repeat for multiple.",
         ),
     ] = None,
+    split_compactions: Annotated[
+        bool,
+        typer.Option(
+            "--split-compactions/--no-split-compactions",
+            help="Treat each local compaction segment as its own session.",
+        ),
+    ] = True,
 ) -> None:
     fmt = format.strip().lower()
     sources = source or []
@@ -147,6 +154,7 @@ def _ingest_command(
                             limit=limit or None,
                             repo=repo,
                             progress=progress,
+                            split_compactions=split_compactions,
                         )
                     )
                 except (FileNotFoundError, ValueError, RuntimeError) as error:

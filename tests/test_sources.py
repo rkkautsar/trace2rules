@@ -260,7 +260,7 @@ def test_opencode_v2_ingests_tools_and_compaction(tmp_path: Path) -> None:
     con.commit()
     con.close()
     out = tmp_path / "trace.duckdb"
-    stats = ingest_opencode(db, out)
+    stats = ingest_opencode(db, out, split_compactions=False)
     assert stats[0].sessions == 1
     assert stats[0].events == 2
     con = duckdb.connect(str(out), read_only=True)

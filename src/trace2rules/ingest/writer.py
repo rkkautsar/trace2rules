@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import replace
 from pathlib import Path
 
 import duckdb
@@ -24,17 +25,66 @@ from .normalize import (
 from ..models import Session
 from .test_results import parse_test_result
 
+def _split_compactions(sessions: list[Session]) -> list[Session]:
+    """Treat each compaction segment as its own canonical session."""
+    split: list[Session] = []
+    for session in sessions:
+        segments = sorted({call.segment_idx for call in session.calls})
+        if len(segments) <= 1:
+            split.append(session)
+            continue
+        step_segments = [call.segment_idx for call in session.calls]
+        for segment in segments:
+            feedback = []
+            for item in session.feedback:
+                index = item.step_idx
+                if index >= len(step_segments):
+                    index = len(step_segments) - 1
+                if index >= 0 and step_segments[index] == segment:
+                    feedback.append(item)
+            split.append(
+                replace(
+                    session,
+                    session_id=f"{session.session_id}#seg{segment}",
+                    calls=[
+                        replace(call, segment_idx=0)
+                        for call in session.calls
+                        if call.segment_idx == segment
+                    ],
+                    feedback=feedback,
+                )
+            )
+    return split
+
+
 def write_sessions(
     db_path: str | Path,
     sessions: Iterable[Session],
+    *,
+    split_compactions: bool = False,
 ) -> IngestStats:
     """Write canonical sessions/events, replacing rows with the same ids."""
-    session_list = list({session.session_id: session for session in sessions}.values())
+    raw_sessions = list({session.session_id: session for session in sessions}.values())
+    session_list = _split_compactions(raw_sessions) if split_compactions else raw_sessions
     con = connect(db_path)
     con.execute("BEGIN TRANSACTION")
     try:
         if session_list:
             session_ids = [session.session_id for session in session_list]
+            if split_compactions:
+                source_refs = sorted(
+                    {session.source_ref for session in raw_sessions if session.source_ref}
+                )
+                if source_refs:
+                    refs = ",".join("?" for _ in source_refs)
+                    session_ids.extend(
+                        row[0]
+                        for row in con.execute(
+                            f"SELECT session_id FROM sessions WHERE source_ref IN ({refs})",
+                            source_refs,
+                        ).fetchall()
+                    )
+            session_ids = list(dict.fromkeys(session_ids))
             placeholders = ",".join("?" for _ in session_ids)
             con.execute(
                 f"DELETE FROM tool_events WHERE session_id IN ({placeholders})",

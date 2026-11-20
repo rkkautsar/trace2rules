@@ -485,6 +485,7 @@ def ingest_agent_sessions(
     limit: int | None = None,
     repo: str | None = None,
     progress: Progress | None = None,
+    split_compactions: bool = True,
 ):
     """Normalize local agent sessions with @letta-ai/trajectory."""
     try:
@@ -506,7 +507,9 @@ def ingest_agent_sessions(
     ):
         from .opencode import ingest_opencode
 
-        return ingest_opencode(root, db_path, limit=limit, repo=repo)
+        return ingest_opencode(
+            root, db_path, limit=limit, repo=repo, split_compactions=split_compactions
+        )
 
     if root.is_file():
         detected = _detect_source(root)
@@ -536,7 +539,13 @@ def ingest_agent_sessions(
                 from .opencode import ingest_opencode
 
                 stats.extend(
-                    ingest_opencode(source_root, db_path, limit=limit, repo=repo)
+                    ingest_opencode(
+                        source_root,
+                        db_path,
+                        limit=limit,
+                        repo=repo,
+                        split_compactions=split_compactions,
+                    )
                 )
                 continue
             files = _iter_files(source_root, source_name, limit)
@@ -653,12 +662,12 @@ def ingest_agent_sessions(
                         source_sessions += 1
                         source_calls += len(session.calls)
                     if len(chunk) >= 64:
-                        write_sessions(db_path, chunk)
+                        write_sessions(db_path, chunk, split_compactions=split_compactions)
                         chunk = []
                     if progress and task_id is not None:
                         progress.update(task_id, advance=len(batch))
             if chunk:
-                write_sessions(db_path, chunk)
+                write_sessions(db_path, chunk, split_compactions=split_compactions)
             stats.append(
                 IngestStats(
                     f"agent-trajectory:{source_name}",

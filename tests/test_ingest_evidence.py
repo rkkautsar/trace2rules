@@ -117,3 +117,55 @@ def test_canonical_writer_persists_source_and_cause(tmp_path) -> None:
     assert "ValueError" in row[1]
     assert "ValueError" in row[2]
     assert row[3].endswith("a.py:4")
+
+
+def test_writer_splits_compaction_segments(tmp_path) -> None:
+    from trace2rules.db import connect
+    from trace2rules.ingest import write_sessions
+    from trace2rules.models import Session, ToolCall
+
+    db = tmp_path / "segments.duckdb"
+    session = Session(
+        "s1",
+        "acme/repo",
+        source="agent-trajectory",
+        source_ref="/tmp/session.jsonl",
+        calls=[
+            ToolCall("Read", "src/a.py", action_type="read", target="src/a.py", segment_idx=0),
+            ToolCall("Read", "src/b.py", action_type="read", target="src/b.py", segment_idx=0),
+            ToolCall("Edit", "src/a.py", action_type="edit", target="src/a.py", segment_idx=1),
+        ],
+    )
+    write_sessions(db, [session], split_compactions=True)
+    con = connect(db)
+    try:
+        assert con.execute(
+            "SELECT session_id, total_turns FROM sessions ORDER BY session_id"
+        ).fetchall() == [("s1#seg0", 2), ("s1#seg1", 1)]
+        assert con.execute(
+            "SELECT DISTINCT segment_idx FROM tool_events"
+        ).fetchall() == [(0,)]
+        assert con.execute(
+            "SELECT count(*) FROM tool_events WHERE session_id = 's1#seg1'"
+        ).fetchone() == (1,)
+    finally:
+        con.close()
+
+    write_sessions(
+        db,
+        [
+            Session(
+                "s1",
+                "acme/repo",
+                source="agent-trajectory",
+                source_ref="/tmp/session.jsonl",
+                calls=[ToolCall("Read", "src/a.py", action_type="read", target="src/a.py")],
+            )
+        ],
+        split_compactions=True,
+    )
+    con = connect(db)
+    try:
+        assert con.execute("SELECT session_id FROM sessions").fetchall() == [("s1",)]
+    finally:
+        con.close()

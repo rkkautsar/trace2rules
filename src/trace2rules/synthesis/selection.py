@@ -56,6 +56,7 @@ def _candidate_score(finding: Finding) -> float:
         "low_validation": 1.6,
         "noop_retry": 1.2,
         "prevention_delta": 2.2,
+        "error_transition": 1.4,
         "recovery": 1.0,
         "context": 0.7,
         "hotspot": 0.8,
@@ -132,6 +133,7 @@ def select_findings(
         "test_regression",
         "test_shrink",
         "prevention_delta",
+        "error_transition",
     ):
         candidates.extend(
             finding

@@ -36,6 +36,7 @@ from .heuristics import (
     workaround_scripts,
 )
 from .models import Finding
+from .error_transitions import error_transitions
 from .prevention import prevention_deltas
 
 
@@ -73,6 +74,7 @@ def mine(
         "test_regression": regressions_after_green,
         "test_shrink": shrinking_test_suites,
         "correction_loop": correction_loops,
+        "error_transition": error_transitions,
         "prevention_delta": prevention_deltas,
     }
     workers = workers or min(2, len(jobs), os.cpu_count() or 1)

@@ -35,6 +35,7 @@ from .heuristics import (
 )
 from .mine import mine
 from .models import Finding
+from .error_transitions import error_transitions
 from .prevention import prevention_deltas
 from .sequences import cluster_friction, exact_sequences, friction_windows
 
@@ -54,6 +55,7 @@ __all__ = [
     "exact_sequences",
     "friction_windows",
     "failure_loops",
+    "error_transitions",
     "false_completions",
     "feedback_loops",
     "global_patterns",

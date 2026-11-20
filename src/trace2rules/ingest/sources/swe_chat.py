@@ -115,7 +115,7 @@ def ingest_swe_chat(
                        c.tool_input_json, c.command, c.file_path, c.content, {timestamp_expr}
                 FROM read_parquet(?) c
                 JOIN selected s USING (session_id)
-                WHERE c.turn_type IN ('tool_use', 'tool_result')
+                WHERE c.turn_type IN ('tool_use', 'tool_result', 'assistant_response')
                 ORDER BY c.session_id, c.turn_number
                 """,
                 [str(conversations_path)],
@@ -152,6 +152,10 @@ def ingest_swe_chat(
                         current.started_at is None or stamped_at < current.started_at
                     ):
                         current.started_at = stamped_at
+                    if turn_type == "assistant_response":
+                        if current_calls:
+                            current_calls[-1].assistant_context = str(content or "")[:800]
+                        continue
                     if turn_type == "tool_use":
                         args = parse_arguments(input_json)
                         raw_target = (

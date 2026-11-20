@@ -83,10 +83,17 @@ def normalize_event_token(
         command = (raw_target or object_id or target or "").strip()
         command = re.sub(r"^(?:cd\s+[^&]+?&&\s*)+", "", command)
         command = re.sub(r"^(?:[A-Z_][A-Z0-9_]*=\S*\s+)+", "", command)
-        first = command.split()[0] if command else "command"
-        second = command.split()[1] if len(command.split()) > 1 else ""
-        if first in {"python", "python3"} and second == "-m" and len(command.split()) > 2:
-            first = command.split()[2]
+        parts = command.split()
+        first = parts[0] if parts else "command"
+        second = parts[1] if len(parts) > 1 else ""
+        if (
+            first.startswith(("-", "$", "/"))
+            or "=" in first
+            or first in {"2>/dev/null", "cd", "env", "sudo"}
+        ):
+            first = verb or object_id or "command"
+        if first in {"python", "python3"} and second == "-m" and len(parts) > 2:
+            first = parts[2]
         if first in {"git", "cargo", "go", "npm", "pnpm", "yarn", "docker", "kubectl"} and second:
             first = f"{first}:{second}"
         if first in {"curl", "wget"}:

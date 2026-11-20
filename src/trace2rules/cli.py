@@ -321,6 +321,24 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
             )
         console.print(table)
 
+    patterns = mined.get("attribute_pattern", [])[:limit]
+    if patterns:
+        table = Table(title="Repo-local sequential rules", header_style="bold", expand=True)
+        table.add_column("Repo")
+        table.add_column("Sessions", justify="right")
+        table.add_column("Lift", justify="right")
+        table.add_column("Pattern")
+        table.add_column("Example", width=45)
+        for finding in patterns:
+            table.add_row(
+                escape(finding.repo),
+                str(finding.sessions),
+                f"{finding.lift:.1f}",
+                escape(finding.sequence),
+                escape((finding.variants or ("",))[0][:220]),
+            )
+        console.print(table)
+
     feedback = mined.get("feedback", [])[:limit]
     if feedback:
         table = Table(title="Repeated human steering", header_style="bold", expand=True)
@@ -541,7 +559,8 @@ def _patterns_command(
     top: Annotated[int, typer.Option(help="Patterns to show.")] = 25,
     min_sessions: Annotated[int, typer.Option(help="Minimum session support.")] = 3,
     max_len: Annotated[int, typer.Option(help="Maximum sequence length.")] = 5,
-    max_gap: Annotated[int, typer.Option(help="Maximum skipped events between pattern steps.")] = 2,
+    max_gap: Annotated[int, typer.Option(help="Deprecated compatibility option; candidate generation is contiguous.")] = 2,
+    min_lift: Annotated[float, typer.Option(help="Minimum lift over token marginals.")] = 1.5,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     con = connect(db)
@@ -558,20 +577,25 @@ def _patterns_command(
             max_len=max_len,
             max_gap=max_gap,
             top=top,
+            min_lift=min_lift,
         )
         table = Table(title="Semantic friction sequences", header_style="bold", expand=True)
         table.add_column("#", width=3)
         table.add_column("Sessions", justify="right", width=8)
+        table.add_column("Lift", justify="right", width=7)
+        table.add_column("Conf", justify="right", width=6)
         table.add_column("Tokens", justify="right", width=10)
-        table.add_column("Repos", width=24)
+        table.add_column("Repo", width=24)
         table.add_column("Pattern")
         table.add_column("Example", width=45)
         for rank, pattern in enumerate(patterns, start=1):
             table.add_row(
                 str(rank),
                 str(pattern.sessions),
+                f"{pattern.lift:.1f}",
+                f"{pattern.confidence:.0%}",
                 f"{pattern.tokens:,}",
-                escape(", ".join(pattern.repos)),
+                escape(pattern.repo),
                 escape(pattern.sequence),
                 escape(pattern.example[:220]),
             )

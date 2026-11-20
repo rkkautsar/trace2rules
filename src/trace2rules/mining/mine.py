@@ -39,6 +39,14 @@ from .heuristics import (
 from .models import Finding
 
 
+def _attribute_patterns(
+    con: duckdb.DuckDBPyConnection, limit: int | None = None
+) -> list[Finding]:
+    from ..patterns import attribute_pattern_findings
+
+    return attribute_pattern_findings(con, limit=limit)
+
+
 def mine(
     con: duckdb.DuckDBPyConnection,
     top: int | None = 25,
@@ -74,6 +82,7 @@ def mine(
         "test_regression": regressions_after_green,
         "test_shrink": shrinking_test_suites,
         "correction_loop": correction_loops,
+        "attribute_pattern": _attribute_patterns,
     }
     workers = workers or min(2, len(jobs), os.cpu_count() or 1)
     if workers <= 1:

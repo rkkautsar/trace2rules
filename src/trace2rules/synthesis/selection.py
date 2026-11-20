@@ -79,7 +79,10 @@ def _candidate_score(finding: Finding) -> float:
     }
     support = max(finding.sessions, 1)
     impact = max(finding.tokens, finding.cost, 1)
-    return support * math.log1p(impact) * weights.get(finding.kind, 0.8)
+    score = support * math.log1p(impact) * weights.get(finding.kind, 0.8)
+    if finding.kind == "attribute_pattern":
+        score *= max(1.0, min(finding.lift, 10.0))
+    return score
 
 
 def select_findings(
@@ -118,6 +121,7 @@ def select_findings(
         "correction_loop",
         "test_regression",
         "test_shrink",
+        "attribute_pattern",
     ):
         candidates.extend(
             finding

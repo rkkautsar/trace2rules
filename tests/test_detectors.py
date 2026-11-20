@@ -385,7 +385,7 @@ def test_attribute_patterns_allow_small_gaps() -> None:
             "'exception:AssertionError')",
             [session],
         )
-    patterns = mine_attribute_patterns(con, max_gap=2, min_sessions=2)
+    patterns = mine_attribute_patterns(con, max_gap=2, min_sessions=2, min_lift=1.0)
     assert any(
         "edit:test:ok" in pattern.sequence
         and "exec:pytest:err:AssertionError" in pattern.sequence

@@ -89,6 +89,34 @@ trace2rules exact --length 4 --per-repo 2
 
 `exact` balances output per repository; `patterns` uses normalized, error-anchored attribute sequences with up to two skipped events.
 
+## Real-world examples
+
+These were regenerated from the current report prompts, not copied from the earlier README examples.
+
+**`swc-project/swc`**
+
+- [guidance] Reproduce the defect before editing crate sources: 118 sessions edited source with no preceding failing exec. Start with a targeted test such as `RUSTUP_TOOLCHAIN=1.84.1 cargo test -p swc_ecma_transforms_compat --lib regex_dot_all --offline`.
+- [guidance] Read the exact target range before editing: 72 sessions made 132 edits with no prior read of the target, e.g. inspect the `ExprExt` sites in `crates/swc_ecma_utils/src/lib.rs`.
+- [enforceable] Require a test/lint command after edits: 26 sessions had no test/lint exec after the first edit and 74 of 188 sessions were unvalidated. Add a CI job running `RUSTUP_TOOLCHAIN=1.84.1 cargo test -p <changed-crate> --offline`; the pinned toolchain was the successful delta in 21 sessions.
+
+**`rkkautsar/trace2rules`**
+
+- [enforceable] Make `uv run pytest -q` a required check in `.github/workflows/ci.yml`; the current audit shows the rule unobserved in applicable sessions.
+- [enforceable] Keep dependencies declared in `pyproject.toml` and install with `uv sync --frozen`; `environment_thrash` found 25 package-manager calls across 3 sessions, 4 failed.
+- [guidance] Read the owning package module by symbol or range, not whole-file: the synthesis and ingest modules were read-only hotspots in 22/62 and 20/62 sessions.
+
+**`rkkautsar/louibot`**
+
+- [enforceable] Gate changes with `npm run format:check && npm run build && npm test`, matching `.github/workflows/ci.yml`; 3 sessions used each validation command.
+- [guidance] Read the target region of `src/agent.ts` and its matching test before editing: 133 edits had no prior read across 6 sessions, and `src/agent.ts` had 227 reads across 9 sessions.
+- [enforceable] Block `git push --force-with-lease` on `codex/*` branches and `rm -rf .louibot/benchmarks/runs/<run>`; 3 destructive/gate-bypassing invocations occurred across 3 sessions.
+
+**`rkkautsar/personal-website`**
+
+- [enforceable] Run `npm run lint && npm run format:check`, plus `npm run check:worker` for `functions/**` and `npm run test:discussion` for `functions/api/discussion/[slug].ts`; 3 sessions made edits with no test/lint exec after the first edit.
+- [enforceable] Reproduce API/worker failures before editing source: 3 sessions edited source with no preceding failing exec; extend `npm run test:discussion` first.
+- [guidance] Read `src/components/sections/WritingSection.tsx`, `src/index.css`, and `src/blog/client.ts` before editing; 117 edits across 3 sessions had no prior read of the target.
+
 ## Local session details
 
 `--source` is repeatable and defaults to your home directory. It scans `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, `~/.omp/agent/sessions`, and `~/.local/share/opencode`. The default cap is 200 sessions per source and selects the most recently modified files; use `--limit 0` for all.

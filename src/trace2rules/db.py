@@ -88,7 +88,7 @@ def connect(path: str | Path = DB_PATH) -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(
         str(path),
         config={
-            "memory_limit": "4500MB",
+            "memory_limit": "2048MB",
             "threads": "1",
             "preserve_insertion_order": "false",
         },

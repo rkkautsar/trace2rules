@@ -123,7 +123,7 @@ def ingest(
     workers: int | None = None,
 ) -> list[IngestStats]:
     repos = repos or DEFAULT_REPOS
-    workers = workers or min(8, len(repos), os.cpu_count() or 1)
+    workers = workers or min(2, len(repos), os.cpu_count() or 1)
     resolved_source = (
         source if source_format == "open-swe" else _cached_source(source, progress, refresh=refresh_cache)
     )

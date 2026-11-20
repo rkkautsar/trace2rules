@@ -554,7 +554,7 @@ def ingest_agent_sessions(
                 if progress
                 else None
             )
-            with ThreadPoolExecutor(max_workers=min(8, len(files))) as pool:
+            with ThreadPoolExecutor(max_workers=min(2, len(files))) as pool:
                 scanned = pool.map(
                     lambda path: _scan_transcript(path, source_name), files
                 )
@@ -620,7 +620,7 @@ def ingest_agent_sessions(
                             normalized.append({"records": [], "diagnostics": []})
                 return normalized
 
-            BATCH_BYTES = 32 * 1024 * 1024
+            BATCH_BYTES = 8 * 1024 * 1024
             batches: list[list[tuple[Path, TranscriptMeta]]] = []
             current: list[tuple[Path, TranscriptMeta]] = []
             current_bytes = 0
@@ -634,7 +634,7 @@ def ingest_agent_sessions(
                 current_bytes += size
             if current:
                 batches.append(current)
-            workers = min(3, len(batches)) if batches else 1
+            workers = min(2, len(batches)) if batches else 1
             chunk: list[Session] = []
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = [pool.submit(normalize_batch, batch) for batch in batches]

@@ -75,7 +75,7 @@ def mine(
         "test_shrink": shrinking_test_suites,
         "correction_loop": correction_loops,
     }
-    workers = workers or min(8, len(jobs), os.cpu_count() or 1)
+    workers = workers or min(2, len(jobs), os.cpu_count() or 1)
     if workers <= 1:
         return {key: fn(con, limit=top) for key, fn in jobs.items()} | {"clusters": []}
 

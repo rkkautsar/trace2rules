@@ -673,7 +673,7 @@ def _stream_rows(
 ):
     reader = duckdb.connect(
         config={
-            "memory_limit": "4500MB",
+            "memory_limit": "1024MB",
             "threads": "1",
             "preserve_insertion_order": "false",
         }

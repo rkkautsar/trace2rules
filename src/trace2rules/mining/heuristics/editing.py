@@ -37,7 +37,7 @@ def stuck_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> lis
             detail=f"{edits} edits across {sessions} sessions; recurring family {family or 'unknown'}",
             side="agent",
             recommendation="After two edits leave the same failure family unchanged, stop editing and read the traceback site or failing test before another patch.",
-            window=_repo_window(con, repo, "action_type = 'edit' AND object_id = ?", (object_id,)),
+            window=_repo_window(con, repo, "action_type = 'edit' AND target = ?", (object_id,)),
         )
         for repo, object_id, edits, sessions, tokens, family in con.execute(query).fetchall()
     ]

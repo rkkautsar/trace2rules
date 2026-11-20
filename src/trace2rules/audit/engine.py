@@ -542,7 +542,7 @@ def resolve_agents(path: str | Path | None = None) -> list[Path]:
     paths: list[Path] = []
     seen: set[Path] = set()
     for candidate in candidates:
-        if not candidate.exists():
+        if candidate.is_symlink() or not candidate.is_file():
             continue
         resolved = candidate.resolve()
         if resolved in seen:

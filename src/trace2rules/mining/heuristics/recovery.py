@@ -51,7 +51,7 @@ def recovery_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
                   SELECT 1 FROM tool_events e
                   WHERE e.session_id = a.session_id
                     AND e.step_idx BETWEEN a.step_idx AND b.step_idx
-                    AND e.action_type = 'edit' AND e.target = a.object_id
+                    AND e.action_type = 'edit' AND e.object_id = a.object_id
               )
           )
         GROUP BY 1, 2, 3, 4, 13

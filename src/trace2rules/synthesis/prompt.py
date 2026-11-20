@@ -215,7 +215,7 @@ def _prompt(
 ) -> str:
     evidence = ["## Mined findings"]
     if findings:
-        for index, finding in enumerate(findings[:PROMPT_FINDINGS], start=1):
+        for index, finding in enumerate(findings[: max(PROMPT_FINDINGS, max_rules)], start=1):
             evidence.extend(_finding_markdown(finding, index))
             evidence.append("")
     else:

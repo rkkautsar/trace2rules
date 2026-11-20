@@ -184,17 +184,27 @@ def _representative_window(
     session_id: str,
     failure_step: int,
     recovery_step: int | None = None,
+    *,
+    include_scratch: bool = False,
 ) -> tuple[dict, ...]:
     if not session_id:
         return ()
     end = max(failure_step, recovery_step or failure_step + 3)
+    scratch_filter = (
+        ""
+        if include_scratch
+        else """AND NOT regexp_matches(
+              e.object_id,
+              '(?i)^(reproduce|repro|scratch|debug|verify|verification|comprehensive|final|test_fix|test_repro|validation_test)'
+          )"""
+    )
     segment = con.execute(
         "SELECT segment_idx FROM tool_events WHERE session_id = ? AND step_idx = ?",
         [session_id, failure_step],
     ).fetchone()
     segment_idx = segment[0] if segment else 0
     rows = con.execute(
-        """
+        f"""
         SELECT e.step_idx, e.action_type, e.verb, e.object_id, e.outcome, e.exit_code,
                e.approx_out_tokens, coalesce(nullif(e.obs_cause, ''), e.obs_excerpt),
                e.segment_idx, s.source_ref,
@@ -203,10 +213,7 @@ def _representative_window(
         FROM tool_events e
         JOIN sessions s USING (session_id)
         WHERE e.session_id = ? AND e.step_idx BETWEEN ? AND ? AND e.segment_idx = ?
-          AND NOT regexp_matches(
-              e.object_id,
-              '(?i)^(reproduce|repro|scratch|debug|verify|verification|comprehensive|final|test_fix|test_repro|validation_test)'
-          )
+          {scratch_filter}
         ORDER BY step_idx
         LIMIT 12
         """,
@@ -235,7 +242,12 @@ def _representative_window(
 
 
 def _repo_window(
-    con: duckdb.DuckDBPyConnection, repo: str, where: str, params: tuple = ()
+    con: duckdb.DuckDBPyConnection,
+    repo: str,
+    where: str,
+    params: tuple = (),
+    *,
+    include_scratch: bool = False,
 ) -> tuple[dict, ...]:
     row = con.execute(
         f"""SELECT session_id, step_idx FROM tool_events
@@ -243,4 +255,10 @@ def _repo_window(
             ORDER BY approx_out_tokens DESC LIMIT 1""",
         [repo, *params],
     ).fetchone()
-    return _representative_window(con, row[0], row[1]) if row else ()
+    return (
+        _representative_window(
+            con, row[0], row[1], include_scratch=include_scratch
+        )
+        if row
+        else ()
+    )

@@ -593,6 +593,9 @@ def _exact_command(
 ) -> None:
     con = connect(db)
     try:
+        if con.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0:
+            console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
+            raise typer.Exit(1)
         from .mining.sequences import exact_sequences
 
         findings = exact_sequences(

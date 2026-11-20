@@ -446,8 +446,23 @@ def _records_to_session(
         cwd=str(meta_record.get("cwd") or ""),
     )
     pending: dict[str, ToolCall] = {}
+    final_assistant_text = ""
     for record in records:
         role = record.get("role")
+        assistant_text = ""
+        if role == "assistant":
+            content = record.get("content")
+            if isinstance(content, list):
+                assistant_text = " ".join(
+                    part.get("text", "")
+                    for part in content
+                    if isinstance(part, dict)
+                )
+            else:
+                assistant_text = str(content or "")
+            assistant_text = assistant_text.strip()[:800]
+            if assistant_text:
+                final_assistant_text = assistant_text
         if role == "user":
             content = record.get("content")
             if isinstance(content, list):
@@ -487,6 +502,7 @@ def _records_to_session(
                         if meta
                         else 0
                     ),
+                    assistant_context=assistant_text,
                 )
                 session.calls.append(call)
                 if tool_call.get("id"):
@@ -497,6 +513,8 @@ def _records_to_session(
                 call.observation = record.get("content") or ""
                 if "ok" in record:
                     call.is_error = not record["ok"]
+    if session.calls and final_assistant_text:
+        session.calls[-1].assistant_context = final_assistant_text
     return session
 
 

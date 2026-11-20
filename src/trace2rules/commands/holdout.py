@@ -50,6 +50,9 @@ def _holdout_command(
         raise typer.Exit(1)
     con = connect(db)
     try:
+        if con.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0:
+            console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
+            raise typer.Exit(1)
         repo = _resolve_repo_label(con, repo, paths[0].parent.name, paths[0].parent.resolve().name)
         timestamps = [
             row[0]

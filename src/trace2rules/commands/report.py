@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import tempfile
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -132,12 +134,16 @@ def _report_command(
                 return None
             for repo_name, _count in repo_rows:
                 selected_findings = select_findings(
-                    exact, mined, repo_name, min_sessions=min_support
+                    exact,
+                    mined,
+                    repo_name,
+                    limit=max(20, max_rules),
+                    min_sessions=min_support,
                 )
                 selected_findings = [
                     finding
                     for finding in selected_findings
-                    if _finding_confidence(finding) != "low"
+                    if min_support < 3 or _finding_confidence(finding) != "low"
                 ]
                 repo_agents = agents_for(repo_name)
                 existing = audit_payload(con, repo_name, repo_agents) if repo_agents else None
@@ -165,6 +171,8 @@ def _report_command(
             if out_dir is None:
                 sys.stdout.write("\n\n---\n\n".join(chunks))
             else:
+                if out_dir.is_symlink():
+                    raise typer.BadParameter("--out-dir must not be a symlink")
                 out_dir.mkdir(parents=True, exist_ok=True)
                 for repo_name, _count in repo_rows:
                     safe_repo = repo_name.replace("\n", " ").replace("\r", " ")
@@ -173,7 +181,12 @@ def _report_command(
                     prompt_text = next(
                         chunk for chunk in chunks if chunk.startswith(f"# Repository: {safe_repo}\n")
                     )
-                    path.write_text(prompt_text, encoding="utf-8")
+                    fd, temporary = tempfile.mkstemp(
+                        prefix=f".{path.name}.", dir=out_dir
+                    )
+                    os.close(fd)
+                    Path(temporary).write_text(prompt_text, encoding="utf-8")
+                    os.replace(temporary, path)
                     print(f"wrote {path}", file=sys.stderr)
             return
         patterns = [

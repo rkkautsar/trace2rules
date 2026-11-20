@@ -25,13 +25,14 @@ def _large_source(path: str, root: Path | None, names: set[str]) -> bool:
         return True
     if root is None:
         return False
+    root = root.resolve()
     file_path = Path(candidate)
     if file_path.is_absolute():
         try:
             file_path = file_path.relative_to(root)
         except ValueError:
             return False
-    file_path = root / file_path
+    file_path = (root / file_path).resolve()
     try:
         return file_path.is_file() and file_path.stat().st_size >= _LARGE_SOURCE_BYTES
     except OSError:

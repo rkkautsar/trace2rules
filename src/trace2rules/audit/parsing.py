@@ -135,7 +135,15 @@ def _dedupe_key(rule: AgentRule) -> tuple:
 def parse_agents(path: str | Path) -> list[AgentRule]:
     file_path = Path(path)
     source = file_path.name or "AGENTS.md"
-    return parse_agents_text(file_path.read_text(encoding="utf-8"), source)
+    if file_path.is_symlink() or not file_path.is_file():
+        return []
+    try:
+        if file_path.stat().st_size > 1_000_000:
+            return []
+        text = file_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return []
+    return parse_agents_text(text, source)
 
 
 def _split_clauses(text: str) -> list[str]:

@@ -81,6 +81,9 @@ def _audit_command(
         raise typer.Exit(2)
     con = connect(db)
     try:
+        if con.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0:
+            console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
+            raise typer.Exit(1)
         repo = _resolve_repo_label(
             con,
             repo,

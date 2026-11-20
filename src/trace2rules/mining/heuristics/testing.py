@@ -88,6 +88,7 @@ def workaround_scripts(con: duckdb.DuckDBPyConnection, limit: int | None = None)
                 repo,
                 "action_type = 'exec' AND regexp_matches(object_id, '(?i)^(reproduce|debug|verify|comprehensive|final|test_fix|test_repro)') AND object_id = ?",
                 (exemplar or "",),
+                include_scratch=True,
             ),
         )
         for repo, sessions, edits, runs, tokens, failures, exemplar in con.execute(query).fetchall()

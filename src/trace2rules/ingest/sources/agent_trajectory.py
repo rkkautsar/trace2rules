@@ -537,7 +537,7 @@ def ingest_agent_sessions(
         ) from error
 
     from ..normalize import IngestStats
-    from ..writer import write_sessions
+    from ..writer import SessionWriter
 
     root = Path(source).expanduser()
     if not root.exists():
@@ -685,29 +685,46 @@ def ingest_agent_sessions(
                 batches.append(current)
             workers = min(2, len(batches)) if batches else 1
             chunk: list[Session] = []
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = [pool.submit(normalize_batch, batch) for batch in batches]
-                for batch, future in zip(batches, futures):
-                    results = future.result()
-                    for (_path, meta), result in zip(batch, results):
-                        if not result.get("records"):
-                            continue
-                        session = _records_to_session(
-                            _path, source_name, result["records"], repo, meta=meta
-                        )
-                        if session.session_id in seen_session_ids:
-                            continue
-                        seen_session_ids.add(session.session_id)
-                        chunk.append(session)
-                        source_sessions += 1
-                        source_calls += len(session.calls)
-                    if len(chunk) >= 64:
-                        write_sessions(db_path, chunk, split_compactions=split_compactions)
-                        chunk = []
-                    if progress and task_id is not None:
-                        progress.update(task_id, advance=len(batch))
-            if chunk:
-                write_sessions(db_path, chunk, split_compactions=split_compactions)
+
+            def consume(batch, results) -> None:
+                nonlocal chunk, source_sessions, source_calls
+                for (_path, meta), result in zip(batch, results):
+                    if not result.get("records"):
+                        continue
+                    session = _records_to_session(
+                        _path, source_name, result["records"], repo, meta=meta
+                    )
+                    if session.session_id in seen_session_ids:
+                        continue
+                    seen_session_ids.add(session.session_id)
+                    chunk.append(session)
+                if len(chunk) >= 64:
+                    written = writer.write(chunk)
+                    source_sessions += written.sessions
+                    source_calls += written.events
+                    chunk = []
+                if progress and task_id is not None:
+                    progress.update(task_id, advance=len(batch))
+
+            writer = SessionWriter(
+                db_path, split_compactions=split_compactions
+            )
+            try:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    pending: list[tuple] = []
+                    for batch in batches:
+                        pending.append((batch, pool.submit(normalize_batch, batch)))
+                        if len(pending) >= max(2, workers * 2):
+                            ready_batch, ready_future = pending.pop(0)
+                            consume(ready_batch, ready_future.result())
+                    for ready_batch, ready_future in pending:
+                        consume(ready_batch, ready_future.result())
+                if chunk:
+                        written = writer.write(chunk)
+                        source_sessions += written.sessions
+                        source_calls += written.events
+            finally:
+                writer.close()
             stats.append(
                 IngestStats(
                     f"agent-trajectory:{source_name}",

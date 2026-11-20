@@ -48,7 +48,7 @@ def ingest_swe_chat(
 ):
     """Import the normalized SALT-NLP/SWE-chat parquet tables."""
     from ..normalize import IngestStats
-    from ..writer import write_sessions
+    from ..writer import SessionWriter
 
     sessions_path, conversations_path = _paths(source)
     if not sessions_path.exists() or not conversations_path.exists():
@@ -75,81 +75,116 @@ def ingest_swe_chat(
                 "SELECT session_id, repo_id, agent, session_success FROM selected"
             ).fetchall()
         }
-        sessions: dict[str, Session] = {}
-        calls: dict[str, list[ToolCall]] = {}
+        batch: list[Session] = []
+        current_id: str | None = None
+        current: Session | None = None
+        current_calls: list[ToolCall] = []
         pending: dict[tuple[str, str], ToolCall] = {}
-        columns = {
-            row[0]
-            for row in con.execute(
-                "DESCRIBE SELECT * FROM read_parquet(?)", [str(conversations_path)]
-            ).fetchall()
-        }
-        timestamp_expr = "c.timestamp" if "timestamp" in columns else "NULL"
-        cursor = con.execute(
-            f"""
-            SELECT c.session_id, c.turn_type, c.tool_name, c.tool_call_id,
-                   c.tool_input_json, c.command, c.file_path, c.content, {timestamp_expr}
-            FROM read_parquet(?) c
-            JOIN selected s USING (session_id)
-            WHERE c.turn_type IN ('tool_use', 'tool_result')
-            ORDER BY c.session_id, c.turn_number
-            """,
-            [str(conversations_path)],
-        )
-        while True:
-            batch = cursor.fetchmany(10_000)
-            if not batch:
-                break
-            for session_id, turn_type, tool_name, tool_call_id, input_json, command, path, content, stamped in batch:
-                if session_id not in sessions:
-                    _, repo_id, agent, success = meta.get(session_id, (session_id, repo or "unknown", "", None))
-                    sessions[session_id] = Session(
-                        session_id=session_id,
-                        repo=repo or repo_id or "unknown",
-                        instance_id=session_id,
-                        agent=agent or "",
-                        source="swe-chat",
-                        source_ref=f"{conversations_path}#{session_id}",
-                        success_score=float(success) if success not in (None, "") else None,
-                        started_at=_timestamp(stamped),
-                    )
-                    calls[session_id] = []
-                else:
+        committed_sessions = 0
+        committed_events = 0
+
+        writer = SessionWriter(db_path)
+        try:
+            def flush_session() -> None:
+                nonlocal current, current_calls, batch
+                if current is None:
+                    return
+                current.calls = current_calls
+                batch.append(current)
+                current = None
+                current_calls = []
+
+            def flush_batch() -> None:
+                nonlocal batch, committed_sessions, committed_events
+                if not batch:
+                    return
+                written = writer.write(batch)
+                committed_sessions += written.sessions
+                committed_events += written.events
+                batch = []
+            columns = {
+                row[0]
+                for row in con.execute(
+                    "DESCRIBE SELECT * FROM read_parquet(?)", [str(conversations_path)]
+                ).fetchall()
+            }
+            timestamp_expr = "c.timestamp" if "timestamp" in columns else "NULL"
+            cursor = con.execute(
+                f"""
+                SELECT c.session_id, c.turn_type, c.tool_name, c.tool_call_id,
+                       c.tool_input_json, c.command, c.file_path, c.content, {timestamp_expr}
+                FROM read_parquet(?) c
+                JOIN selected s USING (session_id)
+                WHERE c.turn_type IN ('tool_use', 'tool_result')
+                ORDER BY c.session_id, c.turn_number
+                """,
+                [str(conversations_path)],
+            )
+            while True:
+                rows = cursor.fetchmany(10_000)
+                if not rows:
+                    break
+                for session_id, turn_type, tool_name, tool_call_id, input_json, command, path, content, stamped in rows:
+                    if session_id != current_id:
+                        if current is not None and current.session_id != session_id:
+                            flush_session()
+                            pending = {}
+                        if current is None:
+                            _, repo_id, agent, success = meta.get(
+                                session_id, (session_id, repo or "unknown", "", None)
+                            )
+                            current = Session(
+                                session_id=session_id,
+                                repo=repo or repo_id or "unknown",
+                                instance_id=session_id,
+                                agent=agent or "",
+                                source="swe-chat",
+                                source_ref=f"{conversations_path}#{session_id}",
+                                success_score=float(success) if success not in (None, "") else None,
+                                started_at=_timestamp(stamped),
+                            )
+                            current_id = session_id
+                        current_id = session_id
+                    if current is None:
+                        continue
                     stamped_at = _timestamp(stamped)
                     if stamped_at and (
-                        sessions[session_id].started_at is None
-                        or stamped_at < sessions[session_id].started_at
+                        current.started_at is None or stamped_at < current.started_at
                     ):
-                        sessions[session_id].started_at = stamped_at
-                if turn_type == "tool_use":
-                    args = parse_arguments(input_json)
-                    raw_target = (
-                        (command or "").strip()
-                        or (path or "").strip()
-                        or target_from_args(tool_name or "", args, input_json or tool_name or "")
-                    )
-                    action, target, verb, object_id = classify_tool_call(
-                        tool_name or "", args, raw_target
-                    )
-                    call = ToolCall(
-                        tool_name=tool_name or "",
-                        raw_target=raw_target,
-                        action_type=action,
-                        target=target,
-                        verb=verb,
-                        object_id=object_id,
-                    )
-                    calls[session_id].append(call)
-                    if tool_call_id:
-                        pending[(session_id, tool_call_id)] = call
-                elif tool_call_id:
-                    call = pending.pop((session_id, tool_call_id), None)
-                    if call is not None:
-                        call.observation = content or ""
-        for session in sessions.values():
-            session.calls = calls.get(session.session_id, [])
-        write_sessions(db_path, sessions.values())
-        events = sum(len(session.calls) for session in sessions.values())
-        return IngestStats("swe-chat", len(sessions), len(sessions), events)
+                        current.started_at = stamped_at
+                    if turn_type == "tool_use":
+                        args = parse_arguments(input_json)
+                        raw_target = (
+                            (command or "").strip()
+                            or (path or "").strip()
+                            or target_from_args(tool_name or "", args, input_json or tool_name or "")
+                        )
+                        action, target, verb, object_id = classify_tool_call(
+                            tool_name or "", args, raw_target
+                        )
+                        call = ToolCall(
+                            tool_name=tool_name or "",
+                            raw_target=raw_target,
+                            action_type=action,
+                            target=target,
+                            verb=verb,
+                            object_id=object_id,
+                        )
+                        current_calls.append(call)
+                        if tool_call_id:
+                            pending[(session_id, tool_call_id)] = call
+                    elif tool_call_id:
+                        call = pending.pop((session_id, tool_call_id), None)
+                        if call is not None:
+                            call.observation = content or ""
+                    if len(batch) >= 64:
+                        flush_batch()
+            flush_session()
+            flush_batch()
+        finally:
+            writer.close()
+        return IngestStats(
+            "swe-chat", committed_sessions, committed_sessions, committed_events
+        )
     finally:
         con.close()

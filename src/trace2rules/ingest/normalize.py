@@ -709,6 +709,7 @@ def _stream_rows(
                 SELECT trajectory_id, instance_id, repo, resolved, messages AS trajectory, filename
                 FROM read_parquet(?, filename = true)
                 WHERE repo = ?
+                ORDER BY repo, instance_id, trajectory_id
                 {limit_sql}
             """
         else:
@@ -716,6 +717,7 @@ def _stream_rows(
                 SELECT trajectory_id, instance_id, repo, resolved, trajectory
                 FROM read_parquet(?)
                 WHERE starts_with(instance_id, ?)
+                ORDER BY instance_id, trajectory_id
                 {limit_sql}
             """
         cursor = reader.execute(query, [local_source, prefix])

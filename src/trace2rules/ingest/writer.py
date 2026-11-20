@@ -64,15 +64,20 @@ def _split_compactions(sessions: list[Session]) -> list[Session]:
 
 
 def write_sessions(
-    db_path: str | Path,
+    db_path: str | Path | None,
     sessions: Iterable[Session],
     *,
     split_compactions: bool = False,
+    con: duckdb.DuckDBPyConnection | None = None,
 ) -> IngestStats:
     """Write canonical sessions/events, replacing rows with the same ids."""
     raw_sessions = list({session.session_id: session for session in sessions}.values())
     session_list = _split_compactions(raw_sessions) if split_compactions else raw_sessions
-    con = connect(db_path)
+    owns_connection = con is None
+    if con is None:
+        if db_path is None:
+            raise ValueError("db_path or con is required")
+        con = connect(db_path)
     con.execute("BEGIN TRANSACTION")
     try:
         if session_list:
@@ -275,7 +280,39 @@ def write_sessions(
         con.execute("ROLLBACK")
         raise
     finally:
-        con.close()
+        if owns_connection:
+            con.close()
+
+
+class SessionWriter:
+    """Reuse one DuckDB connection across bounded ingest batches."""
+
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        split_compactions: bool = False,
+    ) -> None:
+        self._con = connect(db_path)
+        self.split_compactions = split_compactions
+
+    def write(self, sessions: Iterable[Session]) -> IngestStats:
+        return write_sessions(
+            None,
+            sessions,
+            split_compactions=self.split_compactions,
+            con=self._con,
+        )
+
+    def close(self) -> None:
+        self._con.close()
+
+    def __enter__(self) -> "SessionWriter":
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.close()
+
 
 def _insert_rows(
     con: duckdb.DuckDBPyConnection,

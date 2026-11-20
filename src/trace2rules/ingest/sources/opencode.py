@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..normalize import IngestStats
-from ..writer import write_sessions
+from ..writer import SessionWriter
 from ...models import Session, ToolCall
 from .common import classify_tool_call, parse_arguments, target_from_args
 
@@ -151,33 +151,80 @@ def ingest_opencode(
         tables = _tables(con)
         v2 = "session_v2" in tables
         session_table = "session_v2" if v2 else "session"
-        rows = con.execute(f"SELECT * FROM {session_table}").fetchall()
-        if limit:
-            rows = rows[:limit]
-        sessions: list[Session] = []
-        for row in rows:
-            session_id = str(row["id"])
-            parent_id = str(row["parent_id"] or "") if "parent_id" in row.keys() else ""
-            directory = str(row["directory"] or "") if "directory" in row.keys() else ""
-            title = str(row["title"] or "") if "title" in row.keys() else ""
-            calls = _v2_calls(con, session_id) if v2 else _v1_calls(con, session_id)
-            sessions.append(
-                Session(
-                    session_id=session_id,
-                    repo=repo or (Path(directory).name if directory else "unknown"),
-                    instance_id=parent_id or session_id,
-                    source="opencode",
-                    source_ref=f"{path}#{session_id}",
-                    agent="opencode",
-                    calls=calls,
-                    started_at=(
-                        _timestamp(row["time_created"])
-                        if "time_created" in row.keys()
-                        else None
-                    ),
-                )
+        cursor = con.execute(f"SELECT * FROM {session_table} ORDER BY id")
+        batch: list[Session] = []
+        total_sessions = 0
+        total_events = 0
+        count = 0
+        title = ""
+        writer = SessionWriter(db_path, split_compactions=split_compactions)
+        try:
+            while True:
+                rows = cursor.fetchmany(64)
+                if not rows:
+                    break
+                for row in rows:
+                    if limit and count >= limit:
+                        break
+                    session_id = str(row["id"])
+                    parent_id = (
+                        str(row["parent_id"] or "")
+                        if "parent_id" in row.keys()
+                        else ""
+                    )
+                    directory = (
+                        str(row["directory"] or "")
+                        if "directory" in row.keys()
+                        else ""
+                    )
+                    title = (
+                        str(row["title"] or "")
+                        if "title" in row.keys()
+                        else ""
+                    )
+                    calls = (
+                        _v2_calls(con, session_id)
+                        if v2
+                        else _v1_calls(con, session_id)
+                    )
+                    batch.append(
+                        Session(
+                            session_id=session_id,
+                            repo=repo
+                            or (Path(directory).name if directory else "unknown"),
+                            instance_id=parent_id or session_id,
+                            source="opencode",
+                            source_ref=f"{path}#{session_id}",
+                            agent="opencode",
+                            calls=calls,
+                            started_at=(
+                                _timestamp(row["time_created"])
+                                if "time_created" in row.keys()
+                                else None
+                            ),
+                        )
+                    )
+                    count += 1
+                    if len(batch) >= 64:
+                        written = writer.write(batch)
+                        total_sessions += written.sessions
+                        total_events += written.events
+                        batch = []
+                if limit and count >= limit:
+                    break
+            if batch:
+                written = writer.write(batch)
+                total_sessions += written.sessions
+                total_events += written.events
+        finally:
+            writer.close()
+        return [
+            IngestStats(
+                f"opencode:{title}",
+                count,
+                total_sessions,
+                total_events,
             )
-        stats = write_sessions(db_path, sessions, split_compactions=split_compactions)
-        return [IngestStats(f"opencode:{title}", len(rows), stats.sessions, stats.events)]
+        ]
     finally:
         con.close()

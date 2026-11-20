@@ -157,11 +157,12 @@ def ingest(
     workers: int | None = None,
 ) -> list[IngestStats]:
     repos = repos or DEFAULT_REPOS
-    workers = workers or min(2, len(repos), os.cpu_count() or 1)
+    del workers  # parsing is intentionally serialized to bound memory
     resolved_source = (
         source if source_format == "open-swe" else _cached_source(source, progress, refresh=refresh_cache)
     )
     con = connect(db_path)
+    con.execute("CREATE OR REPLACE TEMP TABLE seen_sessions (session_id VARCHAR PRIMARY KEY)")
     con.execute(
         "CREATE OR REPLACE TEMP TABLE new_sessions "
         "(session_id VARCHAR, repo VARCHAR, instance_id VARCHAR, resolved BOOLEAN, "
@@ -169,74 +170,105 @@ def ingest(
     )
     stats: list[IngestStats] = []
     classify_cache: dict[tuple[str, str], tuple[str, str, str, str]] = {}
-    task_ids: list[int | None] = []
-    con.execute("BEGIN TRANSACTION")
+    batch_sessions: list[dict] = []
+    batch_events: list[tuple] = []
+    batch_tests: list[tuple] = []
+    batch_ids: set[str] = set()
     try:
         for prefix in repos:
-            task_ids.append(
-                progress.add_task(f"{prefix}", total=limit or None) if progress else None
+            matched = 0
+            committed_sessions = 0
+            committed_events = 0
+            task_id = (
+                progress.add_task(f"{prefix}", total=limit or None)
+                if progress
+                else None
             )
-        if workers > 1 and len(repos) > 1:
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = [
-                    pool.submit(
-                        _parse_prefix,
-                        resolved_source,
-                        prefix,
-                        limit,
-                        progress,
-                        source_format,
-                        classify_cache,
-                        source,
-                        refresh_cache,
+
+            def flush() -> None:
+                nonlocal batch_sessions, batch_events, batch_tests, batch_ids
+                nonlocal committed_sessions, committed_events
+                if not batch_sessions:
+                    return
+                con.execute("BEGIN TRANSACTION")
+                try:
+                    written = _store_prefix(
+                        con, prefix, 0, batch_sessions, batch_events, batch_tests
                     )
-                    for prefix in repos
-                ]
-                parsed = [future.result() for future in futures]
-        else:
-            parsed = [
-                _parse_prefix(
-                    resolved_source,
-                    prefix,
-                    limit,
-                    progress,
-                    source_format,
-                    classify_cache,
-                    source,
-                    refresh_cache,
-                )
-                for prefix in repos
-            ]
-        seen_sessions: set[str] = set()
-        seen_events: set[str] = set()
-        seen_tests: set[tuple[str, int]] = set()
-        for prefix, task_id, (matched, sessions, events, test_rows) in zip(repos, task_ids, parsed):
-            allowed: set[str] = set()
-            unique_sessions = []
-            for session in sessions:
+                    if batch_ids:
+                        con.executemany(
+                            "INSERT INTO seen_sessions VALUES (?)",
+                            [(session_id,) for session_id in batch_ids],
+                        )
+                    con.execute("COMMIT")
+                except Exception:
+                    con.execute("ROLLBACK")
+                    con.execute("DELETE FROM new_sessions")
+                    raise
+                committed_sessions += written.sessions
+                committed_events += written.events
+                batch_sessions = []
+                batch_events = []
+                batch_tests = []
+                batch_ids = set()
+
+            for row in _stream_rows(
+                resolved_source,
+                prefix,
+                limit,
+                progress=progress,
+                refresh=refresh_cache,
+                source_format=source_format,
+            ):
+                matched += 1
+                session, calls = _parse_row(row)
                 session_id = session["session_id"]
-                if session_id in seen_sessions:
+                if (
+                    session_id in batch_ids
+                    or con.execute(
+                        "SELECT 1 FROM seen_sessions WHERE session_id = ?",
+                        [session_id],
+                    ).fetchone()
+                ):
                     continue
-                seen_sessions.add(session_id)
-                allowed.add(session_id)
-                unique_sessions.append(session)
-            unique_events = []
-            for event in events:
-                if event[1] not in allowed or event[0] in seen_events:
-                    continue
-                seen_events.add(event[0])
-                unique_events.append(event)
-            unique_tests = []
-            for row in test_rows:
-                key = (row[0], row[2])
-                if row[0] not in allowed or key in seen_tests:
-                    continue
-                seen_tests.add(key)
-                unique_tests.append(row)
-            events = unique_events
-            test_rows = unique_tests
+                session["source"] = source_format
+                if not session.get("source_ref"):
+                    session["source_ref"] = (
+                        f"{source}#trajectory_id={session_id}"
+                    )
+                session_events = _events_for_calls(calls, classify_cache)
+                outcome_by_event = {event[0]: event[10] for event in session_events}
+                test_rows = []
+                for call in calls:
+                    parsed = parse_test_result(call["raw_target"], call["obs"])
+                    if parsed is not None:
+                        test_rows.append(
+                            (
+                                call["session_id"],
+                                call["repo"],
+                                call["step_idx"],
+                                call["raw_target"][:500],
+                                *parsed,
+                                outcome_by_event.get(call["event_id"], "unknown"),
+                                (len(call["obs"]) + 3) // 4,
+                            )
+                        )
+                batch_sessions.append(session)
+                batch_ids.add(session_id)
+                batch_events.extend(session_events)
+                batch_tests.extend(test_rows)
+                if len(batch_sessions) >= 256:
+                    flush()
+                if progress and task_id is not None:
+                    progress.update(task_id, advance=1)
+            flush()
             stats.append(
-                _store_prefix(con, prefix, matched, unique_sessions, events, test_rows)
+                IngestStats(
+                    prefix,
+                    matched,
+                    committed_sessions,
+                    committed_events,
+                )
             )
             if progress and task_id is not None:
                 progress.update(
@@ -245,10 +277,6 @@ def ingest(
                     total=matched or None,
                     description=f"{prefix}  {matched:,} rows",
                 )
-        con.execute("COMMIT")
         return stats
-    except Exception:
-        con.execute("ROLLBACK")
-        raise
     finally:
         con.close()

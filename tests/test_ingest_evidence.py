@@ -264,3 +264,33 @@ def test_swe_ingest_dedupes_and_persists_test_results(tmp_path, monkeypatch) -> 
     finally:
         con.close()
     assert [stat.sessions for stat in stats] == [1, 0]
+
+
+def test_structured_success_is_not_overridden_by_timeout_text(tmp_path) -> None:
+    from trace2rules.db import connect
+    from trace2rules.ingest import write_sessions
+    from trace2rules.models import Session, ToolCall
+
+    db = tmp_path / "structured-ok.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s1",
+                "acme/repo",
+                calls=[
+                    ToolCall(
+                        "Bash",
+                        "pytest -q",
+                        observation="test_doctor_survives_a_node_timeout passed",
+                        is_error=False,
+                    )
+                ],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        assert con.execute("SELECT outcome FROM tool_events").fetchone() == ("ok",)
+    finally:
+        con.close()

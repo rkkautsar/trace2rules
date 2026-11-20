@@ -210,7 +210,7 @@ def _representative_window(
         ORDER BY step_idx
         LIMIT 12
         """,
-        [session_id, max(0, failure_step - 5), end, segment_idx],
+        [session_id, max(0, failure_step - 1), end, segment_idx],
     ).fetchall()
     return tuple(
         {

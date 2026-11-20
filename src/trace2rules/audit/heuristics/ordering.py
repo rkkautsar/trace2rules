@@ -26,7 +26,7 @@ def evaluate(
         ]
         if not tests:
             return None
-        first_test, first_test_raw = tests[0]
+        first_test, first_test_raw = min(tests, key=lambda item: item[0])
         prerequisite = rule.commands[0]
         prerequisite_events = [
             step
@@ -55,7 +55,7 @@ def evaluate(
     ]
     if not commits:
         return None
-    first_commit, _first_raw = commits[0]
+    first_commit, _first_raw = min(commits, key=lambda item: item[0])
     prerequisite_events = [
         step
         for _sid, step, action, raw, _target, _object, _outcome in events

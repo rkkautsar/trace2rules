@@ -57,6 +57,7 @@ def _parse_prefix(
     source_format: str,
     classify_cache: dict[tuple[str, str], tuple[str, str, str, str]],
     source_label: str,
+    refresh_cache: bool = False,
 ) -> tuple[int, list[dict], list[tuple], list[tuple]]:
     matched = 0
     sessions: list[dict] = []
@@ -67,11 +68,12 @@ def _parse_prefix(
         prefix,
         limit,
         progress=progress,
-        refresh=False,
+        refresh=refresh_cache,
         source_format=source_format,
     ):
         matched += 1
         session, calls = _parse_row(row)
+        session["source"] = source_format
         if not session.get("source_ref"):
             session["source_ref"] = f"{source_label}#trajectory_id={session['session_id']}"
         sessions.append(session)
@@ -110,8 +112,8 @@ def _store_prefix(
     con.execute("DELETE FROM feedback_events WHERE session_id IN (SELECT session_id FROM new_sessions)")
     con.execute("DELETE FROM sessions WHERE session_id IN (SELECT session_id FROM new_sessions)")
     con.execute(
-        "INSERT INTO sessions (session_id, repo, instance_id, resolved, total_turns, source_ref, started_at) "
-        "SELECT session_id, repo, instance_id, resolved, total_turns, source_ref, started_at FROM new_sessions"
+        "INSERT INTO sessions (session_id, repo, instance_id, resolved, total_turns, source, source_ref, started_at) "
+        "SELECT session_id, repo, instance_id, resolved, total_turns, source, source_ref, started_at FROM new_sessions"
     )
     if test_rows:
         _insert_rows(
@@ -163,7 +165,7 @@ def ingest(
     con.execute(
         "CREATE OR REPLACE TEMP TABLE new_sessions "
         "(session_id VARCHAR, repo VARCHAR, instance_id VARCHAR, resolved BOOLEAN, "
-        "total_turns INTEGER, source_ref VARCHAR, started_at TIMESTAMP)"
+        "total_turns INTEGER, source VARCHAR, source_ref VARCHAR, started_at TIMESTAMP)"
     )
     stats: list[IngestStats] = []
     classify_cache: dict[tuple[str, str], tuple[str, str, str, str]] = {}
@@ -186,6 +188,7 @@ def ingest(
                         source_format,
                         classify_cache,
                         source,
+                        refresh_cache,
                     )
                     for prefix in repos
                 ]
@@ -200,6 +203,7 @@ def ingest(
                     source_format,
                     classify_cache,
                     source,
+                    refresh_cache,
                 )
                 for prefix in repos
             ]

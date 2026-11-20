@@ -20,12 +20,9 @@ def evaluate(
         return None
     dirty = any(
         action == "edit"
-        and (
-            matches(rule, raw, target, object_id)
-            or (not needles(rule) and scratch_re.search(object_id or target))
-        )
+        and scratch_re.search(object_id or target)
         and not target.startswith(("/tmp/", "tmp/"))
-        for _sid, _step, action, raw, target, object_id, _outcome in events
+        for _sid, _step, action, _raw, target, object_id, _outcome in events
     )
     return AuditOutcome(
         applicable=1,

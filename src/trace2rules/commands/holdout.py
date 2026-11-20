@@ -11,6 +11,7 @@ from rich.table import Table
 from ..agents import audit_payload, resolve_agents
 from ..cli_common import _resolve_repo_label, console
 from ..db import DB_PATH, connect
+from ..redact import redact_text, redact_value
 from .audit import _enforcement, _violations
 
 
@@ -20,7 +21,7 @@ def _table(title: str, payload: dict) -> Table:
         table.add_column(column)
     for rule in payload["rules"]:
         table.add_row(
-            rule["text"][:90],
+            redact_text(rule["text"][:90]),
             rule.get("coverage", "unmeasured"),
             str(rule.get("followed", 0)),
             _violations(rule),
@@ -74,7 +75,7 @@ def _holdout_command(
         "holdout": holdout,
     }
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(redact_value(payload), indent=2))
         return
     console.print(
         f"[bold]{repo}[/bold] holdout from {cutoff.isoformat()}: "

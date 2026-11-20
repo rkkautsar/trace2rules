@@ -13,6 +13,7 @@ from rich.table import Table
 from ..agents import audit_commit, audit_payload, latest_agents_commit, resolve_agents
 from ..cli_common import _resolve_repo_label, console
 from ..db import DB_PATH, connect
+from ..redact import redact_text, redact_value
 
 def _violations(rule: dict) -> str:
     opportunities = rule.get("opportunities", 0)
@@ -141,7 +142,7 @@ def _audit_command(
         sys.stdout.write(audit_prompt(payload))
         return
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(redact_value(payload), indent=2))
         return
     if commit:
         console.print(
@@ -154,7 +155,7 @@ def _audit_command(
                 table.add_column(column)
             for rule in payload[key]:
                 table.add_row(
-                    rule["text"][:90],
+                    redact_text(rule["text"][:90]),
                     rule.get("coverage", "unmeasured"),
                     str(rule.get("followed", 0)),
                     _violations(rule),
@@ -168,7 +169,7 @@ def _audit_command(
         table.add_column(column)
     for rule in payload["rules"]:
         table.add_row(
-            rule["text"][:90],
+            redact_text(rule["text"][:90]),
             rule.get("coverage", "unmeasured"),
             str(rule.get("followed", 0)),
             _violations(rule),
@@ -179,10 +180,10 @@ def _audit_command(
     for conflict in payload.get("conflicts", []):
         console.print(
             f"[yellow]Conflict:[/yellow] {conflict['reason']}: "
-            f"{conflict['a'][:80]} <> {conflict['b'][:80]}"
+            f"{redact_text(conflict['a'][:80])} <> {redact_text(conflict['b'][:80])}"
         )
     if payload.get("warning"):
         console.print(f"[yellow]{payload['warning']}[/yellow]")
     for rule in payload["rules"]:
-        console.print(f"[dim]{rule['suggestion']}[/dim]")
+        console.print(f"[dim]{redact_text(rule['suggestion'])}[/dim]")
 

@@ -262,6 +262,36 @@ def test_context_hygiene_without_commands_detects_scratch(tmp_path: Path) -> Non
     assert audits[0].violation_sessions == 1
 
 
+def test_context_hygiene_directory_rule_does_not_flag_source_edits(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("- Never leave debug scripts in `src/`; put them in `/tmp`.\n")
+    db = tmp_path / "hygiene-dir.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[
+                    ToolCall(
+                        "Edit",
+                        "src/app.py",
+                        action_type="edit",
+                        target="src/app.py",
+                        object_id="src/app.py",
+                    )
+                ],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        audits = audit_agents(con, "acme/repo", parse_agents(path))
+    finally:
+        con.close()
+    assert audits[0].violation_sessions == 0
+
+
 def test_audit_not_observed_is_session_scoped(tmp_path: Path) -> None:
     path = tmp_path / "AGENTS.md"
     path.write_text("- Run `pytest` after editing.\n")

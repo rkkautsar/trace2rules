@@ -22,6 +22,9 @@ def _resolve_repo_label(
     for name in names:
         if name in labels:
             return name
+        matches = [label for label in labels if label.rsplit("/", 1)[-1] == name]
+        if len(matches) == 1:
+            return matches[0]
     if len(labels) == 1:
         return labels[0]
     raise typer.BadParameter(

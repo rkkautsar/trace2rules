@@ -14,6 +14,8 @@ from pathlib import Path
 import duckdb
 from rich.progress import Progress
 
+from ..redact import redact_text
+
 
 SOURCE = "hf://datasets/nebius/SWE-rebench-openhands-trajectories/trajectories.parquet"
 _OPEN_SWE_BASE = (
@@ -545,7 +547,9 @@ def _parse_row(row: tuple) -> tuple[dict, list[dict]]:
             raw_target, _ = _tool_call_parts(fn["name"], fn.get("arguments", ""))
             if _is_control_target(raw_target):
                 continue
-            observation = _observation_for_call(tool_call.get("id", ""), obs_by_id, messages, index)
+            observation = redact_text(
+                _observation_for_call(tool_call.get("id", ""), obs_by_id, messages, index)
+            )
             exit_code = _extract_exit_code(observation)
             text_error = bool(TEXT_ERROR_RE.search(observation))
             timeout = bool(TIMEOUT_RE.search(observation))
@@ -679,13 +683,16 @@ def _stream_rows(
         }
     )
     try:
-        local_source = (
-            OPEN_SWE_FILES
-            if source_format == "open-swe" and source == OPEN_SWE_SOURCE
-            else source
-            if source_format == "open-swe"
-            else _cached_source(source, progress, refresh=refresh)
-        )
+        if source_format == "open-swe":
+            local_source = (
+                [_cached_source(url, progress, refresh=refresh) for url in OPEN_SWE_FILES]
+                if source == OPEN_SWE_SOURCE
+                else _cached_source(source, progress, refresh=refresh)
+                if source.startswith(("http://", "https://"))
+                else source
+            )
+        else:
+            local_source = _cached_source(source, progress, refresh=refresh)
         if source.startswith(("http://", "https://")) and source_format == "open-swe":
             try:
                 reader.execute("SET allow_asterisks_in_http_paths = true")
@@ -731,16 +738,17 @@ def _events_for_calls(calls: list[dict], cache: dict[tuple[str, str], tuple[str,
             cache[key] = classification
         action_type, target, verb, object_id = classification
         observation = call["obs"] or ""
+        timeout = call["timeout"] if action_type == "exec" else False
         outcome = _event_outcome(
             action_type,
             observation,
             call["exit_code"],
             call["text_error"],
-            call["timeout"],
+            timeout,
             call["tool_error"],
             verb,
         )
-        error_signature = call["error_signature"]
+        error_signature = call["error_signature"] if action_type == "exec" else ""
         if outcome == "err" and not error_signature:
             error_signature = "err:unknown"
         events.append(

@@ -7,6 +7,7 @@ from pathlib import Path
 import duckdb
 
 from ..db import connect
+from ..redact import redact_text
 from .normalize import (
     TEXT_ERROR_RE,
     TIMEOUT_RE,
@@ -141,7 +142,7 @@ def write_sessions(
                     action, target, verb, object_id = _classify(
                         call.tool_name, call.raw_target, ""
                     )
-                observation = call.observation or ""
+                observation = redact_text(call.observation or "")
                 exit_code = (
                     call.exit_code
                     if call.exit_code is not None
@@ -157,7 +158,7 @@ def write_sessions(
                 )
                 if call.is_error is True:
                     outcome = "err"
-                elif call.is_error is False and outcome == "unknown":
+                elif call.is_error is False:
                     outcome = "ok"
                 if outcome == "err":
                     error_signature = _error_signature(
@@ -297,7 +298,11 @@ def _flush_sessions(con: duckdb.DuckDBPyConnection, sessions: list[dict]) -> Non
         con,
         "new_sessions",
         [
-            (s["session_id"], s["repo"], s["instance_id"], s["resolved"], s["total_turns"], s.get("source_ref", ""), s.get("started_at"))
+            (
+                s["session_id"], s["repo"], s["instance_id"], s["resolved"],
+                s["total_turns"], s.get("source", ""), s.get("source_ref", ""),
+                s.get("started_at"),
+            )
             for s in sessions
         ],
     )

@@ -126,6 +126,7 @@ Useful options:
 ```bash
 trace2rules ingest                         # ~, all detected local stores
 trace2rules ingest --format swe-rebench    # opt into the public dataset
+trace2rules ingest --format open-swe --repos owner/name
 trace2rules ingest --source PATH --limit 200
 trace2rules exact --length 4 --per-repo 2
 trace2rules patterns --top 10
@@ -184,7 +185,7 @@ Supported ingestion formats:
 
 | Format | What it reads |
 |---|---|
-| `open-swe` | [nvidia/Open-SWE-Traces](https://huggingface.co/datasets/nvidia/Open-SWE-Traces) parquet, opt-in and cached locally |
+| `open-swe` | [nvidia/Open-SWE-Traces](https://huggingface.co/datasets/nvidia/Open-SWE-Traces) parquet, cached locally; `--repos owner/name` is required |
 | `swe-rebench` | [nebius/SWE-rebench-openhands-trajectories](https://huggingface.co/datasets/nebius/SWE-rebench-openhands-trajectories) parquet, opt-in and cached locally |
 | `agent-trajectory` | Local Claude Code, Codex, Pi, OMP, OpenCode SQLite/JSON |
 

@@ -32,7 +32,7 @@ app = typer.Typer(add_completion=False, no_args_is_help=True, help="Mine coding-
 def _ingest_command(
     repos: Annotated[
         list[str] | None,
-        typer.Option("--repos", "-r", help="instance_id prefixes for swe-rebench."),
+        typer.Option("--repos", "-r", help="instance_id prefixes for swe-rebench; owner/name labels for open-swe."),
     ] = None,
     format: Annotated[
         str,
@@ -76,6 +76,8 @@ def _ingest_command(
     failed_sources: list[tuple[str, Exception]] = []
     if repos and fmt not in {"swe-rebench", "open-swe"}:
         raise typer.BadParameter("--repos is only valid with --format swe-rebench or open-swe.")
+    if fmt == "open-swe" and not repos:
+        raise typer.BadParameter("--repos owner/name is required for --format open-swe.")
     if fmt in {"swe-rebench", "open-swe"}:
         prefixes = repos or DEFAULT_REPOS
         from .ingest import OPEN_SWE_SOURCE

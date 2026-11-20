@@ -13,6 +13,7 @@ from ..agents import audit_payload, resolve_agents
 from ..cli_common import _ensure_local_sessions, _repo_matches_cwd, console
 from ..db import DB_PATH, connect
 from ..patterns import mine_sequences
+from ..redact import redact_value
 from ..synthesis.models import DEFAULT_MAX_RULES
 
 
@@ -62,6 +63,17 @@ def _report_command(
         repo_rows = con.execute(
             "SELECT repo, count(*) FROM sessions GROUP BY repo ORDER BY repo"
         ).fetchall()
+        if agents is not None and repo is None:
+            from ..ingest.sources.agent_trajectory import _repo_from_cwd
+
+            inferred = _repo_from_cwd(str(agents.parent))
+            matches = [
+                name
+                for name, _count in repo_rows
+                if name == inferred or name.rsplit("/", 1)[-1] == inferred
+            ]
+            if len(matches) == 1:
+                repo = matches[0]
 
         from ..mining.sequences import exact_sequences
         from ..mining.mine import mine as mine_friction
@@ -139,8 +151,9 @@ def _report_command(
                     ).fetchone()
                     if cwd_row and Path(cwd_row[0]).is_dir():
                         repo_root = Path(cwd_row[0])
+                safe_repo = repo_name.replace("\n", " ").replace("\r", " ")
                 chunks.append(
-                    f"# Repository: {repo_name}\n\n"
+                    f"# Repository: {safe_repo}\n\n"
                     + _prompt(
                         selected_findings,
                         repo_name,
@@ -154,10 +167,11 @@ def _report_command(
             else:
                 out_dir.mkdir(parents=True, exist_ok=True)
                 for repo_name, _count in repo_rows:
-                    safe = repo_name.replace("/", "__").replace("\\", "__")
+                    safe_repo = repo_name.replace("\n", " ").replace("\r", " ")
+                    safe = repo_name.replace("/", "__").replace("\\", "__").replace("\n", " ").replace("\r", " ")
                     path = out_dir / f"{safe}.md"
                     prompt_text = next(
-                        chunk for chunk in chunks if chunk.startswith(f"# Repository: {repo_name}\n")
+                        chunk for chunk in chunks if chunk.startswith(f"# Repository: {safe_repo}\n")
                     )
                     path.write_text(prompt_text, encoding="utf-8")
                     print(f"wrote {path}", file=sys.stderr)
@@ -184,7 +198,7 @@ def _report_command(
             ],
             "patterns": [asdict(pattern) for pattern in patterns],
         }
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(json.dumps(redact_value(payload), indent=2))
     finally:
         con.close()
 

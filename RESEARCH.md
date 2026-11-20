@@ -277,7 +277,8 @@ command strings.
 
 The n-gram miner is anchored at error-ending windows and exact-sequence output
 is balanced per repository to prevent one large transcript from monopolizing the
-view.
+view. Attribute patterns also allow a small number of skipped events and include
+exception families, so one extra read does not erase a shared failure workflow.
 
 ## Caveats
 

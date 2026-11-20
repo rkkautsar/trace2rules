@@ -24,6 +24,7 @@ from trace2rules.mining import (
     shrinking_test_suites,
 )
 from trace2rules.mining.core import _context_advice, normalize_event_token
+from trace2rules.patterns import mine_attribute_patterns
 
 
 def _patch_windows(monkeypatch) -> None:
@@ -358,6 +359,38 @@ def test_sequence_tokens_normalize_commands_and_paths() -> None:
     assert normalize_event_token("exec", "cat", "README.md", "README.md", "cat README.md", "ok") == "exec:cat:ok"
     assert normalize_event_token("edit", "edit", "tests/test_a.py", "x", "x", "ok") == "edit:test:ok"
     assert normalize_event_token("read", "read", "src/a.py:1-20", "x", "x", "ok") == "read:source:ok"
+
+
+def test_attribute_patterns_allow_small_gaps() -> None:
+    con = duckdb.connect()
+    con.execute(
+        "CREATE TABLE tool_events (session_id VARCHAR, step_idx INTEGER, segment_idx INTEGER, "
+        "repo VARCHAR, action_type VARCHAR, verb VARCHAR, object_id VARCHAR, target VARCHAR, "
+        "raw_target VARCHAR, outcome VARCHAR, approx_out_tokens INTEGER, error_signature VARCHAR)"
+    )
+    for session in ("s0", "s1"):
+        con.execute(
+            "INSERT INTO tool_events VALUES (?, 1, 0, 'acme/repo', 'edit', 'edit', "
+            "'tests/test_a.py', 'tests/test_a.py', 'x', 'ok', 10, '')",
+            [session],
+        )
+        con.execute(
+            "INSERT INTO tool_events VALUES (?, 2, 0, 'acme/repo', 'read', 'read', "
+            "'src/a.py', 'src/a.py', 'x', 'ok', 10, '')",
+            [session],
+        )
+        con.execute(
+            "INSERT INTO tool_events VALUES (?, 3, 0, 'acme/repo', 'exec', 'pytest', "
+            "'pytest', 'pytest tests/test_a.py', 'pytest tests/test_a.py', 'err', 10, "
+            "'exception:AssertionError')",
+            [session],
+        )
+    patterns = mine_attribute_patterns(con, max_gap=2, min_sessions=2)
+    assert any(
+        "edit:test:ok" in pattern.sequence
+        and "exec:pytest:err:AssertionError" in pattern.sequence
+        for pattern in patterns
+    )
 
 
 def test_context_advice_distinguishes_test_output_from_repo_entrypoint() -> None:

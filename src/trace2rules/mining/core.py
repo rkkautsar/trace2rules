@@ -51,6 +51,17 @@ def _path_class(path: str) -> str:
 
 
 
+def _error_suffix(outcome: str, error_family: str) -> str:
+    if outcome != "err" or not error_family:
+        return ""
+    if error_family.startswith(("exit:", "err:")):
+        return ""
+    family = re.sub(r"^(?:exception|err):", "", error_family).strip()
+    if not family or family.isdigit():
+        return ""
+    return f":{family[:80]}"
+
+
 def normalize_event_token(
     action: str,
     verb: str,
@@ -58,6 +69,7 @@ def normalize_event_token(
     target: str,
     raw_target: str,
     outcome: str,
+    error_family: str = "",
 ) -> str:
     """Coarse, shareable token for sequence mining.
 
@@ -79,9 +91,11 @@ def normalize_event_token(
             first = f"{first}:{second}"
         if first in {"curl", "wget"}:
             first = "network"
-        return f"exec:{first}:{outcome}"
+        suffix = _error_suffix(outcome, error_family)
+        return f"exec:{first}:{outcome}{suffix}"
     if action in {"read", "search", "edit"}:
-        return f"{action}:{_path_class(object_id or target)}:{outcome}"
+        suffix = _error_suffix(outcome, error_family)
+        return f"{action}:{_path_class(object_id or target)}:{outcome}{suffix}"
     return f"{action}:{(verb or 'unknown').lower()}:{outcome}"
 
 

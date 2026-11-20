@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from itertools import combinations
 
 import duckdb
 
@@ -146,3 +147,99 @@ def mine_sequences(
         reverse=True,
     )
     return kept[:top]
+
+
+def _attribute_token(
+    action: str,
+    verb: str,
+    object_id: str,
+    target: str,
+    raw_target: str,
+    outcome: str,
+    error_family: str,
+) -> str:
+    return normalize_event_token(
+        action, verb, object_id, target, raw_target, outcome, error_family
+    )
+
+
+def mine_attribute_patterns(
+    con: duckdb.DuckDBPyConnection,
+    min_sessions: int = 3,
+    max_len: int = 5,
+    max_gap: int = 2,
+    top: int = 25,
+) -> list[SequencePattern]:
+    """Mine error-anchored sequences with normalized attributes and small gaps.
+
+    Each pattern ends at an error event. Non-error events may be skipped up to
+    max_gap so one extra read does not erase an otherwise shared workflow.
+    """
+    rows = con.execute(
+        """
+        SELECT session_id, step_idx, segment_idx, repo, action_type, verb,
+               object_id, target, raw_target, outcome, approx_out_tokens,
+               error_signature
+        FROM tool_events
+        WHERE action_type <> 'other' AND target <> ''
+        ORDER BY session_id, step_idx
+        """
+    ).fetchall()
+    sessions: dict[str, list[tuple]] = defaultdict(list)
+    for row in rows:
+        sessions[row[0]].append(row)
+
+    aggregates: dict[tuple[str, ...], dict] = {}
+    for session_id, events in sessions.items():
+        tokens = [
+            _attribute_token(
+                event[4], event[5], event[6], event[7], event[8], event[9], event[11]
+            )
+            for event in events
+        ]
+        for end, event in enumerate(events):
+            if event[9] != "err":
+                continue
+            for length in range(2, max_len + 1):
+                start = max(0, end - (length - 1) * (max_gap + 1))
+                for indices in combinations(range(start, end), length - 1):
+                    if not all(
+                        indices[i] - indices[i - 1] <= max_gap + 1
+                        for i in range(1, len(indices))
+                    ):
+                        continue
+                    sequence = tuple(tokens[i] for i in (*indices, end))
+                    if len({event[2] for event in (events[i] for i in (*indices, end))}) > 1:
+                        continue
+                    agg = aggregates.setdefault(
+                        sequence,
+                        {"sessions": set(), "occurrences": 0, "tokens": 0, "repos": set(), "example": ""},
+                    )
+                    agg["sessions"].add(session_id)
+                    agg["repos"].update(events[i][3] for i in (*indices, end))
+                    agg["occurrences"] += 1
+                    agg["tokens"] += sum(events[i][10] for i in (*indices, end))
+                    if not agg["example"]:
+                        agg["example"] = " -> ".join(
+                            (events[i][8] or events[i][7] or "").replace("\x00", " ")[:80]
+                            for i in (*indices, end)
+                        )
+
+    patterns = [
+        SequencePattern(
+            sequence=" -> ".join(sequence),
+            sessions=len(value["sessions"]),
+            occurrences=value["occurrences"],
+            tokens=value["tokens"],
+            repos=tuple(sorted(value["repos"])),
+            example=value["example"],
+            anchored_sessions=len(value["sessions"]),
+            failure_rate=1.0,
+        )
+        for sequence, value in aggregates.items()
+        if len(value["sessions"]) >= min_sessions
+    ]
+    patterns.sort(
+        key=lambda pattern: (pattern.sessions, pattern.tokens), reverse=True
+    )
+    return patterns[:top]

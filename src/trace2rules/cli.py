@@ -26,7 +26,6 @@ from .commands.audit import _audit_command
 from .commands.holdout import _holdout_command
 from .db import DB_PATH, connect
 from .ingest import DEFAULT_REPOS, SOURCE, ingest as ingest_traces
-from .patterns import mine_sequences
 
 load_dotenv(Path.cwd() / ".env")
 
@@ -540,7 +539,8 @@ app.command("doctor")(_doctor_command)
 def _patterns_command(
     top: Annotated[int, typer.Option(help="Patterns to show.")] = 25,
     min_sessions: Annotated[int, typer.Option(help="Minimum session support.")] = 3,
-    max_len: Annotated[int, typer.Option(help="Maximum sequence length.")] = 4,
+    max_len: Annotated[int, typer.Option(help="Maximum sequence length.")] = 5,
+    max_gap: Annotated[int, typer.Option(help="Maximum skipped events between pattern steps.")] = 2,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     con = connect(db)
@@ -549,10 +549,14 @@ def _patterns_command(
         if session_count == 0:
             console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
             raise typer.Exit(1)
-        patterns = mine_sequences(
+        from .patterns import mine_attribute_patterns
+
+        patterns = mine_attribute_patterns(
             con,
             min_sessions=min_sessions,
             max_len=max_len,
+            max_gap=max_gap,
+            top=top,
         )
         table = Table(title="Semantic friction sequences", header_style="bold", expand=True)
         table.add_column("#", width=3)

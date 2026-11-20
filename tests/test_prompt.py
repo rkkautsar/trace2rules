@@ -134,3 +134,56 @@ def test_pattern_window_includes_successful_recovery() -> None:
         "acme/repo",
     )
     assert "step 5 · exec pytest — ok" in prompt
+
+
+def test_selection_dedupes_prevention_against_setup_heuristic() -> None:
+    from trace2rules.mining import Finding
+    from trace2rules.synthesis.selection import select_findings
+
+    prevention = Finding(
+        kind="prevention_delta",
+        repo="acme/repo",
+        title="pip install -e . before pytest",
+        sessions=12,
+        tokens=1000,
+        paired_instances=4,
+    )
+    environment = Finding(
+        kind="environment_thrash",
+        repo="acme/repo",
+        title="repeated dependency/environment setup",
+        sessions=30,
+        tokens=5000,
+    )
+    selected = select_findings(
+        [],
+        {"prevention_delta": [prevention], "environment_thrash": [environment]},
+        "acme/repo",
+    )
+    assert [finding.kind for finding in selected] == ["prevention_delta"]
+
+
+def test_selection_dedupes_same_prevention_action_across_entities() -> None:
+    from trace2rules.mining import Finding
+    from trace2rules.synthesis.selection import select_findings
+
+    first = Finding(
+        kind="prevention_delta",
+        repo="acme/repo",
+        title="pip install -e . before pytest",
+        sessions=12,
+        tokens=1000,
+    )
+    second = Finding(
+        kind="prevention_delta",
+        repo="acme/repo",
+        title="pip install -e . before python",
+        sessions=8,
+        tokens=500,
+    )
+    selected = select_findings(
+        [],
+        {"prevention_delta": [first, second]},
+        "acme/repo",
+    )
+    assert [finding.kind for finding in selected] == ["prevention_delta"]

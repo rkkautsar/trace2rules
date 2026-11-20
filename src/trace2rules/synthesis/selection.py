@@ -86,6 +86,15 @@ def _candidate_score(finding: Finding) -> float:
     return score
 
 
+def _action_key(finding: Finding) -> tuple[str, str, str] | None:
+    if finding.kind == "prevention_delta":
+        delta = finding.title.split(" before ", 1)[0].strip().lower()
+        return finding.repo, "setup", delta
+    if finding.kind == "environment_thrash":
+        return finding.repo, "setup", "*"
+    return None
+
+
 def select_findings(
     exact: list[Finding],
     mined: dict[str, list[Finding]],
@@ -122,7 +131,6 @@ def select_findings(
         "correction_loop",
         "test_regression",
         "test_shrink",
-        "attribute_pattern",
         "prevention_delta",
     ):
         candidates.extend(
@@ -141,20 +149,36 @@ def select_findings(
             )
         )
     candidates.sort(key=_candidate_score, reverse=True)
+    specific_setup = {
+        finding.repo for finding in candidates if finding.kind == "prevention_delta"
+    }
     selected: list[Finding] = []
     per_kind: dict[str, int] = {}
     seen_titles: set[tuple[str, str]] = set()
+    seen_actions: set[tuple[str, str, str]] = set()
     validation_family = {"premature_completion", "low_validation"}
     family_selected = 0
     for finding in candidates:
         key = (finding.kind, finding.title)
-        if key in seen_titles or per_kind.get(finding.kind, 0) >= 2:
+        if (
+            key in seen_titles
+            or per_kind.get(finding.kind, 0) >= 2
+            or (
+                finding.kind == "environment_thrash"
+                and finding.repo in specific_setup
+            )
+        ):
+            continue
+        action_key = _action_key(finding)
+        if action_key is not None and action_key in seen_actions:
             continue
         if finding.kind in validation_family:
             if family_selected:
                 continue
             family_selected += 1
         seen_titles.add(key)
+        if action_key is not None:
+            seen_actions.add(action_key)
         per_kind[finding.kind] = per_kind.get(finding.kind, 0) + 1
         selected.append(finding)
         if len(selected) >= limit:

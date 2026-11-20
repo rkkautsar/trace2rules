@@ -6,53 +6,43 @@ import duckdb
 
 from ..core import _representative_window
 from ..models import Finding
+from ..repetition import repetition_findings
 
 
 def edit_churn(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
-    query = """
-        WITH per_session AS (
-            SELECT repo, target, session_id, count(*) AS edits,
-                   sum(approx_out_tokens) AS tokens
-            FROM tool_events
-            WHERE action_type = 'edit' AND target NOT IN ('', '.')
-            GROUP BY repo, target, session_id
-            HAVING count(*) >= 3
-        )
-        SELECT repo, target,
-               count(*) AS sessions,
-               sum(edits) AS edits,
-               sum(tokens) AS tokens,
-               arg_max(session_id, edits) AS example_session
-        FROM per_session
-        GROUP BY repo, target
-        HAVING count(*) >= 2
-        ORDER BY sessions DESC, edits DESC
-    """
-    if limit is not None:
-        query += f" LIMIT {int(limit)}"
     findings: list[Finding] = []
-    for repo, target, sessions, edits, tokens, session in con.execute(query).fetchall():
+    for item in repetition_findings(
+        con,
+        "edit",
+        per_session_min=3,
+        total_min=3,
+        sessions_min=2,
+    ):
         step = con.execute(
             "SELECT min(step_idx) FROM tool_events WHERE session_id = ? AND target = ? AND action_type = 'edit'",
-            [session, target],
+            [item.example_session, item.target],
         ).fetchone()[0]
-        scratch = bool(re.search(r"(?i)(reproduce|repro|scratch|debug|verify)", target))
+        scratch = bool(
+            re.search(r"(?i)(reproduce|repro|scratch|debug|verify)", item.target)
+        )
         recommendation = (
-            f"Stop patching `{target[:100]}`; fix the product path or the test input instead."
+            f"Stop patching `{item.target[:100]}`; fix the product path or the test input instead."
             if scratch
-            else f"Inspect `{target[:100]}` before each edit and batch related changes instead of repeated rewrites."
+            else f"Inspect `{item.target[:100]}` before each edit and batch related changes instead of repeated rewrites."
         )
         findings.append(
             Finding(
                 kind="edit_churn",
-                repo=repo,
-                title=target,
-                sessions=sessions,
-                tokens=int(tokens or 0),
-                detail=f"{edits} edits across {sessions} sessions",
+                repo=item.repo,
+                title=item.target,
+                sessions=item.sessions,
+                tokens=item.tokens,
+                detail=f"{item.actions} edits across {item.sessions} sessions",
                 recommendation=recommendation,
                 side="agent",
-                window=_representative_window(con, session, int(step or 0)),
+                window=_representative_window(
+                    con, item.example_session, int(step or 0)
+                ),
             )
         )
-    return findings
+    return findings[:limit] if limit is not None else findings

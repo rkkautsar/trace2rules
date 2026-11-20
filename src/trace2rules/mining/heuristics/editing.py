@@ -14,33 +14,39 @@ from ..core import (
     _repo_window,
 )
 from ..models import Finding
+from ..repetition import repetition_findings
 
 def stuck_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
-    query = """
-        SELECT repo, target, count(*) AS edits, count(DISTINCT session_id) AS sessions,
-               sum(approx_out_tokens) AS tokens, any_value(error_family) AS family
-        FROM tool_events
-        WHERE action_type = 'edit' AND target <> '' AND target NOT LIKE '<%'
-        GROUP BY 1, 2
-        HAVING count(*) >= 3 AND count(DISTINCT session_id) >= 2
-        ORDER BY edits DESC
-    """
-    if limit is not None:
-        query += f" LIMIT {int(limit)}"
-    return [
+    findings = [
         Finding(
             kind="stuck_loop",
-            repo=repo,
-            title=object_id,
-            sessions=sessions,
-            tokens=int(tokens or 0),
-            detail=f"{edits} edits across {sessions} sessions; recurring family {family or 'unknown'}",
+            repo=item.repo,
+            title=item.target,
+            sessions=item.sessions,
+            tokens=item.tokens,
+            detail=(
+                f"{item.actions} edits across {item.sessions} sessions; "
+                f"recurring family {item.family or 'unknown'}"
+            ),
             side="agent",
             recommendation="After two edits leave the same failure family unchanged, stop editing and read the traceback site or failing test before another patch.",
-            window=_repo_window(con, repo, "action_type = 'edit' AND target = ?", (object_id,)),
+            window=_repo_window(
+                con,
+                item.repo,
+                "action_type = 'edit' AND target = ?",
+                (item.target,),
+            ),
         )
-        for repo, object_id, edits, sessions, tokens, family in con.execute(query).fetchall()
+        for item in repetition_findings(
+            con,
+            "edit",
+            per_session_min=None,
+            total_min=3,
+            sessions_min=2,
+            include_family=True,
+        )
     ]
+    return findings[:limit] if limit is not None else findings
 
 def site_edit_mismatch(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     rows = con.execute(

@@ -8,37 +8,33 @@ Status: beta. The output is a proposal, not an automatically applied `AGENTS.md`
 
 ## Quick start
 
-Audit the current checkout:
+Paste this into your coding agent to audit the current checkout:
+
+```text
+Install trace2rules if missing (`uv tool install trace2rules`). Audit this repo's AGENTS.md and CLAUDE.md against my local sessions with `trace2rules audit`. Report unobserved, violated, and unenforced rules, and propose existing CI/pre-commit checks without duplicating configured enforcement.
+```
+
+Or run the audit manually:
 
 ```bash
 trace2rules audit
 trace2rules audit --prompt > audit.txt
 ```
 
-Or paste this into your coding agent:
+Paste this into your coding agent to mine your local sessions:
 
 ```text
-Install trace2rules if missing (`uv tool install trace2rules`). Audit this repo's AGENTS.md and CLAUDE.md against my local sessions with `trace2rules audit`. Report unobserved, violated, and unenforced rules, and propose existing CI/pre-commit checks without duplicating configured enforcement.
+Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules run --out-dir reports/` for my local agent sessions. Read the report files and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
 ```
 
-Mine your local sessions and write one report prompt per detected repo:
+Or run it manually:
 
 ```bash
 uv tool install trace2rules
 trace2rules run --out-dir reports/
 ```
 
-Or paste this into your coding agent:
-
-```text
-Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules run --out-dir reports/` for my local agent sessions. Read the report files and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
-```
-
-Include an existing `AGENTS.md` audit in each prompt:
-
-```bash
-trace2rules run --out-dir reports/ --agents AGENTS.md
-```
+An existing `AGENTS.md` or `CLAUDE.md` in a session’s `cwd` is discovered automatically and included in that repo’s prompt. Use `--agents PATH` only to override discovery from a different checkout.
 
 Then give `reports/*.md` to your own coding agent to synthesize the rules. `run` ingests local sessions automatically when the database is empty. `trace2rules synthesize --report reports/acme__repo.md` is an optional thin wrapper for the same prompt.
 
@@ -138,9 +134,8 @@ trace2rules audit --agents AGENTS.md
 trace2rules audit --agents AGENTS.md --commit HEAD --json
 trace2rules audit --agents AGENTS.md --prompt
 trace2rules holdout --agents AGENTS.md --fraction 0.3
-trace2rules report --prompt --agents AGENTS.md
 trace2rules report --prompt --min-support 5
-trace2rules run --out-dir reports/ --agents AGENTS.md
+trace2rules run --out-dir reports/
 ```
 
 ## Local sessions

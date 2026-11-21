@@ -223,6 +223,7 @@ def audit_agents(
     since: datetime | None = None,
     until: datetime | None = None,
     root: Path | None = None,
+    source_scope: str | None = None,
 ) -> list[RuleAudit]:
     filters = ["e.repo = ?"]
     params: list[Any] = [repo]
@@ -257,7 +258,7 @@ def audit_agents(
     audits: list[RuleAudit] = []
     for rule in rules:
         _normalize_rule_paths(rule, root)
-        rule.source_scope = _source_scope(rule.source_path, root)
+        rule.source_scope = source_scope or _source_scope(rule.source_path, root)
         observed = 0
         applicable = 0
         compliant = 0
@@ -284,14 +285,7 @@ def audit_agents(
                 if action == "edit" and outcome not in ("err", "timeout")
             ]
             created_steps = new_file_steps.get(session_id, set())
-            edit_events = [
-                (step, target)
-                for step, target in all_edit_events
-                if step not in created_steps
-            ]
-            if all_edit_events and not edit_events:
-                not_applicable += 1
-                continue
+            edit_events = all_edit_events
             if scope:
                 edit_events = [
                     (step, target)
@@ -305,6 +299,11 @@ def audit_agents(
             )
             if matched and rule.category not in {
                 "test_command",
+                "validation",
+                "command",
+                "path_scope",
+                "git_workflow",
+                "commit_hygiene",
                 "ordering",
                 "read_before_edit",
                 "read_hygiene",
@@ -374,8 +373,19 @@ def audit_agents(
                 examples.extend(outcome.examples)
             elif rule.category in {"read_before_edit", "read_hygiene"}:
                 if rule.category == "read_before_edit":
+                    read_edits = [
+                        (step, target)
+                        for step, target in edit_events
+                        if step not in created_steps
+                        and target not in {"", "."}
+                        and " " not in target
+                        and not target.startswith(("xd:", "proc:", "agent:", "mcp:", "http://", "https://"))
+                    ]
+                    if edit_events and not read_edits:
+                        not_applicable += 1
+                        continue
                     outcome = evaluate_read_before_edit(
-                        rule, events, edit_events, _is_source_read
+                        rule, events, read_edits, _is_source_read
                     )
                 else:
                     outcome = evaluate_read_hygiene(
@@ -472,7 +482,10 @@ def audit_agents(
             followed = compliant
             undecided = undecided_count
             violations = max(applicable - followed - undecided, 0)
-        elif rule.category in {"hook_bypass", "read_hygiene", "read_before_edit", "ordering"}:
+        elif rule.category in {
+            "hook_bypass", "git_workflow", "commit_hygiene", "command",
+            "path_scope", "read_hygiene", "read_before_edit", "ordering",
+        }:
             followed = compliant
             undecided = max(applicable - followed - violations, 0)
         elif rule.category == "context_hygiene":
@@ -754,6 +767,7 @@ def audit_payload(
     since: datetime | None = None,
     until: datetime | None = None,
     root: Path | None = None,
+    source_scope: str | None = None,
 ) -> dict[str, Any]:
     raw_paths = (
         [Path(path)]
@@ -801,6 +815,7 @@ def audit_payload(
         since=since,
         until=until,
         root=root,
+        source_scope=source_scope,
     )
     return {
         "repo": repo,

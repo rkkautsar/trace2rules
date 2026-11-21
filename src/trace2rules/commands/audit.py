@@ -90,6 +90,12 @@ def _audit_command(
     if not repo_agents:
         repo_agents = [agent_paths[0]]
         repo_root = _agents_root(agent_paths[0].resolve().parent)
+    if proposal is not None:
+        cwd_root = _agents_root(Path.cwd())
+        if (cwd_root / ".git").exists() and (
+            repo_root is None or not (repo_root / ".git").exists()
+        ):
+            repo_root = cwd_root
     agents = repo_agents[0]
     def parse_time(value: str | None) -> datetime | None:
         if value is None:
@@ -107,12 +113,12 @@ def _audit_command(
         if con.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0:
             console.print("[red]No sessions in the database. Run `trace2rules ingest` first.[/red]")
             raise typer.Exit(1)
-        repo = _resolve_repo_label(
-            con,
-            repo,
-            agents.parent.name,
-            agents.parent.resolve().name,
+        repoNames = (
+            (Path.cwd().name, repo_root.name if repo_root else "", agents.parent.name)
+            if proposal is not None
+            else (agents.parent.name, agents.parent.resolve().name)
         )
+        repo = _resolve_repo_label(con, repo, *repoNames)
         if commit:
             if len(agent_paths) > 1:
                 console.print("[red]--commit supports one AGENTS.md/CLAUDE.md; pass --agents.[/red]")
@@ -139,7 +145,7 @@ def _audit_command(
                     if coverage[1]:
                         if since_dt is None:
                             since_dt = committed_at
-                        payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt, root=repo_root)
+                        payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt, root=repo_root, source_scope="repo" if proposal is not None else None)
                         payload["commit"] = sha
                         payload["committed_at"] = committed_at.isoformat()
                         if coverage[1] < coverage[0]:
@@ -148,7 +154,7 @@ def _audit_command(
                                 f"{coverage[0] - coverage[1]} sessions have no timestamp and were excluded."
                             )
                     else:
-                        payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt, root=repo_root)
+                        payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt, root=repo_root, source_scope="repo" if proposal is not None else None)
                         payload["commit"] = sha
                         payload["committed_at"] = committed_at.isoformat()
                         payload["warning"] = (
@@ -156,10 +162,10 @@ def _audit_command(
                             "instead of the latest AGENTS.md commit cutoff."
                         )
                 except (subprocess.CalledProcessError, OSError, ValueError) as error:
-                    payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt, root=repo_root)
+                    payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt, root=repo_root, source_scope="repo" if proposal is not None else None)
                     payload["warning"] = f"Could not resolve latest AGENTS.md commit: {error}"
             else:
-                payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt, root=repo_root)
+                payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt, root=repo_root, source_scope="repo" if proposal is not None else None)
     finally:
         con.close()
     if prompt_output:

@@ -6,10 +6,10 @@ from typing import Any
 from .common import AuditOutcome
 
 _FORBIDDEN = (
-    (r"\bgit\s+push\b.*(?:--force|--force-with-lease)", "force push"),
+    (r"\bgit\s+push\b.*(?:--force|--force-with-lease)|\bforce[- ]push\b", "force push"),
     (r"\bgit\s+reset\b.*--hard", "git reset --hard"),
     (r"\bgit\s+clean\b", "git clean"),
-    (r"\b(?:npm|cargo|pdm|poetry)\s+publish\b", "package publish"),
+    (r"\b(?:npm|cargo|pdm|poetry)\s+publish\b|\btwine\s+upload\b|\bpublish\s+to\b", "package publish"),
     (r"\bgh\s+release\b", "release command"),
 )
 

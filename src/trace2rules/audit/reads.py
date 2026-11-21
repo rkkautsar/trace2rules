@@ -78,8 +78,7 @@ def _is_source_read(action: str, raw: str, target: str, edited: str) -> bool:
     candidates = [target, *re.findall(r"[\w./-]+\.(?:py|ts|tsx|js|jsx|rs|go|java|kt|cs|rb|php|swift)", raw)]
     edited_path = Path(_read_candidate(edited))
     has_source = any(
-        Path(_read_candidate(path)).suffix in _READ_SUFFIXES
-        and _same_source_path(Path(_read_candidate(path)), edited_path)
+        _same_source_path(Path(_read_candidate(path)), edited_path)
         for path in candidates
     )
     if not has_source:

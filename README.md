@@ -46,10 +46,10 @@ On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` 
 
 | Rule | Coverage | Followed | Violations | Confidence | Enforcement |
 |---|---|---:|---|---|---|
-| Read the codebase before editing | measured | 119 | 66/185 (36%) | high | guidance only |
-| Verify assumptions against source/tests | measured | 119 | 66/185 (36%) | high | guidance only |
-| Use `gh` for GitHub data | measured | 0 | 6/24 (25%) | medium | missing |
-| Commit frequently | measured | 0 | 52/188 (28%) | high | missing |
+| Read the codebase before editing | measured | 123 | 62/185 (34%) | high | guidance only |
+| Verify assumptions against source/tests | measured | 123 | 62/185 (34%) | high | guidance only |
+| Use `gh` for GitHub data | measured | 18 | 6/24 (25%) | medium | missing |
+| Commit frequently | measured | 136 | 52/188 (28%) | high | unknown |
 | `--no-verify` guard | partial | 13 | 1/14 (7%) | low | missing |
 | `git commit` only after `git add` | measured | 8 | 6/14 (43%) | low | guidance only |
 | Submodule update before tests | measured | 0 | 32/32 (100%) | medium | guidance only |
@@ -65,7 +65,7 @@ On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` 
 - [guidance] Keep `src/trace2rules/cli.py` limited to Typer wiring and option parsing; put non-CLI logic in a dedicated module under `src/trace2rules/`.
 - [guidance] When adding, renaming, or removing a CLI command or option in `src/trace2rules/cli.py`, update the matching row in the `README.md` command table in the same change.
 
-The latest synthesis also proposed a read-target rule; `audit --proposal` marked it `reword` (10 violations across 16 opportunities), so it is omitted from this example.
+The latest synthesis also proposed a read-target rule; `audit --proposal` marked it `reword` (5 violations across 13 opportunities), so it is omitted from this example.
 
 ## Scope
 

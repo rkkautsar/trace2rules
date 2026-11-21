@@ -228,3 +228,35 @@ def test_synthesis_proposal_markdown_is_parseable() -> None:
 """
     rules = parse_agents_text(text, "proposal.md")
     assert [rule.category for rule in rules] == ["architecture_map", "read_before_edit"]
+
+
+def test_numbered_rule_does_not_crash_parser() -> None:
+    from trace2rules.audit.parsing import parse_agents_text
+
+    rules = parse_agents_text("# Rules\n1. Run `pytest` now.")
+    assert len(rules) == 1
+    assert rules[0].category == "test_command"
+
+
+def test_proposal_scope_is_repo_when_file_is_outside_checkout(tmp_path: Path) -> None:
+    from trace2rules.audit.engine import audit_payload
+    from trace2rules.db import connect
+    from trace2rules.ingest import write_sessions
+    from trace2rules.models import Session
+
+    db = tmp_path / "scope.duckdb"
+    write_sessions(db, [Session("s", "acme/repo")])
+    proposal = tmp_path / "AGENTS.proposed.md"
+    proposal.write_text("## Validation\n\n- Run `pytest tests/test_api.py` after editing.\n")
+    con = connect(db)
+    try:
+        payload = audit_payload(
+            con,
+            "acme/repo",
+            [proposal],
+            root=tmp_path,
+            source_scope="repo",
+        )
+    finally:
+        con.close()
+    assert [rule["source_scope"] for rule in payload["rules"]] == ["repo"]

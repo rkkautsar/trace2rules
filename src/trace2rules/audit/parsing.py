@@ -28,7 +28,10 @@ def _command_rule(text: str, commands: tuple[str, ...]) -> bool:
     ):
         return False
     for command in commands:
-        token = re.sub(r"^[A-Z_][A-Z0-9_]*=", "", command.strip().split()[0])
+        parts = command.strip().split()
+        if not parts:
+            continue
+        token = re.sub(r"^[A-Z_][A-Z0-9_]*=", "", parts[0])
         token = token.lstrip("(").lower()
         if token in COMMAND_TOKENS:
             return True
@@ -90,8 +93,9 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
     if re.search(r"(?i)(?:--no-verify|skip(?:ping)? (?:the )?pre-commit|pre-commit hook)", lower):
         return "hook_bypass"
     if re.search(
-        r"(?i)(?:force[- ]push|--force-with-lease|git reset --hard|git clean|"
-        r"publish (?:packages?|releases?)|npm publish|cargo publish|gh release)",
+        r"(?i)(?:force[- ]push|--force(?:-with-lease)?\b|git reset --hard|git clean|"
+        r"publish (?:packages?|releases?)|npm publish|cargo publish|pdm publish|"
+        r"poetry publish|twine upload|gh release)",
         lower,
     ):
         return "git_workflow"
@@ -127,8 +131,10 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
         return "validation"
     if TEST_RUN_RE.search(lower) and not NEGATIVE_RULE_RE.search(lower):
         return "test_command"
-    if paths and re.search(
-        r"(?i)\b(?:create|add|register|write|update|modify|put)\b", lower
+    if (
+        paths
+        and not NEGATIVE_RULE_RE.search(lower)
+        and re.match(r"(?i)^(?:create|add|register|write|update|modify|put)\b", lower)
     ):
         return "path_scope"
     if _command_rule(text, tuple(COMMAND_RE.findall(text))) and not paths:
@@ -276,6 +282,7 @@ def parse_agents_text(
             continue
         if stripped.startswith(("**Evidence:**", "**Enforcement:**", "**Source:**")):
             continue
+        explicit_rule = False
         if stripped[0] in "-*":
             text = stripped[1:].strip()
             explicit_rule = text.startswith("**Rule:**")
@@ -290,7 +297,10 @@ def parse_agents_text(
             else:
                 if (
                     not section
-                    or NON_ACTIONABLE_SECTION_RE.search(section)
+                    or (
+                        section.lower() not in SYNTHESIS_CATEGORIES
+                        and NON_ACTIONABLE_SECTION_RE.search(section)
+                    )
                     or not (
                         IMPERATIVE_RE.search(stripped)
                         or COMMAND_RE.search(stripped)

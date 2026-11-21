@@ -36,7 +36,7 @@ def commit_hygiene(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
             SELECT *, CASE
                 WHEN edits >= 8 AND commits = 0 THEN 'no commit after edits'
                 WHEN edits >= 12 AND commits = 1 THEN 'one large commit'
-                WHEN last_commit IS NOT NULL AND last_edit > last_commit THEN 'edits after final commit'
+                WHEN last_commit IS NOT NULL AND last_edit > last_commit AND edits >= 4 THEN 'edits after final commit'
             END AS reason
             FROM per_session
         )

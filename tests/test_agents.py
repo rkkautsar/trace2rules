@@ -1518,6 +1518,8 @@ def test_commit_hygiene_audit_detects_large_uncommitted_streak(tmp_path: Path) -
 def test_audit_payload_sorts_actionable_rules_first(tmp_path: Path) -> None:
     from trace2rules.agents import audit_payload
 
+    (tmp_path / "pyproject.toml").write_text("")
+    (tmp_path / "uv.lock").write_text("")
     path = tmp_path / "AGENTS.md"
     path.write_text(
         "## Dependencies\n\n- Update dependencies only in `pyproject.toml` and commit `uv.lock`.\n\n"
@@ -1540,3 +1542,21 @@ def test_audit_payload_sorts_actionable_rules_first(tmp_path: Path) -> None:
     finally:
         con.close()
     assert payload["rules"][0]["category"] == "test_command"
+
+
+def test_lockfile_rule_flags_direct_edits(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Dependencies\n\n- Never edit `Cargo.lock` by hand.\n")
+    assert parse_agents(path)[0].category == "lockfile"
+    db = tmp_path / "lockfile_audit.duckdb"
+    write_sessions(
+        db,
+        [Session("s", "acme/repo", calls=[ToolCall("Edit", "Cargo.lock", action_type="edit", target="Cargo.lock")])],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.applicable_sessions == 1
+    assert audit.violation_sessions == 1

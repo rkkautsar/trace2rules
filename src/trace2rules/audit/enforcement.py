@@ -23,6 +23,8 @@ def enforcement_for(rule: AgentRule) -> str:
         return "Branch protection, release workflow approval, and protected-branch rules."
     if rule.category == "commit_hygiene":
         return "Pre-commit or CI check for commit cadence/batch size; otherwise guidance only."
+    if rule.category == "lockfile":
+        return "Pre-commit or CI check that lockfiles are regenerated only through the package manager."
     if rule.category == "read_hygiene":
         return "No mechanical enforcement; harness/context-budget hooks can observe reads."
     if rule.category == "read_before_edit":

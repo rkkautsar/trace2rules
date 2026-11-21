@@ -430,3 +430,18 @@ def test_commit_hygiene_finds_edit_streak_without_commit(monkeypatch) -> None:
     assert finding.kind == "commit_hygiene"
     assert finding.sessions == 1
     assert "no commit" in finding.title
+
+
+def test_lockfile_edits_are_mined_without_manifest_change(monkeypatch) -> None:
+    from trace2rules.mining import lockfile_edits
+
+    module = importlib.import_module("trace2rules.mining.heuristics.lockfile")
+    monkeypatch.setattr(module, "_representative_window", lambda *args: ())
+    con = _detector_db(monkeypatch)
+    _add_sessions(con, 1)
+    con.execute(
+        "INSERT INTO tool_events VALUES ('acme/repo', 's0', 1, 'edit', 'Cargo.lock', 'edit', 'ok', 10, '', '', false)"
+    )
+    finding = lockfile_edits(con)[0]
+    assert finding.kind == "lockfile_edit"
+    assert finding.sessions == 1

@@ -11,7 +11,7 @@ EXACT_LENGTHS = (3, 4, 5)
 
 
 class Rule(BaseModel):
-    category: Literal["test_command", "validation", "command", "path_scope", "git_workflow", "commit_hygiene", "architecture_map", "context_hygiene", "convention"]
+    category: Literal["test_command", "validation", "command", "path_scope", "git_workflow", "commit_hygiene", "lockfile", "architecture_map", "context_hygiene", "convention"]
     rule_markdown: str
     evidence_summary: str
     estimated_tokens_saved_per_session: int = Field(ge=0)

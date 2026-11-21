@@ -37,6 +37,10 @@ def _command_rule(text: str, commands: tuple[str, ...]) -> bool:
             return True
     return False
 NEGATIVE_RULE_RE = re.compile(r"(?i)\b(never|do not|don't|avoid)\b")
+LOCKFILE_RE = re.compile(
+    r"(?i)(?:^|/)(?:Cargo\.lock|uv\.lock|pdm\.lock|package-lock\.json|"
+    r"pnpm-lock\.yaml|yarn\.lock)$"
+)
 VALIDATION_RE = re.compile(
     r"(?i)\b(test|tests|lint|typecheck|validate|validation|pytest|cargo test|go test|"
     r"npm test|vitest|jest|pdm (?:run )?test|make (?:unit|test)|check|cargo (?:fmt|clippy))\b"
@@ -105,6 +109,12 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
         lower,
     ):
         return "commit_hygiene"
+    if (
+        paths
+        and NEGATIVE_RULE_RE.search(lower)
+        and any(LOCKFILE_RE.search(path) for path in paths)
+    ):
+        return "lockfile"
     if re.search(
         r"(?i)(?:whole[- ]file|cat -n|nl -ba|read only.*range|context blast|line ranges|full re-read)",
         lower,
@@ -162,7 +172,14 @@ def _make_rule(
         value for value in COMMAND_RE.findall(text)
         if not PATH_RE.fullmatch(value.strip())
     )
-    paths = paths or tuple(dict.fromkeys(PATH_RE.findall(text)))
+    lockfiles = tuple(
+        value.strip()
+        for value in COMMAND_RE.findall(text)
+        if LOCKFILE_RE.fullmatch(value.strip())
+    )
+    paths = paths or tuple(
+        dict.fromkeys((*PATH_RE.findall(text), *lockfiles))
+    )
     keywords = tuple(
         token
         for token in dict.fromkeys(WORD_RE.findall(text))

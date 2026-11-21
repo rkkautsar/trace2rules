@@ -55,6 +55,10 @@ NON_ACTIONABLE_SECTION_RE = re.compile(
     r"entry points|philosophy|key components|project structure|repository layout|"
     r"module layout)"
 )
+SYNTHESIS_CATEGORIES = {
+    "test_command", "validation", "command", "path_scope", "git_workflow",
+    "commit_hygiene", "architecture_map", "context_hygiene", "convention",
+}
 IMPERATIVE_RE = re.compile(
     r"(?i)^(?:run|use|add|keep|avoid|do not|don't|never|make|update|ensure|"
     r"check|prefer|follow|change|remove|write|read|test|install|validate|set|"
@@ -103,7 +107,10 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
     ):
         return "read_hygiene"
     if re.search(
-        r"(?i)(?:read (?:the )?codebase|read (?:lots of |more )?source|verify assumptions.*read|read(?:ing)? (?:source|fixtures))",
+        r"(?i)(?:read (?:the )?codebase|read (?:lots of |more )?source|"
+        r"verify assumptions.*read|read(?:ing)? (?:source|fixtures)|"
+        r"read (?:the )?(?:target|file).*before (?:editing|edit)|"
+        r"before (?:editing|edit).*\bread\b)",
         lower,
     ):
         return "read_before_edit"
@@ -261,11 +268,20 @@ def parse_agents_text(
             continue
         if not stripped:
             continue
-        if section and NON_ACTIONABLE_SECTION_RE.search(section):
+        if (
+            section
+            and section.lower() not in SYNTHESIS_CATEGORIES
+            and NON_ACTIONABLE_SECTION_RE.search(section)
+        ):
+            continue
+        if stripped.startswith(("**Evidence:**", "**Enforcement:**", "**Source:**")):
             continue
         if stripped[0] in "-*":
             text = stripped[1:].strip()
-            if text.startswith(("*", "**")):
+            explicit_rule = text.startswith("**Rule:**")
+            if explicit_rule:
+                text = text[len("**Rule:**"):].strip()
+            elif text.startswith(("*", "**")):
                 continue
         else:
             numbered = re.match(r"^\d+[.)]\s+(.*)", stripped)
@@ -287,7 +303,8 @@ def parse_agents_text(
             if OPTIONAL_RULE_RE.search(clause):
                 continue
             if (
-                not IMPERATIVE_RE.search(clause)
+                not explicit_rule
+                and not IMPERATIVE_RE.search(clause)
                 and not RULE_CUE_RE.search(clause)
                 and not COMMAND_RE.search(clause)
             ):

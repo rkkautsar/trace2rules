@@ -20,22 +20,8 @@ Or run the audit manually:
 trace2rules audit
 trace2rules audit --prompt > audit.txt
 ```
-The output is a proposal, not an automatically applied `AGENTS.md`.
 
 Paste this into your coding agent to mine your local sessions:
-
-
-```text
-
-
-Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules run --out-dir reports/` for my local agent sessions. Read the report files and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
-```bash
-trace2rules audit
-trace2rules audit --prompt > audit.txt
-```
-
-Paste this into your coding agent to mine your local sessions:
-Or run it manually:
 
 ```text
 Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules run --out-dir reports/` for my local agent sessions. Read the report files and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
@@ -56,59 +42,31 @@ Then give `reports/*.md` to your own coding agent to synthesize the rules. `run`
 
 ### Auditing a real `AGENTS.md`
 
-On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` audit finds 66 rules: 9 measured, 1 partial, and 56 unmeasured.
+On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` audit finds 65 rules: 8 measured, 1 partial, and 56 unmeasured.
 
 | Rule | Coverage | Followed | Violations | Confidence | Enforcement |
 |---|---|---:|---|---|---|
-| Read the codebase before editing | measured | 121 | 64/185 (35%) | high | guidance only |
-| Verify assumptions against source and tests | measured | 121 | 64/185 (35%) | high | guidance only |
+| Read the codebase before editing | measured | 119 | 66/185 (36%) | high | guidance only |
+| Verify assumptions against source/tests | measured | 119 | 66/185 (36%) | high | guidance only |
+| Use `gh` for GitHub data | measured | 0 | 6/24 (25%) | medium | missing |
+| Commit frequently | measured | 0 | 52/188 (28%) | high | missing |
+| `--no-verify` guard | partial | 13 | 1/14 (7%) | low | missing |
 | `git commit` only after `git add` | measured | 8 | 6/14 (43%) | low | guidance only |
 | Submodule update before tests | measured | 0 | 32/32 (100%) | medium | guidance only |
-| Snapshot updates with `UPDATE=1 cargo test` | measured | 11 | 147/171 (86%) | high | missing |
-| `cargo fmt --all` | measured | 0 | 185/185 (100%) | high | CI configured |
-| `cargo clippy --all --all-targets -- -D warnings` | measured | 0 | 185/185 (100%) | high | CI configured |
-| `cargo test -p <crate>` | measured | 5 | 158/171 (92%) | high | missing |
-| `--no-verify` guard | partial | 13 | 1/14 (7%) | low | missing |
+| Snapshot update with `UPDATE=1 cargo test` | measured | 23 | 2/25 (8%) | medium | missing |
+| `cargo test -p <crate>` | measured | 14 | 0/14 (0%) | low | missing |
 
 `configured` means the command appears in `.github/workflows/CI.yml`; it does not prove the check is required by branch protection. `available` means a Makefile/package target exists but is not wired into CI. `missing` means no mechanism was found.
 
 ### Rules generated from report prompts
 
-**`swc-project/swc`**
-
-- [guidance] Reproduce before editing crate sources: 118 sessions edited source with no preceding failing exec. Start with a targeted test such as `RUSTUP_TOOLCHAIN=1.84.1 cargo test -p swc_ecma_transforms_compat --lib regex_dot_all --offline`.
-- [guidance] Read the exact target range before editing: 72 sessions made 132 edits with no prior read, e.g. inspect the `ExprExt` sites in `crates/swc_ecma_utils/src/lib.rs`.
-- [enforceable] Require validation after edits: 26 sessions had no test/lint exec after the first edit and 74 of 188 sessions were unvalidated. Add a CI job running `RUSTUP_TOOLCHAIN=1.84.1 cargo test -p <changed-crate> --offline`; the pinned toolchain was the successful delta in 21 sessions.
-
 **`rkkautsar/trace2rules`**
 
-- [enforceable] Make `uv run pytest -q` a required check in `.github/workflows/ci.yml`.
+- [guidance] Keep `src/trace2rules/cli.py` limited to Typer wiring and option parsing; put non-CLI logic in a dedicated module under `src/trace2rules/`.
+- [guidance] Before editing a target file, read that file or confirm it does not exist. A search result that lists adjacent files is not a read of the target.
+- [guidance] When adding, renaming, or removing a CLI command or option in `src/trace2rules/cli.py`, update the matching row in the `README.md` command table in the same change.
 
-- [enforceable] Make `uv run pytest -q` a required check in `.github/workflows/ci.yml`.
-- [enforceable] Keep dependencies declared in `pyproject.toml` and install with `uv sync --frozen`; `environment_thrash` found 29 package-manager calls across 7 sessions, 5 failed.
-- [guidance] Read the owning package module by symbol or range, not whole-file: `src/trace2rules/cli.py` and `src/trace2rules/ingest.py` were read-only hotspots in 26/77 and 24/77 sessions.
-- [guidance] Read the target file or exact range before editing: 6 sessions made 274 edits with no prior read of the target, concentrated in `src/trace2rules/cli.py` and `src/trace2rules/ingest.py`.
-- [guidance] For bug fixes, reproduce the failure first: 4 sessions edited source without a preceding failing exec. Run the narrowest failing test before changing source.
-**`rkkautsar/louibot`**
-
-**`rkkautsar/louibot`**
-- [enforceable] Gate changes with `npm run format:check && npm run build && npm test`, matching `.github/workflows/ci.yml`; 3 sessions used each validation command.
-- [guidance] Read `src/agent.ts` and its matching test before editing: 133 edits had no prior read across 6 sessions, and `src/agent.ts` had 227 reads across 9 sessions.
-- [enforceable] Block `git push --force-with-lease` on `codex/*` branches and `rm -rf .louibot/benchmarks/runs/<run>`; 3 destructive/gate-bypassing invocations occurred across 3 sessions.
-
-- [enforceable] Gate changes with `npm run format:check && npm run build && npm test`, matching `.github/workflows/ci.yml`; 3 sessions used each validation command.
-- [guidance] Read `src/agent.ts` and its matching test before editing: 133 edits had no prior read across 6 sessions, and `src/agent.ts` had 227 reads across 9 sessions.
-- [enforceable] Block `git push --force-with-lease` on `codex/*` branches and `rm -rf .louibot/benchmarks/runs/<run>`; 3 destructive/gate-bypassing invocations occurred across 3 sessions.
-**`rkkautsar/personal-website`**
-
-**`rkkautsar/personal-website`**
-- [enforceable] Run `npm run lint && npm run format:check`, plus `npm run check:worker` for `functions/**` and `npm run test:discussion` for `functions/api/discussion/[slug].ts`; 3 sessions made edits with no test/lint exec after the first edit.
-- [enforceable] Reproduce API/worker failures before editing source: 3 sessions edited source with no preceding failing exec; extend `npm run test:discussion` first.
-- [guidance] Read `src/components/sections/WritingSection.tsx`, `src/index.css`, and `src/blog/client.ts` before editing; 117 edits across 3 sessions had no prior read of the target.
-
-- [enforceable] Run `npm run lint && npm run format:check`, plus `npm run check:worker` for `functions/**` and `npm run test:discussion` for `functions/api/discussion/[slug].ts`; 3 sessions made edits with no test/lint exec after the first edit.
-- [enforceable] Reproduce API/worker failures before editing source: 3 sessions edited source with no preceding failing exec; extend `npm run test:discussion` first.
-- [guidance] Read `src/components/sections/WritingSection.tsx`, `src/index.css`, and `src/blog/client.ts` before editing; 117 edits across 3 sessions had no prior read of the target.
+The latest synthesis also proposed a read-target rule; `audit --proposal` marked it `reword` (10 violations across 16 opportunities), so it is omitted from this example.
 
 ## Scope
 
@@ -116,7 +74,6 @@ On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` 
 
 It targets two destinations:
 
-The default cap is 200 sessions per source. `--limit N` selects the newest N files per invocation; re-runs can select a different set when files are added or touched. Use `--limit 0` for the full deterministic set. OpenCode is read directly from its SQLite database; JSON exports are still accepted:
 - **Enforceable rules**: a CI check, pre-commit hook, lint rule, or test can observe and enforce them.
 - **Stable AGENTS rules**: durable repo or global policy that future agents should follow even though it is not mechanically checkable.
 
@@ -126,17 +83,13 @@ It deliberately does not mine memories, historical decisions, ownership, dates, 
 
 1. **Ingest** normalizes tool calls into DuckDB (`sessions`, `tool_events`, `feedback_events`, `test_results`).
 2. **Mining** finds hotspots, recovery loops, validation gaps, edit rejections, blind edits, environment thrash, destructive commands, generated-path edits, dependency drift, and correction loops.
-3. **Sequence mining** normalizes commands and paths, anchors patterns at errors, allows small gaps, and reports support/failure context. Exact sequences use lift and paired-rework evidence; windows never cross a compaction boundary.
+3. **Sequence mining** normalizes commands and paths, then mines repo-local sequential rules (`antecedent -> specific error`) with support, confidence, lift, and a representative evidence window. Exact sequences use lift and paired-rework evidence; windows never cross a compaction boundary.
 4. **Report** selects bounded findings and writes one readable Markdown evidence prompt per repo.
 5. **Audit** checks existing `AGENTS.md` rules against sessions. `holdout` splits sessions by time and audits the same rules on an earlier train slice and later holdout.
 
 Generated verifier scripts and low-support task-specific sequences are filtered before reporting.
-For development from a clone:
 
 ## Commands
-```bash
-uv sync
-```
 
 | Command | Purpose |
 |---|---|
@@ -145,13 +98,12 @@ uv sync
 | `report` | Emit findings and evidence as JSON or a Markdown report prompt |
 | `run` | Ingest if needed, then write one evidence prompt per detected repo |
 | `doctor` | Check install, Node, source stores, and database schema |
-| `patterns` | Mine error-anchored, normalized attribute patterns |
+| `patterns` | Mine repo-local sequential rules (antecedent → specific error) |
 | `exact` | Show recurring normalized sequences with evidence |
 | `audit` | Audit existing `AGENTS.md` rules against sessions and suggest enforcement |
 | `holdout` | Audit rules on an earlier train split and a later time holdout |
 
 Useful options:
-Supported ingestion formats:
 
 ```bash
 trace2rules ingest                         # ~, all detected local stores
@@ -204,32 +156,33 @@ pip install trace2rules
 ```
 
 For development from a clone:
-Datasets are not included in this repository.
 
+```bash
 uv sync
+```
 
 `agent-trajectory` calls its bundled JS bridge through the system Node runtime for Claude Code, Codex, Pi, and OMP. Install Node.js 20 or newer; OpenCode SQLite ingestion is pure Python.
-## Configuration
 
 Supported ingestion formats:
 
 | Format | What it reads |
-| Variable | Purpose |
 |---|---|
 | `open-swe` | [nvidia/Open-SWE-Traces](https://huggingface.co/datasets/nvidia/Open-SWE-Traces) parquet, cached locally; `--repos owner/name` is required |
 | `swe-rebench` | [nebius/SWE-rebench-openhands-trajectories](https://huggingface.co/datasets/nebius/SWE-rebench-openhands-trajectories) parquet, opt-in and cached locally |
 | `agent-trajectory` | Local Claude Code, Codex, Pi, OMP, OpenCode SQLite/JSON |
-| `TRACE2RULES_DB` | Override the default DuckDB path |
-| `TRACE2RULES_WINDOWS_STORES` | Set to `1` to scan Windows agent stores from WSL |
 
 Datasets are not included in this repository.
+
 ## Configuration
+
 Variables are read from the process environment. trace2rules does not load `.env` files.
+
 | Variable | Purpose |
 |---|---|
 | `TRACE2RULES_DB` | Override the default DuckDB path |
 | `TRACE2RULES_CACHE_DIR` | Local parquet cache; defaults to `~/.cache/trace2rules` |
 | `TRACE2RULES_WINDOWS_STORES` | Set to `1` to scan Windows agent stores from WSL |
+
 ## Data and privacy
 
 - Session data stays in your local DuckDB database.

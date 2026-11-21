@@ -209,3 +209,22 @@ def test_existing_audit_verdict_is_rendered() -> None:
     )
     assert "verdict delete" in prompt
     assert "If its verdict is `delete`, omit it." in prompt
+
+
+def test_synthesis_proposal_markdown_is_parseable() -> None:
+    from trace2rules.audit.parsing import parse_agents_text
+
+    text = """## architecture_map
+- **Rule:** Keep `src/cli.py` limited to wiring.
+  **Evidence:** hotspot.
+  **Enforcement:** guidance only.
+  **Source:** `session-1` (step 1)
+
+## context_hygiene
+- **Rule:** Before editing a target file, read that file or confirm it does not exist.
+  **Evidence:** blind edits.
+  **Enforcement:** guidance only.
+  **Source:** `session-1` (step 2)
+"""
+    rules = parse_agents_text(text, "proposal.md")
+    assert [rule.category for rule in rules] == ["architecture_map", "read_before_edit"]

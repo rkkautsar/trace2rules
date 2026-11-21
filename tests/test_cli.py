@@ -21,6 +21,8 @@ def test_help_loads() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "ingest" in result.output
+    assert "report" not in result.output
+    assert "run" not in result.output
 
 
 def test_unknown_ingest_format_is_a_usage_error() -> None:
@@ -288,7 +290,7 @@ def test_ingest_reads_opencode_sqlite(tmp_path: Path) -> None:
         con.close()
 
 
-def test_report_emits_machine_readable_evidence(tmp_path: Path) -> None:
+def test_mine_json_emits_machine_readable_evidence(tmp_path: Path) -> None:
     db = tmp_path / "report.duckdb"
     write_sessions(
         db,
@@ -311,7 +313,7 @@ def test_report_emits_machine_readable_evidence(tmp_path: Path) -> None:
             )
         ],
     )
-    result = runner.invoke(app, ["report", "--db", str(db)])
+    result = runner.invoke(app, ["mine", "--json", "--db", str(db)])
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["sessions"] == 1
@@ -370,7 +372,7 @@ def test_ingest_continues_after_a_bad_source(monkeypatch) -> None:
     assert "/good" in result.output
 
 
-def test_report_does_not_audit_cwd_agents_for_other_repo(tmp_path: Path, monkeypatch) -> None:
+def test_mine_prompt_does_not_audit_cwd_agents_for_other_repo(tmp_path: Path, monkeypatch) -> None:
     db = tmp_path / "scope.duckdb"
     write_sessions(
         db,
@@ -380,13 +382,13 @@ def test_report_does_not_audit_cwd_agents_for_other_repo(tmp_path: Path, monkeyp
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(
         app,
-        ["report", "--repo", "acme/other", "--prompt", "--db", str(db)],
+        ["mine", "--repo", "acme/other", "--prompt", "--db", str(db)],
     )
     assert result.exit_code == 0
     assert "CWD_RULE_SENTINEL" not in result.output
 
 
-def test_report_uses_session_cwd_for_agents(tmp_path: Path, monkeypatch) -> None:
+def test_mine_prompt_uses_session_cwd_for_agents(tmp_path: Path, monkeypatch) -> None:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     (checkout / "AGENTS.md").write_text("## Validation\n\n- Run `CWD_RULE_SENTINEL` after editing.\n")
@@ -406,13 +408,13 @@ def test_report_uses_session_cwd_for_agents(tmp_path: Path, monkeypatch) -> None
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(
         app,
-        ["report", "--repo", "acme/repo", "--prompt", "--db", str(db)],
+        ["mine", "--repo", "acme/repo", "--prompt", "--db", str(db)],
     )
     assert result.exit_code == 0
     assert "CWD_RULE_SENTINEL" in result.output
 
 
-def test_report_includes_global_and_nested_agents(tmp_path: Path, monkeypatch) -> None:
+def test_mine_prompt_includes_global_and_nested_agents(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     global_agents = home / ".omp" / "agent" / "AGENTS.md"
     global_agents.parent.mkdir(parents=True)
@@ -440,7 +442,7 @@ def test_report_includes_global_and_nested_agents(tmp_path: Path, monkeypatch) -
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(
         app,
-        ["report", "--repo", "acme/repo", "--prompt", "--db", str(db)],
+        ["mine", "--repo", "acme/repo", "--prompt", "--db", str(db)],
     )
     assert result.exit_code == 0
     assert "GLOBAL_SENTINEL" in result.output
@@ -468,3 +470,29 @@ def test_audit_can_validate_a_proposal(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     assert "Verdict" in result.output
+
+
+def test_audit_and_mine_expose_ingest_options() -> None:
+    for command in ("audit", "mine"):
+        result = runner.invoke(app, [command, "--help"])
+        assert result.exit_code == 0
+        assert "--source" in result.output
+        assert "--format" in result.output
+        assert "--limit" in result.output
+
+
+def test_mine_auto_ingests_an_explicit_source(tmp_path: Path, monkeypatch) -> None:
+    import trace2rules.ingest.sources.agent_trajectory as agent_source
+
+    db = tmp_path / "source.duckdb"
+    write_sessions(db, [Session("s1", "acme/repo", source="test")])
+    calls = []
+
+    def fake_ingest(source, db_path, *, limit=None, repo=None, progress=None, split_compactions=True):
+        calls.append((str(source), str(db_path)))
+        return [IngestStats(str(source), 1, 0, 0)]
+
+    monkeypatch.setattr(agent_source, "ingest_agent_sessions", fake_ingest)
+    result = runner.invoke(app, ["mine", "--source", "/good", "--db", str(db)])
+    assert result.exit_code == 0, result.output
+    assert calls and calls[0][0] == "/good"

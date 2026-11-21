@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import duckdb
+from .db import DB_PATH
 import typer
 from rich.console import Console
 
@@ -68,3 +69,36 @@ def _ensure_local_sessions(
     with progress:
         ingest_agent_sessions(source, db, limit=limit, progress=progress)
     return True
+
+
+def _auto_ingest(
+    db: Path,
+    *,
+    source: list[str] | None = None,
+    format: str = "agent-trajectory",
+    limit: int = 200,
+    repo: str | None = None,
+    refresh_cache: bool = False,
+    split_compactions: bool = True,
+    refresh: bool = True,
+) -> None:
+    """Populate a database from local sessions or an explicit ingest format."""
+    explicit = bool(source) or format != "agent-trajectory"
+    if db != DB_PATH and not explicit:
+        return
+    if not explicit:
+        _ensure_local_sessions(db, limit=limit, refresh=refresh)
+        return
+    from .cli import _ingest_command
+
+    repos = [repo] if repo and format in {"swe-rebench", "open-swe"} else None
+    _ingest_command(
+        repos=repos,
+        format=format,
+        limit=limit,
+        repo=None,
+        db=db,
+        refresh_cache=refresh_cache,
+        source=source,
+        split_compactions=split_compactions,
+    )

@@ -11,7 +11,7 @@ import typer
 from rich.table import Table
 
 from ..agents import _agents_root, audit_commit, audit_payload, latest_agents_commit, resolve_agents
-from ..cli_common import _ensure_local_sessions, _resolve_repo_label, console
+from ..cli_common import _auto_ingest, _resolve_repo_label, console
 from ..db import DB_PATH, connect
 from ..redact import redact_text, redact_value
 
@@ -65,6 +65,29 @@ def _audit_command(
         typer.Option("--prompt", help="Emit a prompt for a fresh-context review agent."),
     ] = False,
     json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON.")] = False,
+    source: Annotated[
+        list[str] | None,
+        typer.Option("--source", "-s", help="Session root or parquet path; repeat for multiple."),
+    ] = None,
+    format: Annotated[
+        str,
+        typer.Option("--format", "-f", help="Ingest format: agent-trajectory, swe-rebench, open-swe, or swe-chat."),
+    ] = "agent-trajectory",
+    limit: Annotated[
+        int,
+        typer.Option(help="Newest sessions per source when auto-ingesting; 0 for all."),
+    ] = 200,
+    refresh_cache: Annotated[
+        bool,
+        typer.Option("--refresh-cache", help="Re-download remote parquet while auto-ingesting."),
+    ] = False,
+    split_compactions: Annotated[
+        bool,
+        typer.Option(
+            "--split-compactions/--no-split-compactions",
+            help="Treat each local compaction segment as its own session.",
+        ),
+    ] = True,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     if proposal is not None:
@@ -109,10 +132,17 @@ def _audit_command(
         console.print("[red]--commit cannot be combined with --since/--until[/red]")
         raise typer.Exit(2)
     try:
-        if db == DB_PATH:
-            _ensure_local_sessions(db)
+        _auto_ingest(
+            db,
+            source=source,
+            format=format,
+            limit=limit,
+            repo=repo,
+            refresh_cache=refresh_cache,
+            split_compactions=split_compactions,
+        )
     except Exception as error:
-        console.print(f"[yellow]Could not auto-ingest local sessions: {error}[/yellow]")
+        console.print(f"[yellow]Could not auto-ingest sessions: {error}[/yellow]")
     con = connect(db)
     try:
         if con.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0:

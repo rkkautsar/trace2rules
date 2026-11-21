@@ -19,12 +19,13 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeEl
 from rich.table import Table
 
 from .agents import resolve_agents
-from .cli_common import _ensure_local_sessions, _repo_matches_cwd, console
-from .commands.report import _report_command, _run_command
+from .cli_common import _auto_ingest, _repo_matches_cwd, console
+from .commands.report import _report_command
 from .commands.audit import _audit_command
 from .commands.holdout import _holdout_command
 from .db import DB_PATH, connect
 from .ingest import DEFAULT_REPOS, SOURCE, ingest as ingest_traces
+from .synthesis.models import DEFAULT_MAX_RULES
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Mine coding-agent trajectories for AGENTS.md rules.")
 
@@ -400,10 +401,88 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
 
 def _mine_command(
     top: Annotated[int, typer.Option(help="Clusters / rows per detector to show.")] = 25,
+    repo: Annotated[
+        str | None,
+        typer.Option("--repo", help="Repository label filter for --prompt/--json."),
+    ] = None,
+    prompt: Annotated[
+        bool,
+        typer.Option("--prompt", help="Emit the evidence prompt for an external agent."),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable findings instead of tables."),
+    ] = False,
+    agents: Annotated[
+        Path | None,
+        typer.Option("--agents", help="Existing AGENTS.md to audit and include in --prompt."),
+    ] = None,
+    out_dir: Annotated[
+        Path | None,
+        typer.Option("--out-dir", help="Write one prompt per repo into this directory; requires --prompt."),
+    ] = None,
+    min_support: Annotated[
+        int,
+        typer.Option("--min-support", min=1, max=100, help="Minimum sessions per prompt finding."),
+    ] = 3,
+    max_rules: Annotated[
+        int,
+        typer.Option("--max-rules", min=1, max=50, help="Maximum rules requested per prompt."),
+    ] = DEFAULT_MAX_RULES,
+    source: Annotated[
+        list[str] | None,
+        typer.Option("--source", "-s", help="Session root or parquet path; repeat for multiple."),
+    ] = None,
+    format: Annotated[
+        str,
+        typer.Option("--format", "-f", help="Ingest format: agent-trajectory, swe-rebench, open-swe, or swe-chat."),
+    ] = "agent-trajectory",
+    limit: Annotated[
+        int,
+        typer.Option(help="Newest sessions per source when auto-ingesting; 0 for all."),
+    ] = 200,
+    refresh_cache: Annotated[
+        bool,
+        typer.Option("--refresh-cache", help="Re-download remote parquet while auto-ingesting."),
+    ] = False,
+    split_compactions: Annotated[
+        bool,
+        typer.Option(
+            "--split-compactions/--no-split-compactions",
+            help="Treat each local compaction segment as its own session.",
+        ),
+    ] = True,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
-    if db == DB_PATH:
-        _ensure_local_sessions(db, refresh=True)
+    if repo is not None and not (prompt or json_output):
+        raise typer.BadParameter("--repo requires --prompt or --json.")
+    if agents is not None and not prompt:
+        raise typer.BadParameter("--agents requires --prompt.")
+    if out_dir is not None and not prompt:
+        raise typer.BadParameter("--out-dir requires --prompt.")
+    if (min_support != 3 or max_rules != DEFAULT_MAX_RULES) and not prompt:
+        raise typer.BadParameter("--min-support/--max-rules require --prompt.")
+    _auto_ingest(
+        db,
+        source=source,
+        format=format,
+        limit=limit,
+        repo=repo,
+        refresh_cache=refresh_cache,
+        split_compactions=split_compactions,
+    )
+    if prompt or json_output:
+        _report_command(
+            top=top,
+            repo=repo,
+            prompt=prompt,
+            agents=agents,
+            out_dir=out_dir,
+            min_support=min_support,
+            max_rules=max_rules,
+            db=db,
+        )
+        return
     con = connect(db)
     try:
         session_count = con.execute("SELECT count(*) FROM sessions").fetchone()[0]
@@ -441,12 +520,6 @@ def _mine_command(
 
 
 app.command("mine")(_mine_command)
-
-
-app.command("report")(_report_command)
-
-
-app.command("run")(_run_command)
 
 
 app.command("audit")(_audit_command)

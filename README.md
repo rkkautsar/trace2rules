@@ -66,6 +66,8 @@ On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` 
 
 `configured` means the command appears in `.github/workflows/CI.yml`; it does not prove the check is required by branch protection. `available` means a Makefile/package target exists but is not wired into CI. `missing` means no mechanism was found.
 
+The two read rules are separate clauses but share the `read_before_edit` detector. Their identical followed/violation counts are expected, not evidence that they are the same rule.
+
 `audit` prints the audited/total session count and defaults to the latest `AGENTS.md` commit cutoff. Pass `--all-sessions` for full history.
 
 ### Rules generated from report prompts
@@ -82,7 +84,7 @@ On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` 
 - [guidance] Keep `src/trace2rules/cli.py` limited to Typer wiring and option parsing; put non-CLI logic in a dedicated module under `src/trace2rules/`.
 - [guidance] When adding, renaming, or removing a CLI command or option in `src/trace2rules/cli.py`, update the matching row in the `README.md` command table in the same change.
 
-The latest synthesis also proposed a read-target rule; `audit --proposal` marked it `reword` (5 violations across 13 opportunities), so it is omitted from this example.
+The latest synthesis also proposed a read-target rule; `audit --proposal` marked it `reword` (5 violations across 13 opportunities), so it is omitted from this example. Rules are marked `guidance` when no concrete CI, pre-commit, or lint check exists; enforceable rules require a specific check.
 
 ## Scope
 

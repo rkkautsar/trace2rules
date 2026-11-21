@@ -207,6 +207,27 @@ def _normalize_rule_paths(rule: AgentRule, root: Path | None) -> None:
     rule.paths = tuple(dict.fromkeys(normalized))
 
 
+_VERDICT_ORDER = {
+    "delete": 0,
+    "enforce": 1,
+    "reword": 2,
+    "keep": 3,
+    "not_applicable": 4,
+    "not_measured": 5,
+}
+_CONFIDENCE_ORDER = {"high": 0, "medium": 1, "low": 2, "none": 3}
+
+
+def _audit_sort_key(audit: RuleAudit) -> tuple:
+    return (
+        _VERDICT_ORDER.get(audit.verdict, 9),
+        -audit.violation_sessions,
+        -audit.opportunities,
+        _CONFIDENCE_ORDER.get(audit.confidence, 9),
+        audit.text,
+    )
+
+
 def _cwd_within(cwd: str, directory: Path) -> bool:
     try:
         Path(cwd).resolve().relative_to(directory.resolve())
@@ -817,6 +838,7 @@ def audit_payload(
         root=root,
         source_scope=source_scope,
     )
+    audits.sort(key=_audit_sort_key)
     return {
         "repo": repo,
         "agents_md": [str(file) for file in paths],

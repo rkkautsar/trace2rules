@@ -6,7 +6,15 @@ Mine and audit coding-agent sessions into evidence-backed `AGENTS.md` rules.
 
 The output is a proposal, not an automatically applied `AGENTS.md`.
 
-> **Small local corpus?** Results are most useful with about 10+ local sessions. With fewer, try the public `open-swe` or `swe-rebench` datasets; see [Supported ingestion formats](#supported-ingestion-formats).
+> **Small local corpus?** Results are most useful with about 10+ local sessions. With fewer, ingest a public dataset first:
+>
+> ```bash
+> trace2rules ingest --format swe-rebench
+> # or
+> trace2rules ingest --format open-swe --repos owner/name
+> ```
+>
+> See [Supported ingestion formats](#supported-ingestion-formats).
 
 ## Quick start
 
@@ -21,6 +29,12 @@ Or run the audit manually:
 ```bash
 trace2rules audit
 trace2rules audit --prompt > audit.txt
+```
+
+After an agent writes a proposed rule file, validate it before applying:
+
+```bash
+trace2rules audit --proposal AGENTS.proposed.md
 ```
 
 Paste this into your coding agent to mine your local sessions:
@@ -173,7 +187,7 @@ uv sync
 
 `agent-trajectory` calls its bundled JS bridge through the system Node runtime for Claude Code, Codex, Pi, and OMP. Install Node.js 20 or newer; OpenCode SQLite ingestion is pure Python.
 
-Supported ingestion formats:
+### Supported ingestion formats
 
 | Format | What it reads |
 |---|---|

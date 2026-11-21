@@ -1513,3 +1513,30 @@ def test_commit_hygiene_audit_detects_large_uncommitted_streak(tmp_path: Path) -
         con.close()
     assert audit.applicable_sessions == 1
     assert audit.violation_sessions == 1
+
+
+def test_audit_payload_sorts_actionable_rules_first(tmp_path: Path) -> None:
+    from trace2rules.agents import audit_payload
+
+    path = tmp_path / "AGENTS.md"
+    path.write_text(
+        "## Dependencies\n\n- Update dependencies only in `pyproject.toml` and commit `uv.lock`.\n\n"
+        "## Testing\n\n- Run `pytest` after editing.\n"
+    )
+    db = tmp_path / "sort.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[ToolCall("Edit", "src/a.py", action_type="edit", target="src/a.py")],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        payload = audit_payload(con, "acme/repo", path)
+    finally:
+        con.close()
+    assert payload["rules"][0]["category"] == "test_command"

@@ -1190,3 +1190,10 @@ def test_nested_rule_is_scoped_to_session_cwd(tmp_path: Path) -> None:
     assert audit.applicable_sessions == 1
     assert audit.not_applicable_sessions == 1
     assert audit.violation_sessions == 0
+
+
+def test_source_read_does_not_match_same_basename_in_another_directory() -> None:
+    from trace2rules.audit.reads import _is_source_read
+
+    assert not _is_source_read("read", "src/a/api.py", "src/a/api.py", "src/b/api.py")
+    assert _is_source_read("read", "src/a/api.py", "src/a/api.py", "src/a/api.py")

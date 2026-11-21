@@ -62,15 +62,24 @@ def _scoped_test_edits(rule: AgentRule, edit_events: list[tuple[str, str]]) -> l
     return edit_events
 
 
+def _same_source_path(candidate: Path, edited: Path) -> bool:
+    if candidate == edited:
+        return True
+    if candidate.is_absolute() and not edited.is_absolute():
+        return candidate.as_posix().endswith("/" + edited.as_posix())
+    if edited.is_absolute() and not candidate.is_absolute():
+        return edited.as_posix().endswith("/" + candidate.as_posix())
+    if len(candidate.parts) == 1 or len(edited.parts) == 1:
+        return candidate.name == edited.name
+    return False
+
+
 def _is_source_read(action: str, raw: str, target: str, edited: str) -> bool:
     candidates = [target, *re.findall(r"[\w./-]+\.(?:py|ts|tsx|js|jsx|rs|go|java|kt|cs|rb|php|swift)", raw)]
     edited_path = Path(_read_candidate(edited))
     has_source = any(
         Path(_read_candidate(path)).suffix in _READ_SUFFIXES
-        and (
-            Path(_read_candidate(path)) == edited_path
-            or Path(_read_candidate(path)).name == edited_path.name
-        )
+        and _same_source_path(Path(_read_candidate(path)), edited_path)
         for path in candidates
     )
     if not has_source:

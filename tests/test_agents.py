@@ -1040,3 +1040,31 @@ def test_audit_normalizes_package_relative_rule_paths(tmp_path: Path) -> None:
     finally:
         con.close()
     assert audit.stale_paths == ()
+
+
+def test_report_drops_findings_with_stale_paths(tmp_path: Path) -> None:
+    from trace2rules.commands.report import _drop_stale_findings
+    from trace2rules.mining.models import Finding
+
+    (tmp_path / "src" / "trace2rules").mkdir(parents=True)
+    (tmp_path / "src" / "trace2rules" / "current.py").write_text("")
+    findings = [
+        Finding(
+            kind="hotspot",
+            repo="acme/repo",
+            title="current",
+            sessions=1,
+            tokens=1,
+            detail="src/trace2rules/current.py",
+        ),
+        Finding(
+            kind="hotspot",
+            repo="acme/repo",
+            title="old",
+            sessions=1,
+            tokens=1,
+            detail="src/trace2rules/synthesize.py",
+        ),
+    ]
+    kept = _drop_stale_findings(findings, tmp_path)
+    assert [finding.title for finding in kept] == ["current"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import duckdb
 
@@ -141,10 +142,17 @@ def prompt_context(
         FROM tool_events
         WHERE repo = ? AND action_type = 'read' AND target NOT LIKE '<%'
         GROUP BY 1 HAVING count(*) >= 3
-        ORDER BY tokens DESC LIMIT 5
+        ORDER BY tokens DESC LIMIT 25
         """,
         [repo],
     ).fetchall()
+    if root is not None:
+        base = Path(root)
+        reads = [
+            row
+            for row in reads
+            if (base / row[0]).exists() or (base / "src" / "trace2rules" / row[0]).exists()
+        ][:5]
     outcomes = con.execute(
         """
         SELECT count(DISTINCT s.session_id),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 from dataclasses import asdict
@@ -17,6 +18,41 @@ from ..db import DB_PATH, connect
 from ..patterns import mine_sequences
 from ..redact import redact_value
 from ..synthesis.models import DEFAULT_MAX_RULES
+
+_PATH_TOKEN_RE = re.compile(r"\b[\w./-]+\.(?:py|ts|tsx|js|jsx|rs|go|java|kt|cs|rb|php|swift)\b")
+
+
+def _path_exists(root: Path, value: str) -> bool:
+    candidate = Path(value)
+    if candidate.is_absolute() or ".." in candidate.parts or "<" in value:
+        return True
+    return (root / candidate).exists() or (root / "src" / "trace2rules" / candidate).exists()
+
+
+def _drop_stale_findings(findings: list, root: Path | None) -> list:
+    if root is None or not root.is_dir():
+        return findings
+    kept = []
+    for finding in findings:
+        text = " ".join(
+            [
+                finding.title,
+                finding.detail,
+                finding.sequence,
+                finding.cause,
+                *finding.variants,
+                *[
+                    str(event.get(key, ""))
+                    for event in finding.window
+                    for key in ("target", "command", "excerpt")
+                ],
+            ]
+        )
+        paths = set(_PATH_TOKEN_RE.findall(text))
+        if any(not _path_exists(root, path) for path in paths):
+            continue
+        kept.append(finding)
+    return kept
 
 
 def _report_command(
@@ -128,18 +164,6 @@ def _report_command(
                         return found
                 return None
             for repo_name, _count in repo_rows:
-                selected_findings = select_findings(
-                    exact,
-                    mined,
-                    repo_name,
-                    limit=max(20, max_rules),
-                    min_sessions=min_support,
-                )
-                selected_findings = [
-                    finding
-                    for finding in selected_findings
-                    if min_support < 3 or _finding_confidence(finding) != "low"
-                ]
                 repo_agents = agents_for(repo_name)
                 existing = audit_payload(con, repo_name, repo_agents) if repo_agents else None
                 repo_root = None
@@ -152,6 +176,19 @@ def _report_command(
                     ).fetchone()
                     if cwd_row and Path(cwd_row[0]).is_dir():
                         repo_root = Path(cwd_row[0])
+                selected_findings = select_findings(
+                    exact,
+                    mined,
+                    repo_name,
+                    limit=max(20, max_rules),
+                    min_sessions=min_support,
+                )
+                selected_findings = [
+                    finding
+                    for finding in selected_findings
+                    if min_support < 3 or _finding_confidence(finding) != "low"
+                ]
+                selected_findings = _drop_stale_findings(selected_findings, repo_root)
                 safe_repo = repo_name.replace("\n", " ").replace("\r", " ")
                 chunks.append(
                     f"# Repository: {safe_repo}\n\n"

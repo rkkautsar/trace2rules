@@ -395,35 +395,6 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
         console.print(table)
 
 
-def _print_clusters(mined: dict, top: int) -> None:
-    clusters = mined["clusters"][:top]
-    if not clusters:
-        console.print("[yellow]No multi-session friction clusters found.[/yellow]")
-        return
-    table = Table(
-        title=f"Top {len(clusters)} friction clusters",
-        header_style="bold",
-        expand=True,
-        show_lines=True,
-    )
-    table.add_column("#", width=3)
-    table.add_column("Repo", width=22)
-    table.add_column("Sessions", justify="right", width=8)
-    table.add_column("Wasted tokens", justify="right", width=13)
-    table.add_column("Medoid sequence")
-    table.add_column("Raw variants", width=40)
-    for rank, finding in enumerate(clusters, start=1):
-        table.add_row(
-            str(rank),
-            escape(finding.repo),
-            str(finding.sessions),
-            f"{finding.tokens:,}",
-            escape(finding.sequence),
-            escape("\n".join(finding.variants[:3])),
-        )
-    console.print(table)
-
-
 def _mine_command(
     top: Annotated[int, typer.Option(help="Clusters / rows per detector to show.")] = 25,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,

@@ -4,10 +4,6 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 import duckdb
-from sklearn.cluster import AgglomerativeClustering
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_distances
-
 from .core import normalize_event_token
 from .heuristics.hotspots import context_blast_targets, hotspots
 from .models import Finding
@@ -335,82 +331,3 @@ def exact_sequences(
         scored.append((cost, finding))
     scored.sort(key=lambda item: (item[0], item[1].sessions, item[1].lift), reverse=True)
     return [finding for _, finding in scored[:top]]
-
-
-def _cluster_windows(windows: list[_Window], distance_threshold: float) -> list[Finding]:
-    if len(windows) < 2:
-        return []
-
-    corpus = [w.encoded for w in windows]
-    vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), lowercase=False)
-    try:
-        matrix = vectorizer.fit_transform(corpus)
-        distances = cosine_distances(matrix)
-    except ValueError:
-        return []
-
-    labels = AgglomerativeClustering(
-        n_clusters=None,
-        distance_threshold=distance_threshold,
-        metric="precomputed",
-        linkage="average",
-    ).fit_predict(distances)
-
-    groups: dict[int, list[_Window]] = defaultdict(list)
-    for window, label in zip(windows, labels):
-        groups[int(label)].append(window)
-
-    findings: list[Finding] = []
-    for members in groups.values():
-        session_ids: set[str] = set()
-        for member in members:
-            session_ids.update(member.sessions)
-        if len(session_ids) < 2:
-            continue
-
-        medoid = max(members, key=lambda m: (len(m.sessions), m.wasted_tokens))
-        variants: list[str] = []
-        for member in sorted(members, key=lambda m: len(m.sessions), reverse=True):
-            for example in member.examples:
-                if example not in variants:
-                    variants.append(example)
-                if len(variants) == 3:
-                    break
-            if len(variants) == 3:
-                break
-
-        findings.append(
-            Finding(
-                kind="cluster",
-                repo=medoid.repo,
-                title=medoid.encoded,
-                sessions=len(session_ids),
-                tokens=sum(member.wasted_tokens for member in members),
-                detail=f"{len(members)} distinct windows merged",
-                sequence=medoid.encoded,
-                variants=tuple(variants),
-                event_keys=medoid.keys,
-            )
-        )
-    return findings
-
-
-def cluster_friction(
-    con: duckdb.DuckDBPyConnection,
-    top: int | None = 25,
-    distance_threshold: float = 0.25,
-) -> list[Finding]:
-    by_repo: dict[str, list[_Window]] = defaultdict(list)
-    for window in friction_windows(con):
-        by_repo[window.repo].append(window)
-
-    findings: list[Finding] = []
-    for repo_windows in by_repo.values():
-        if len(repo_windows) > 4000:
-            repo_windows = sorted(
-                repo_windows, key=lambda w: (len(w.sessions), w.wasted_tokens), reverse=True
-            )[:4000]
-        findings.extend(_cluster_windows(repo_windows, distance_threshold))
-
-    findings.sort(key=lambda f: (f.sessions, f.tokens), reverse=True)
-    return findings[:top] if top is not None else findings

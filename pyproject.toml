@@ -21,7 +21,6 @@ dependencies = [
     "duckdb>=2.0.0",
     "pydantic>=2.14.3",
     "rich>=15.0.0",
-    "scikit-learn>=1.9.1",
     "typer>=0.29.1",
     "agent-trajectory>=0.4.4",
 ]

@@ -79,7 +79,7 @@ def mine(
     }
     workers = workers or min(2, len(jobs), os.cpu_count() or 1)
     if workers <= 1:
-        return {key: fn(con, limit=top) for key, fn in jobs.items()} | {"clusters": []}
+        return {key: fn(con, limit=top) for key, fn in jobs.items()}
 
     def run(job):
         key, fn = job
@@ -91,5 +91,4 @@ def mine(
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         results = dict(pool.map(run, jobs.items()))
-    results["clusters"] = []
     return results

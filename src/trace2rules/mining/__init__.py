@@ -37,11 +37,10 @@ from .mine import mine
 from .models import Finding
 from .error_transitions import error_transitions
 from .prevention import prevention_deltas
-from .sequences import cluster_friction, exact_sequences, friction_windows
+from .sequences import exact_sequences, friction_windows
 
 __all__ = [
     "Finding",
-    "cluster_friction",
     "blind_edits",
     "command_errors",
     "context_blasts",

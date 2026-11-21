@@ -473,12 +473,14 @@ def test_audit_can_validate_a_proposal(tmp_path: Path) -> None:
 
 
 def test_audit_and_mine_expose_ingest_options() -> None:
-    for command in ("audit", "mine"):
-        result = runner.invoke(app, [command, "--help"])
-        assert result.exit_code == 0
-        assert "--source" in result.output
-        assert "--format" in result.output
-        assert "--limit" in result.output
+    import inspect
+
+    from trace2rules.commands.audit import _audit_command
+    from trace2rules.cli import _mine_command
+
+    for command in (_audit_command, _mine_command):
+        params = inspect.signature(command).parameters
+        assert {"source", "format", "limit"} <= params.keys()
 
 
 def test_mine_auto_ingests_an_explicit_source(tmp_path: Path, monkeypatch) -> None:

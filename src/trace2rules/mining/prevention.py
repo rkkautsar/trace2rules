@@ -93,7 +93,20 @@ def parse_entity(raw: str, target: str = "") -> CommandEntity:
     try:
         tokens = shlex.split(command)
     except ValueError:
+    if "cd " in command:
+        cd_match = re.search(r"(?:^|&&|;)\s*cd\s+([^&;]+)", command)
+        if cd_match:
+            cwd = _normalize_path(cd_match.group(1))
+        command = re.sub(r"^(?:cd\s+[^&;]+?\s*&&\s+)+", "", command)
+    if "=" in command or command.startswith("export "):
+        command = _strip_env(command)
+    if not any(char in command for char in ("'", '"', "\\")):
         tokens = command.split()
+    else:
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            tokens = command.split()
     if not tokens:
         return CommandEntity(runner="", target=_normalize_path(target))
     runner = tokens[0].rsplit("/", 1)[-1]

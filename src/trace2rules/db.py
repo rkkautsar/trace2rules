@@ -77,12 +77,22 @@ CREATE TABLE IF NOT EXISTS ingest_files (
 );
 
 CREATE TABLE IF NOT EXISTS feedback_events (
+CREATE TABLE IF NOT EXISTS test_results (
     session_id        VARCHAR NOT NULL,
+    repo              VARCHAR NOT NULL,
     step_idx          INTEGER NOT NULL,
     kind              VARCHAR NOT NULL,
     text              VARCHAR NOT NULL,
     keys              VARCHAR NOT NULL,
     repo              VARCHAR DEFAULT ''
+    command           VARCHAR NOT NULL,
+    total             INTEGER NOT NULL,
+    passed            INTEGER NOT NULL,
+    failed            INTEGER NOT NULL,
+    errors            INTEGER NOT NULL,
+    skipped           INTEGER NOT NULL,
+    outcome           VARCHAR NOT NULL,
+    approx_out_tokens INTEGER NOT NULL DEFAULT 0
 );
 
 """
@@ -91,14 +101,8 @@ CREATE TABLE IF NOT EXISTS feedback_events (
 def connect(path: str | Path = DB_PATH) -> duckdb.DuckDBPyConnection:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect(
-        str(path),
-        config={
             "memory_limit": "2048MB",
-            "threads": "1",
-            "preserve_insertion_order": "false",
-        },
-    )
+    con = duckdb.connect(str(path), config=CONNECTION_CONFIG)
     con.execute(SCHEMA)
     for ddl in (
         "ALTER TABLE sessions ADD COLUMN source VARCHAR DEFAULT ''",

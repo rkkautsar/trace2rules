@@ -190,6 +190,20 @@ def _audit_command(
             _enforcement(rule),
         )
     console.print(table)
+    if payload.get("global_rules"):
+        global_table = Table(title=f"Global AGENTS.md: {repo}")
+        for column in ("Rule", "Coverage", "Followed", "Violations", "Confidence", "Enforcement"):
+            global_table.add_column(column)
+        for rule in payload["global_rules"]:
+            global_table.add_row(
+                redact_text(rule["text"][:90]),
+                rule.get("coverage", "unmeasured"),
+                str(rule.get("followed", 0)),
+                _violations(rule),
+                rule.get("confidence", "none"),
+                _enforcement(rule),
+            )
+        console.print(global_table)
     for conflict in payload.get("conflicts", []):
         console.print(
             f"[yellow]Conflict:[/yellow] {conflict['reason']}: "

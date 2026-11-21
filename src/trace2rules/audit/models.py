@@ -13,3 +13,5 @@ class AgentRule:
     source: str = "AGENTS.md"
     line: int = 0
     section: str = ""
+    source_path: str = ""
+    source_scope: str = "repo"

@@ -77,6 +77,8 @@ class RuleAudit:
     stale_paths: tuple[str, ...] = ()
     test_outcomes: dict[str, int] = field(default_factory=dict)
     examples: tuple[str, ...] = ()
+    source_path: str = ""
+    source_scope: str = "repo"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -109,6 +111,8 @@ class RuleAudit:
             "stale_paths": list(self.stale_paths),
             "test_outcomes": dict(self.test_outcomes),
             "examples": list(self.examples),
+            "source_path": self.source_path,
+            "source_scope": self.source_scope,
             "enforceable": self.enforceable,
             "enforcement": self.enforcement,
             "suggestion": self.suggestion,
@@ -231,6 +235,7 @@ def audit_agents(
     audits: list[RuleAudit] = []
     for rule in rules:
         _normalize_rule_paths(rule, root)
+        rule.source_scope = _source_scope(rule.source_path, root)
         observed = 0
         applicable = 0
         compliant = 0
@@ -479,6 +484,8 @@ def audit_agents(
         audit.stale_paths = stale_paths
         audit.test_outcomes = test_outcomes
         audit.examples = tuple(dict.fromkeys(examples))[:3]
+        audit.source_path = rule.source_path
+        audit.source_scope = rule.source_scope
         if rule.category in {"read_before_edit", "read_hygiene", "ordering"}:
             audit.required = False
             audit.required_reason = "guidance only; not enforceable by repository checks"
@@ -563,6 +570,16 @@ def _agents_root(start: Path) -> Path:
         if (candidate / ".git").exists():
             return candidate
     return current
+
+
+def _source_scope(source_path: str, root: Path | None) -> str:
+    if not source_path or root is None:
+        return "repo"
+    try:
+        relative = Path(source_path).resolve().relative_to(root.resolve())
+    except ValueError:
+        return "global"
+    return "repo" if len(relative.parts) == 1 else "nested"
 
 
 def _global_agents() -> list[Path]:
@@ -673,6 +690,14 @@ def audit_payload(
         f"SELECT count(*) FROM sessions WHERE {' AND '.join(filters)}",
         filter_params,
     ).fetchone()[0]
+    audits = audit_agents(
+        con,
+        repo,
+        rules,
+        since=since,
+        until=until,
+        root=root,
+    )
     return {
         "repo": repo,
         "agents_md": [str(file) for file in paths],
@@ -684,14 +709,13 @@ def audit_payload(
         "conflicts": _rule_conflicts(rules),
         "rules": [
             audit.as_dict()
-            for audit in audit_agents(
-                con,
-                repo,
-                rules,
-                since=since,
-                until=until,
-                root=root,
-            )
+            for audit in audits
+            if audit.source_scope != "global"
+        ],
+        "global_rules": [
+            audit.as_dict()
+            for audit in audits
+            if audit.source_scope == "global"
         ],
     }
 
@@ -719,7 +743,11 @@ def agents_at_commit(path: str | Path, rev: str) -> tuple[list[AgentRule], datet
     relative = file_path.relative_to(root).as_posix()
     content = _git(root, "show", f"{rev}:{relative}")
     stamp = _git(root, "show", "-s", "--format=%cI", rev)
-    return parse_agents_text(content, file_path.name), datetime.fromisoformat(stamp)
+    return parse_agents_text(
+        content,
+        file_path.name,
+        str(file_path.resolve()),
+    ), datetime.fromisoformat(stamp)
 
 
 def audit_commit(
@@ -766,8 +794,8 @@ def audit_commit(
 def audit_prompt(payload: dict[str, Any]) -> str:
     def rule_lines(rules: list[dict[str, Any]]) -> list[str]:
         lines = [
-            "| Rule | Coverage | Followed | Violations | Confidence | Enforcement |",
-            "|---|---|---|---|---|---|",
+            "| Rule | Scope | Source | Coverage | Followed | Violations | Confidence | Enforcement |",
+            "|---|---|---|---|---|---|---|---|",
         ]
         for rule in rules:
             lines.append(
@@ -775,6 +803,8 @@ def audit_prompt(payload: dict[str, Any]) -> str:
                 + " | ".join(
                     [
                         redact_text(str(rule.get("text", ""))[:160]),
+                        str(rule.get("source_scope", "repo")),
+                        redact_text(str(rule.get("source_path", ""))[:160]),
                         str(rule.get("coverage", "unmeasured")),
                         str(rule.get("followed", 0)),
                         str(rule.get("violation_sessions", 0)),
@@ -797,6 +827,8 @@ def audit_prompt(payload: dict[str, Any]) -> str:
         lines.extend(["", "## Before commit", *rule_lines(payload.get("before", []))])
     else:
         lines.extend(["## Existing rules", *rule_lines(payload.get("rules", []))])
+        if payload.get("global_rules"):
+            lines.extend(["", "## Global rules", *rule_lines(payload.get("global_rules", []))])
     if payload.get("warning"):
         lines.extend(["", f"Warning: {payload['warning']}"])
     lines.extend(

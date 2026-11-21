@@ -97,6 +97,8 @@ def _make_rule(
     *,
     commands: tuple[str, ...] | None = None,
     paths: tuple[str, ...] | None = None,
+    source_path: str = "",
+    source_scope: str = "repo",
 ) -> AgentRule:
     commands = commands or tuple(
         value for value in COMMAND_RE.findall(text)
@@ -117,6 +119,8 @@ def _make_rule(
         source,
         line,
         section,
+        source_path,
+        source_scope,
     )
 
 
@@ -143,7 +147,7 @@ def parse_agents(path: str | Path) -> list[AgentRule]:
         text = file_path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return []
-    return parse_agents_text(text, source)
+    return parse_agents_text(text, source, str(file_path.resolve()))
 
 
 def _split_clauses(text: str) -> list[str]:
@@ -154,7 +158,12 @@ def _split_clauses(text: str) -> list[str]:
     ]
 
 
-def parse_agents_text(text: str, source: str = "AGENTS.md") -> list[AgentRule]:
+def parse_agents_text(
+    text: str,
+    source: str = "AGENTS.md",
+    source_path: str = "",
+    source_scope: str = "repo",
+) -> list[AgentRule]:
     rules: list[AgentRule] = []
     seen: set[tuple[str, str]] = set()
     section = ""
@@ -193,6 +202,8 @@ def parse_agents_text(text: str, source: str = "AGENTS.md") -> list[AgentRule]:
                     pending_line or line_no,
                     section,
                     commands=(command,),
+                    source_path=source_path,
+                    source_scope=source_scope,
                 )
                 pending_line = 0
                 key = _dedupe_key(rule)
@@ -236,7 +247,14 @@ def parse_agents_text(text: str, source: str = "AGENTS.md") -> list[AgentRule]:
                 and not COMMAND_RE.search(clause)
             ):
                 continue
-            rule = _make_rule(clause, source, line_no, section)
+            rule = _make_rule(
+                clause,
+                source,
+                line_no,
+                section,
+                source_path=source_path,
+                source_scope=source_scope,
+            )
             key = _dedupe_key(rule)
             if key in seen:
                 continue

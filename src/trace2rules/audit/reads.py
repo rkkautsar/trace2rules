@@ -108,6 +108,32 @@ def _read_hygiene(events: list[tuple], root: Path | None, rule: AgentRule) -> tu
     return reads, whole
 
 
+_PATH_PREFIXES = {
+    "src",
+    "tests",
+    "test",
+    "docs",
+    "scripts",
+    "examples",
+    "benchmarks",
+    "bench",
+    "pkg",
+    "cmd",
+    "internal",
+    "backend",
+    "frontend",
+    "lib",
+    "app",
+}
+
+
+def _looks_like_path(value: str) -> bool:
+    if Path(value).suffix:
+        return True
+    first = value.split("/", 1)[0]
+    return first in _PATH_PREFIXES
+
+
 def _stale_paths(rule: AgentRule, root: Path | None) -> tuple[str, ...]:
     if root is None or not root.is_dir():
         return ()
@@ -126,6 +152,7 @@ def _stale_paths(rule: AgentRule, root: Path | None) -> tuple[str, ...]:
                 len(candidate.split("/")) == 2
                 and not Path(candidate).suffix
             )
+            or not _looks_like_path(candidate)
         ):
             continue
         package_candidate = root / "src" / "trace2rules" / candidate

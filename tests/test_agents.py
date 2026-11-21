@@ -1109,3 +1109,39 @@ def test_resolve_agents_prefers_override_in_each_directory(tmp_path: Path, monke
     monkeypatch.chdir(repo)
 
     assert [path.name for path in resolve_agents()] == ["AGENTS.override.md"]
+
+
+def test_stale_paths_ignore_slash_prose(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Publishing\n\n- NEVER publish to PyPI/npm/etc. from this repository.\n")
+    db = tmp_path / "prose_paths.duckdb"
+    write_sessions(db, [Session("s", "acme/repo")])
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path), root=tmp_path)[0]
+    finally:
+        con.close()
+    assert audit.stale_paths == ()
+
+
+def test_audit_payload_separates_global_rules(tmp_path: Path) -> None:
+    from trace2rules.agents import audit_payload
+
+    home = tmp_path / "home"
+    global_path = home / ".omp" / "agent" / "AGENTS.md"
+    global_path.parent.mkdir(parents=True)
+    global_path.write_text("## Validation\n\n- Run `pytest GLOBAL` after editing.\n")
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    repo_path = repo / "AGENTS.md"
+    repo_path.write_text("## Validation\n\n- Run `pytest REPO` after editing.\n")
+    db = tmp_path / "split.duckdb"
+    write_sessions(db, [Session("s", "acme/repo")])
+    con = connect(db)
+    try:
+        payload = audit_payload(con, "acme/repo", [global_path, repo_path], root=repo)
+    finally:
+        con.close()
+    assert [rule["source_scope"] for rule in payload["rules"]] == ["repo"]
+    assert [rule["source_scope"] for rule in payload["global_rules"]] == ["global"]
+    assert payload["global_rules"][0]["source_path"] == str(global_path.resolve())

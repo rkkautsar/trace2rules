@@ -193,7 +193,7 @@ def _existing_markdown(existing: dict | None) -> list[str]:
     lines.append(f"- Sessions: {existing.get('sessions', 0)}")
     if existing.get("conflicts"):
         lines.append(f"- Conflicts: {len(existing['conflicts'])}")
-    rules = existing.get("rules") or []
+    rules = [*(existing.get("rules") or []), *(existing.get("global_rules") or [])]
     if not rules:
         lines.append("- No parsed rules.")
         return lines
@@ -207,6 +207,10 @@ def _existing_markdown(existing: dict | None) -> list[str]:
             details.append(f"followed {float(rule['rate']):.0%}")
         if rule.get("confidence"):
             details.append(f"confidence {rule['confidence']}")
+        if rule.get("source_scope"):
+            details.append(f"scope {rule['source_scope']}")
+        if rule.get("source_path"):
+            details.append(f"source {_text(rule['source_path'], 180)}")
         if rule.get("enforcement_status"):
             details.append(f"enforcement {rule['enforcement_status']}")
         stale_paths = rule.get("stale_paths") or []

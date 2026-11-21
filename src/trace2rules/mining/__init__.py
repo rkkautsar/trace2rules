@@ -39,6 +39,7 @@ from .error_transitions import error_transitions
 from .persistence import persistent_failure_sites
 from .read_recipes import read_recipes
 from .selector_effectiveness import selector_effectiveness
+from .diagnostic_reads import diagnostic_reads
 from .prevention import prevention_deltas
 from .sequences import exact_sequences, friction_windows
 
@@ -49,6 +50,7 @@ __all__ = [
     "context_blasts",
     "correction_loops",
     "destructive_commands",
+    "diagnostic_reads",
     "edit_churn",
     "dependency_drift",
     "edit_rejections",

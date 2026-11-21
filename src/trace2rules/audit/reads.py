@@ -128,6 +128,7 @@ def _stale_paths(rule: AgentRule, root: Path | None) -> tuple[str, ...]:
             )
         ):
             continue
-        if not (root / candidate).exists():
+        package_candidate = root / "src" / "trace2rules" / candidate
+        if not (root / candidate).exists() and not package_candidate.exists():
             stale.append(candidate)
     return tuple(dict.fromkeys(stale))

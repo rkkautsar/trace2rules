@@ -178,6 +178,22 @@ def _matches(rule: AgentRule, raw_target: str, target: str, object_id: str) -> b
     return any(needle in haystack for needle in _needles(rule))
 
 
+def _normalize_rule_paths(rule: AgentRule, root: Path | None) -> None:
+    """Resolve package-relative paths against src/trace2rules when present."""
+    if root is None or not root.is_dir():
+        return
+    package_root = root / "src" / "trace2rules"
+    normalized: list[str] = []
+    for path in rule.paths:
+        if (root / path).exists():
+            normalized.append(path)
+        elif (package_root / path).exists():
+            normalized.append(f"src/trace2rules/{path}")
+        else:
+            normalized.append(path)
+    rule.paths = tuple(dict.fromkeys(normalized))
+
+
 def audit_agents(
     con: duckdb.DuckDBPyConnection,
     repo: str,
@@ -213,6 +229,7 @@ def audit_agents(
 
     audits: list[RuleAudit] = []
     for rule in rules:
+        _normalize_rule_paths(rule, root)
         observed = 0
         applicable = 0
         compliant = 0
@@ -746,7 +763,7 @@ def audit_prompt(payload: dict[str, Any]) -> str:
             "- concrete CI, pre-commit, lint, or CODEOWNERS enforcement",
             "- optional stricter replacement wording",
             "",
-            "List new rules supported by evidence separately. Prefer mechanical enforcement over soft instructions. Report stale backticked paths. Do not repeat rules that are already effective.",
+            "List new rules supported by evidence separately. Prefer mechanical enforcement over soft instructions. Report stale backticked paths and never emit a rule containing one. Use repository-relative paths such as `src/trace2rules/...`, not package-relative variants. Do not repeat rules that are already effective.",
         ]
     )
     return "\n".join(lines)

@@ -1024,3 +1024,19 @@ def test_stale_paths_in_plain_backticks(tmp_path: Path) -> None:
     finally:
         con.close()
     assert audit.stale_paths == ("synthesis/service.py",)
+
+
+def test_audit_normalizes_package_relative_rule_paths(tmp_path: Path) -> None:
+    package = tmp_path / "src" / "trace2rules" / "mining"
+    package.mkdir(parents=True)
+    (package / "core.py").write_text("")
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Reading\n\n- Read `mining/core.py` by symbol.\n")
+    db = tmp_path / "package_relative.duckdb"
+    write_sessions(db, [Session("s", "acme/repo")])
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path), root=tmp_path)[0]
+    finally:
+        con.close()
+    assert audit.stale_paths == ()

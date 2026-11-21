@@ -209,6 +209,9 @@ def _existing_markdown(existing: dict | None) -> list[str]:
             details.append(f"confidence {rule['confidence']}")
         if rule.get("enforcement_status"):
             details.append(f"enforcement {rule['enforcement_status']}")
+        stale_paths = rule.get("stale_paths") or []
+        if stale_paths:
+            details.append("stale paths " + ", ".join(_text(path, 120) for path in stale_paths))
         if rule.get("existing_enforcement"):
             details.append(f"existing {_text(rule['existing_enforcement'], 160)}")
         if details:

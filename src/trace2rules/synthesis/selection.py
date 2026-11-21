@@ -57,6 +57,7 @@ def _candidate_score(finding: Finding) -> float:
         "noop_retry": 1.2,
         "prevention_delta": 2.2,
         "error_transition": 1.4,
+        "persistent_site": 1.5,
         "recovery": 1.0,
         "context": 0.7,
         "hotspot": 0.8,
@@ -134,6 +135,7 @@ def select_findings(
         "test_shrink",
         "prevention_delta",
         "error_transition",
+        "persistent_site",
     ):
         candidates.extend(
             finding

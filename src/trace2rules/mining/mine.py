@@ -37,6 +37,7 @@ from .heuristics import (
 )
 from .models import Finding
 from .error_transitions import error_transitions
+from .persistence import persistent_failure_sites
 from .prevention import prevention_deltas
 
 
@@ -75,6 +76,7 @@ def mine(
         "test_shrink": shrinking_test_suites,
         "correction_loop": correction_loops,
         "error_transition": error_transitions,
+        "persistent_site": persistent_failure_sites,
         "prevention_delta": prevention_deltas,
     }
     workers = workers or min(2, len(jobs), os.cpu_count() or 1)

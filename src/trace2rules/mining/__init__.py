@@ -36,6 +36,7 @@ from .heuristics import (
 from .mine import mine
 from .models import Finding
 from .error_transitions import error_transitions
+from .persistence import persistent_failure_sites
 from .prevention import prevention_deltas
 from .sequences import exact_sequences, friction_windows
 
@@ -65,6 +66,7 @@ __all__ = [
     "noop_retries",
     "orientation",
     "permission_denials",
+    "persistent_failure_sites",
     "premature_completion",
     "prevention_deltas",
     "prompt_context",

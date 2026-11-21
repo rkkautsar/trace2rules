@@ -1569,15 +1569,19 @@ def test_toolchain_policy_flags_explicit_nightly_use(tmp_path: Path) -> None:
     db = tmp_path / "toolchain.duckdb"
     write_sessions(
         db,
-        [Session("s", "acme/repo", calls=[ToolCall("Bash", "cargo +nightly check", action_type="exec")])],
+        [
+            Session("nightly", "acme/repo", calls=[ToolCall("Bash", "cargo +nightly check", action_type="exec")]),
+            Session("stable", "acme/repo", calls=[ToolCall("Bash", "cargo check", action_type="exec")]),
+        ],
     )
     con = connect(db)
     try:
         audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
     finally:
         con.close()
-    assert audit.applicable_sessions == 1
+    assert audit.applicable_sessions == 2
     assert audit.violation_sessions == 1
+    assert audit.followed == 1
 
 
 def test_command_policy_audits_forbidden_direct_command(tmp_path: Path) -> None:

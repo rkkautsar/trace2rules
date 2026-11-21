@@ -56,13 +56,12 @@ trace2rules audit --proposal AGENTS.proposed.md
 
 `--proposal` parses the proposed Markdown, audits it against sessions, and prints verdicts before you apply it.
 
-On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` audit finds 65 rules: 10 measured, 1 partial, and 54 unmeasured.
+On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` audit finds 65 rules: 9 measured, 1 partial, and 55 unmeasured.
 
 | Rule | Coverage | Followed | Violations | Confidence | Enforcement |
 |---|---|---:|---|---|---|
 | Commit frequently | measured | 136 | 52/188 (28%) | high | missing |
-| MSRV compatibility | measured | 0 | 16/16 (100%) | low | missing |
-| No nightly-only rustc features | measured | 0 | 16/16 (100%) | low | missing |
+| No nightly-only rustc features | measured | 172 | 16/188 (9%) | low | missing |
 | Use `gh` for GitHub data | measured | 18 | 6/24 (25%) | medium | `.github/workflows/CI.yml` |
 | Snapshot update with `UPDATE=1 cargo test` | measured | 23 | 2/25 (8%) | medium | missing |
 | `--no-verify` guard | partial | 13 | 1/14 (7%) | low | missing |
@@ -76,13 +75,15 @@ On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` 
 
 The two read rules are separate clauses but share the `read_before_edit` detector. Their identical followed/violation counts are expected, not evidence that they are the same rule.
 
+The MSRV rule is unmeasured: the trace does not declare a `rust-version`, and a `RUSTC_BOOTSTRAP` marker is not proof of an MSRV violation. Nightly counts all sessions with Rust toolchain activity; 16 of 188 used `RUSTC_BOOTSTRAP` or `+nightly`.
+
 #### LLM review of the swc audit
 
 An `audit --prompt` pass over the same table suggests:
 
 - Delete the four stale binding `test.sh` commands; they are unmeasured and reference paths that no longer exist.
 - Enforce commit cadence with a pre-push clean-worktree check and reject `WIP`, `fixup!`, and `squash!` subjects.
-- Merge the MSRV and nightly rules: build on the workspace `rust-version` and stable Rust, pin the toolchain, and reject `#![feature(...)]`.
+- Enforce the nightly rule with a stable-toolchain check and reject `#![feature(...)]`; MSRV remains unmeasured until a declared `rust-version` check exists.
 - Reject `curl`/`wget` to GitHub in CI so `gh` remains the access path.
 - Run snapshot tests with `UPDATE` unset and fail on uncommitted fixture changes.
 - Run the same checks in CI as in hooks so `--no-verify` cannot bypass them.

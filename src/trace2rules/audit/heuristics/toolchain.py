@@ -12,6 +12,8 @@ _COMMANDS = re.compile(
     r"\buv\s+python\s+pin\b|\bpyenv\s+local\b|"
     r"\bgo\s+env\s+-w\s+GOTOOLCHAIN\b|\basdf\s+|\bmise\s+use\b)"
 )
+_RUST_USE = re.compile(r"(?i)\b(?:cargo|rustc|rustup)\b")
+_MSRV = re.compile(r"(?i)\bmsrv\b|\brust-version\b")
 _TOOLCHAIN_FILES = {
     ".nvmrc",
     ".python-version",
@@ -28,6 +30,15 @@ def evaluate(
     events: list[tuple],
     edit_events: list[tuple[str, str]],
 ) -> AuditOutcome | None:
+    if _MSRV.search(rule.text):
+        # A toolchain file or extra rustc flags do not prove the MSRV API rule.
+        return None
+    if not any(
+        _RUST_USE.search(raw or "")
+        for _sid, _step, action, raw, _target, _object, _outcome in events
+        if action == "exec"
+    ):
+        return None
     commands = [
         raw
         for _sid, _step, action, raw, target, _object, _outcome in events
@@ -39,13 +50,12 @@ def evaluate(
         if Path(target).name in _TOOLCHAIN_FILES
     ]
     hits = [*commands, *files]
-    if not hits:
-        return None
     negative = bool(re.search(r"(?i)\b(?:never|do not|don't|avoid)\b", rule.text))
+    violation = bool(hits) and negative
     return AuditOutcome(
         applicable=1,
-        observed=1,
-        compliant=0 if negative else 1,
-        violations=1 if negative else 0,
+        observed=1 if hits else 0,
+        compliant=0 if violation else 1,
+        violations=1 if violation else 0,
         examples=hits[:2],
     )

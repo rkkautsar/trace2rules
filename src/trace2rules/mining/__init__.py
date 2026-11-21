@@ -29,7 +29,6 @@ from .heuristics import (
     selector_misses,
     site_edit_mismatch,
     regressions_after_green,
-    shrinking_test_suites,
     stuck_loops,
     workaround_scripts,
 )
@@ -82,7 +81,6 @@ __all__ = [
     "session_summary",
     "site_edit_mismatch",
     "regressions_after_green",
-    "shrinking_test_suites",
     "stuck_loops",
     "workaround_scripts",
 ]

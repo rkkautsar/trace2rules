@@ -81,7 +81,6 @@ def _candidate_score(finding: Finding) -> float:
         "false_completion": 1.8,
         "correction_loop": 1.8,
         "test_regression": 1.9,
-        "test_shrink": 1.9,
     }
     support = max(finding.sessions, 1)
     impact = max(finding.tokens, finding.cost, 1)
@@ -135,7 +134,6 @@ def select_findings(
         "false_completion",
         "correction_loop",
         "test_regression",
-        "test_shrink",
         "prevention_delta",
         "error_transition",
         "persistent_site",

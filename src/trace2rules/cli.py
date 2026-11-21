@@ -298,7 +298,6 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
         ("false_completion", "false completion"),
         ("correction_loop", "correction loop"),
         ("test_regression", "test regression"),
-        ("test_shrink", "test shrink"),
         ("error_transition", "error transition"),
         ("persistent_site", "persistent site"),
         ("read_recipe", "read recipe"),

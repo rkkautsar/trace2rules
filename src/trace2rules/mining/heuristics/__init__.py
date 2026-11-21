@@ -11,7 +11,8 @@ from .recovery import failure_loops, noop_retries, recovery_loops
 from .repeated_reads import repeated_reads
 from .safety import destructive_commands
 from .testing import selector_misses, workaround_scripts
-from .validation import false_completions, low_validation, no_reproduction, premature_completion, regressions_after_green, shrinking_test_suites
+from .validation import false_completions, low_validation, no_reproduction, premature_completion, regressions_after_green
+
 
 __all__ = [
     "blind_edits",
@@ -41,7 +42,7 @@ __all__ = [
     "selector_misses",
     "site_edit_mismatch",
     "regressions_after_green",
-    "shrinking_test_suites",
+    "",
     "stuck_loops",
     "workaround_scripts",
 ]

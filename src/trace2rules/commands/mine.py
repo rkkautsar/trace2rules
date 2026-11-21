@@ -29,8 +29,31 @@ def _path_exists(root: Path, value: str) -> bool:
     return (root / candidate).exists() or (root / "src" / "trace2rules" / candidate).exists()
 
 
+_SOURCE_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".go", ".java", ".kt", ".cs", ".rb", ".php", ".swift"}
+
+
+def _source_suffixes(root: Path) -> set[str]:
+    if (root / "Cargo.toml").is_file():
+        return {".rs"}
+    if (root / "pyproject.toml").is_file():
+        return {".py"}
+    if (root / "package.json").is_file():
+        return {".ts", ".tsx", ".js", ".jsx"}
+    return _SOURCE_SUFFIXES
+
+
 def _drop_stale_findings(findings: list, root: Path | None) -> list:
     if root is None or not root.is_dir():
+        return findings
+    suffixes = _source_suffixes(root)
+    has_source = any(
+        path.is_file()
+        for base in (root / "src", root / "crates", root / "libs", root / "packages", root / "tests")
+        if base.is_dir()
+        for path in base.rglob("*")
+        if path.suffix in suffixes
+    )
+    if not has_source:
         return findings
     kept = []
     for finding in findings:
@@ -55,13 +78,13 @@ def _drop_stale_findings(findings: list, root: Path | None) -> list:
     return kept
 
 
-def _report_command(
+def _mine_output(
     top: Annotated[int, typer.Option(help="Rows per detector / pattern cap.")] = 25,
     repo: Annotated[
         str | None,
         typer.Option(
             "--repo",
-            help="Optional repository label filter; omit to report every detected repo.",
+            help="Optional repository label filter; omit to mine every detected repo.",
         ),
     ] = None,
     prompt: Annotated[bool, typer.Option("--prompt", help="Emit the evidence prompt for an external agent.")] = False,
@@ -86,6 +109,10 @@ def _report_command(
             help="Maximum rules requested per prompt.",
         ),
     ] = DEFAULT_MAX_RULES,
+    root: Annotated[
+        Path | None,
+        typer.Option("--root", help="Repository root for path and enforcement checks."),
+    ] = None,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     if out_dir is not None and not prompt:
@@ -165,8 +192,8 @@ def _report_command(
                 return None
             for repo_name, _count in repo_rows:
                 repo_agents = agents_for(repo_name)
-                repo_root = None
-                if repo_agents:
+                repo_root = root.resolve() if root is not None else None
+                if repo_root is None and repo_agents:
                     for agent_path in repo_agents:
                         candidate = _agents_root(agent_path.resolve().parent)
                         if (candidate / ".git").exists():

@@ -20,7 +20,7 @@ from rich.table import Table
 
 from .agents import resolve_agents
 from .cli_common import _auto_ingest, _repo_matches_cwd, console
-from .commands.report import _report_command
+from .commands.mine import _mine_output
 from .commands.audit import _audit_command
 from .commands.holdout import _holdout_command
 from .db import DB_PATH, connect
@@ -452,6 +452,10 @@ def _mine_command(
             help="Treat each local compaction segment as its own session.",
         ),
     ] = True,
+    root: Annotated[
+        Path | None,
+        typer.Option("--root", help="Repository root for path and enforcement checks."),
+    ] = None,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     if repo is not None and not (prompt or json_output):
@@ -472,7 +476,7 @@ def _mine_command(
         split_compactions=split_compactions,
     )
     if prompt or json_output:
-        _report_command(
+        _mine_output(
             top=top,
             repo=repo,
             prompt=prompt,
@@ -480,6 +484,7 @@ def _mine_command(
             out_dir=out_dir,
             min_support=min_support,
             max_rules=max_rules,
+            root=root,
             db=db,
         )
         return
@@ -599,7 +604,7 @@ def _doctor_command(
                 checks.append(("database", status, detail))
             finally:
                 con.close()
-        except Exception as error:  # noqa: BLE001 - report lock/permission issues
+        except Exception as error:  # noqa: BLE001 - surface lock/permission issues
             checks.append(("database", "warn", str(error)))
     else:
         checks.append(("database", "warn", f"not created yet: {db}"))

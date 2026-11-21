@@ -291,7 +291,7 @@ def test_ingest_reads_opencode_sqlite(tmp_path: Path) -> None:
 
 
 def test_mine_json_emits_machine_readable_evidence(tmp_path: Path) -> None:
-    db = tmp_path / "report.duckdb"
+    db = tmp_path / "mine-json.duckdb"
     write_sessions(
         db,
         [

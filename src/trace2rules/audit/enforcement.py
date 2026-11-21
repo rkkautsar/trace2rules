@@ -153,6 +153,23 @@ def _config_commands(text: str) -> list[str]:
     return list(dict.fromkeys(commands))[:20]
 
 
+_PROJECT_MARKERS = (
+    ".github",
+    "Cargo.toml",
+    "package.json",
+    "pyproject.toml",
+    "go.mod",
+    "Makefile",
+    "src",
+    "crates",
+    "libs",
+)
+
+
+def _inspectable_root(root: Path) -> bool:
+    return any((root / marker).exists() for marker in _PROJECT_MARKERS)
+
+
 def enforcement_inventory(root: Path | None) -> dict[str, object]:
     if root is None or not root.is_dir():
         return {}
@@ -282,6 +299,39 @@ def discover_enforcement(root: Path | None, rule: AgentRule) -> tuple[str, str]:
         return "configured", ", ".join(configured[:2])
     if available:
         return "available", ", ".join(available[:2])
+    if not _inspectable_root(root):
+        return "unknown", ""
+    if rule.category == "toolchain":
+        pins = [
+            name
+            for name in (
+                "rust-toolchain.toml",
+                "rust-toolchain",
+                ".nvmrc",
+                ".python-version",
+                ".tool-versions",
+            )
+            if (root / name).is_file()
+        ]
+        if pins:
+            return "available", ", ".join(pins)
+        return "missing", ""
+    if rule.category == "commit_hygiene":
+        hooks = [
+            name
+            for name in (
+                "commitlint.config.js",
+                "commitlint.config.cjs",
+                ".commitlintrc",
+                ".commitlintrc.json",
+                ".commitlintrc.yml",
+                ".commitlintrc.yaml",
+            )
+            if (root / name).is_file()
+        ]
+        if hooks:
+            return "configured", ", ".join(hooks)
+        return "missing", ""
     if commands or is_commit_rule:
         return "missing", ""
     return "unknown", ""

@@ -88,6 +88,10 @@ def _audit_command(
             help="Treat each local compaction segment as its own session.",
         ),
     ] = True,
+    root: Annotated[
+        Path | None,
+        typer.Option("--root", help="Repository root for path and enforcement checks."),
+    ] = None,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
     if proposal is not None:
@@ -113,6 +117,10 @@ def _audit_command(
     if not repo_agents:
         repo_agents = [agent_paths[0]]
         repo_root = _agents_root(agent_paths[0].resolve().parent)
+    if root is not None:
+        if not root.is_dir():
+            raise typer.BadParameter("--root must be an existing directory.")
+        repo_root = root.resolve()
     if proposal is not None:
         cwd_root = _agents_root(Path.cwd())
         if (cwd_root / ".git").exists() and (

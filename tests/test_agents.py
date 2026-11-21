@@ -1070,7 +1070,7 @@ def test_audit_normalizes_package_relative_rule_paths(tmp_path: Path) -> None:
 
 
 def test_report_drops_findings_with_stale_paths(tmp_path: Path) -> None:
-    from trace2rules.commands.report import _drop_stale_findings
+    from trace2rules.commands.mine import _drop_stale_findings
     from trace2rules.mining.models import Finding
 
     (tmp_path / "src" / "trace2rules").mkdir(parents=True)
@@ -1615,3 +1615,21 @@ def test_path_policy_audits_protected_path_edits(tmp_path: Path) -> None:
         con.close()
     assert audit.applicable_sessions == 1
     assert audit.violation_sessions == 1
+
+
+def test_stale_filter_skips_roots_without_source_tree(tmp_path: Path) -> None:
+    from trace2rules.commands.mine import _drop_stale_findings
+    from trace2rules.mining.models import Finding
+
+    (tmp_path / "Cargo.toml").write_text("[workspace]\n")
+    findings = [
+        Finding(
+            kind="hotspot",
+            repo="acme/repo",
+            title="stale-looking",
+            sessions=1,
+            tokens=1,
+            detail="crates/example/src/lib.rs",
+        )
+    ]
+    assert _drop_stale_findings(findings, tmp_path) == findings

@@ -995,7 +995,12 @@ def audit_prompt(payload: dict[str, Any]) -> str:
                         str(rule.get("followed", 0)),
                         str(rule.get("violation_sessions", 0)),
                         str(rule.get("confidence", "none")),
-                        redact_text(str(rule.get("existing_enforcement", ""))[:120]),
+                        redact_text(
+                            str(
+                                rule.get("existing_enforcement")
+                                or rule.get("enforcement_status", "unknown")
+                            )[:120]
+                        ),
                     ]
                 )
                 + " |"
@@ -1029,7 +1034,7 @@ def audit_prompt(payload: dict[str, Any]) -> str:
             "- concrete CI, pre-commit, lint, or CODEOWNERS enforcement",
             "- optional stricter replacement wording",
             "",
-            "List new rules supported by evidence separately. Prefer mechanical enforcement over soft instructions. Report stale backticked paths and never emit a rule containing one. Use repository-relative paths such as `src/trace2rules/...`, not package-relative variants. Do not repeat rules that are already effective.",
+            "List new rules supported by evidence separately. Prefer mechanical enforcement over soft instructions. List stale backticked paths and never emit a rule containing one. Use repository-relative paths such as `src/trace2rules/...`, not package-relative variants. Do not repeat rules that are already effective.",
         ]
     )
     return "\n".join(lines)

@@ -11,6 +11,7 @@ from typing import Any, Sequence
 
 import duckdb
 
+from .heuristics.command_policy import evaluate as evaluate_command_policy
 from .heuristics.command_usage import evaluate as evaluate_command_usage
 from .heuristics.commit_hygiene import evaluate as evaluate_commit_hygiene
 from .heuristics.context_hygiene import evaluate as evaluate_context_hygiene
@@ -20,6 +21,7 @@ from .heuristics.lockfile import evaluate as evaluate_lockfile
 from .heuristics.toolchain import evaluate as evaluate_toolchain
 from .heuristics.hook_bypass import evaluate as evaluate_hook_bypass
 from .heuristics.ordering import evaluate as evaluate_ordering
+from .heuristics.path_policy import evaluate as evaluate_path_policy
 from .heuristics.path_scope import evaluate as evaluate_path_scope
 from .heuristics.read_before_edit import evaluate as evaluate_read_before_edit
 from .heuristics.read_hygiene import evaluate as evaluate_read_hygiene
@@ -439,6 +441,24 @@ def audit_agents(
                 compliant += outcome.compliant
                 violations += outcome.violations
                 examples.extend(outcome.examples)
+            elif rule.category == "path_policy":
+                outcome = evaluate_path_policy(rule, edit_events, _path_matches)
+                if outcome is None:
+                    continue
+                applicable += outcome.applicable
+                observed += outcome.observed
+                compliant += outcome.compliant
+                violations += outcome.violations
+                examples.extend(outcome.examples)
+            elif rule.category == "command_policy":
+                outcome = evaluate_command_policy(rule, events, _normalize_command, _argv_match)
+                if outcome is None:
+                    continue
+                applicable += outcome.applicable
+                observed += outcome.observed
+                compliant += outcome.compliant
+                violations += outcome.violations
+                examples.extend(outcome.examples)
             elif rule.category == "toolchain":
                 outcome = evaluate_toolchain(rule, events, edit_events)
                 if outcome is None:
@@ -513,11 +533,13 @@ def audit_agents(
             "commit_hygiene": "commit-hygiene",
             "lockfile": "lockfile-edit",
             "toolchain": "toolchain-policy",
+            "path_policy": "path-policy",
+            "command_policy": "command-policy",
             "context_hygiene": "scratch-file-hygiene",
             "architecture_map": "path-ownership",
         }.get(rule.category, "generic")
         measurable = rule.category in {
-            "test_command", "validation", "command", "path_scope", "hook_bypass", "git_workflow", "commit_hygiene", "lockfile", "toolchain", "read_hygiene", "read_before_edit", "ordering", "context_hygiene",
+            "test_command", "validation", "command", "path_scope", "path_policy", "command_policy", "hook_bypass", "git_workflow", "commit_hygiene", "lockfile", "toolchain", "read_hygiene", "read_before_edit", "ordering", "context_hygiene",
         }
         opportunities = applicable if measurable else 0
         undecided = 0
@@ -527,7 +549,7 @@ def audit_agents(
             violations = max(applicable - followed - undecided, 0)
         elif rule.category in {
             "hook_bypass", "git_workflow", "commit_hygiene", "lockfile", "toolchain", "command",
-            "path_scope", "read_hygiene", "read_before_edit", "ordering",
+            "path_scope", "path_policy", "command_policy", "read_hygiene", "read_before_edit", "ordering",
         }:
             followed = compliant
             undecided = max(applicable - followed - violations, 0)

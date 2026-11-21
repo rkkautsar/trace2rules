@@ -1578,3 +1578,40 @@ def test_toolchain_policy_flags_explicit_nightly_use(tmp_path: Path) -> None:
         con.close()
     assert audit.applicable_sessions == 1
     assert audit.violation_sessions == 1
+
+
+def test_command_policy_audits_forbidden_direct_command(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Formatting\n\n- Use `./x fmt`; do not invoke `rustfmt` directly.\n")
+    assert parse_agents(path)[0].category == "command_policy"
+    db = tmp_path / "command_policy.duckdb"
+    write_sessions(
+        db,
+        [Session("s", "acme/repo", calls=[ToolCall("Bash", "rustfmt src/lib.rs", action_type="exec")])],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.applicable_sessions == 1
+    assert audit.violation_sessions == 1
+
+
+def test_path_policy_audits_protected_path_edits(tmp_path: Path) -> None:
+    (tmp_path / "src" / "generated").mkdir(parents=True)
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Generated\n\n- Do not edit files in `src/generated/`.\n")
+    assert parse_agents(path)[0].category == "path_policy"
+    db = tmp_path / "path_policy.duckdb"
+    write_sessions(
+        db,
+        [Session("s", "acme/repo", calls=[ToolCall("Edit", "src/generated/api.py", action_type="edit", target="src/generated/api.py")])],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path), root=tmp_path)[0]
+    finally:
+        con.close()
+    assert audit.applicable_sessions == 1
+    assert audit.violation_sessions == 1

@@ -27,6 +27,10 @@ def enforcement_for(rule: AgentRule) -> str:
         return "Pre-commit or CI check that lockfiles are regenerated only through the package manager."
     if rule.category == "toolchain":
         return "CI pins the declared toolchain and rejects ad-hoc toolchain switching."
+    if rule.category == "path_policy":
+        return "Pre-commit or CI protected-path check."
+    if rule.category == "command_policy":
+        return "Pre-commit/CI command wrapper check or a denied-command hook."
     if rule.category == "read_hygiene":
         return "No mechanical enforcement; harness/context-budget hooks can observe reads."
     if rule.category == "read_before_edit":

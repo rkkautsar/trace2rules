@@ -18,8 +18,19 @@ VALIDATION_RUN_RE = re.compile(
 COMMAND_TOKENS = {
     "bash", "cargo", "cd", "curl", "docker", "git", "gh", "go", "make",
     "npm", "npx", "pnpm", "pip", "pdm", "python", "pytest", "rg", "sed", "sh",
-    "uv", "yarn",
+    "uv", "yarn", "timeout", "rustfmt", "deno", "wget", "rm", "chmod",
 }
+
+
+def _command_policy_commands(commands: tuple[str, ...]) -> bool:
+    for command in commands:
+        parts = command.strip().split()
+        if not parts:
+            continue
+        token = re.sub(r"^[A-Z_][A-Z0-9_]*=", "", parts[0]).lstrip("(").lower()
+        if token in COMMAND_TOKENS or token.startswith("./"):
+            return True
+    return False
 
 
 def _command_rule(text: str, commands: tuple[str, ...]) -> bool:
@@ -98,6 +109,7 @@ def _normalize_command(command: str) -> str:
 
 def _category(text: str, paths: tuple[str, ...]) -> str:
     lower = text.lower()
+    commands = COMMAND_RE.findall(text)
     if re.search(r"(?i)(?:--no-verify|skip(?:ping)? (?:the )?pre-commit|pre-commit hook)", lower):
         return "hook_bypass"
     if re.search(
@@ -121,6 +133,10 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
         and any(LOCKFILE_RE.search(path) for path in paths)
     ):
         return "lockfile"
+    if commands and NEGATIVE_RULE_RE.search(lower) and _command_policy_commands(commands):
+        return "command_policy"
+    if paths and NEGATIVE_RULE_RE.search(lower):
+        return "path_policy"
     if re.search(
         r"(?i)(?:whole[- ]file|cat -n|nl -ba|read only.*range|context blast|line ranges|full re-read)",
         lower,
@@ -134,7 +150,6 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
         lower,
     ):
         return "read_before_edit"
-    commands = COMMAND_RE.findall(text)
     if len(commands) >= 2 and re.search(r"(?i)\bonly after\b", lower):
         return "ordering"
     if commands and re.search(r"(?i)\bbefore (?:running |running the )?tests?\b", lower):

@@ -63,7 +63,6 @@ On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` 
 **`rkkautsar/trace2rules`**
 
 - [guidance] Keep `src/trace2rules/cli.py` limited to Typer wiring and option parsing; put non-CLI logic in a dedicated module under `src/trace2rules/`.
-- [guidance] Before editing a target file, read that file or confirm it does not exist. A search result that lists adjacent files is not a read of the target.
 - [guidance] When adding, renaming, or removing a CLI command or option in `src/trace2rules/cli.py`, update the matching row in the `README.md` command table in the same change.
 
 The latest synthesis also proposed a read-target rule; `audit --proposal` marked it `reword` (10 violations across 16 opportunities), so it is omitted from this example.

@@ -1262,3 +1262,20 @@ def test_test_rule_is_not_violated_by_docs_only_edit(tmp_path: Path) -> None:
         con.close()
     assert audit.applicable_sessions == 0
     assert audit.violation_sessions == 0
+
+
+def test_unmeasured_rule_is_not_reported_compliant(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("")
+    (tmp_path / "uv.lock").write_text("")
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Dependencies\n\n- Update `pyproject.toml` and `uv.lock` together.\n")
+    db = tmp_path / "unmeasured.duckdb"
+    write_sessions(db, [Session("s", "acme/repo")])
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path), root=tmp_path)[0]
+    finally:
+        con.close()
+    assert audit.coverage == "unmeasured"
+    assert audit.compliant_sessions == 0
+    assert audit.verdict == "not_measured"

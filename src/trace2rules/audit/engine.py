@@ -12,6 +12,7 @@ from typing import Any, Sequence
 import duckdb
 
 from .heuristics.command_usage import evaluate as evaluate_command_usage
+from .heuristics.commit_hygiene import evaluate as evaluate_commit_hygiene
 from .heuristics.context_hygiene import evaluate as evaluate_context_hygiene
 from .heuristics.generic import evaluate as evaluate_generic
 from .heuristics.git_workflow import evaluate as evaluate_git_workflow
@@ -405,6 +406,15 @@ def audit_agents(
                 compliant += outcome.compliant
                 violations += outcome.violations
                 examples.extend(outcome.examples)
+            elif rule.category == "commit_hygiene":
+                outcome = evaluate_commit_hygiene(rule, events)
+                if outcome is None:
+                    continue
+                applicable += outcome.applicable
+                observed += outcome.observed
+                compliant += outcome.compliant
+                violations += outcome.violations
+                examples.extend(outcome.examples)
             elif rule.category == "context_hygiene":
                 outcome = evaluate_context_hygiene(
                     rule,
@@ -449,11 +459,12 @@ def audit_agents(
             "command": "command-usage",
             "path_scope": "path-scope",
             "git_workflow": "git-workflow",
+            "commit_hygiene": "commit-hygiene",
             "context_hygiene": "scratch-file-hygiene",
             "architecture_map": "path-ownership",
         }.get(rule.category, "generic")
         measurable = rule.category in {
-            "test_command", "validation", "command", "path_scope", "hook_bypass", "git_workflow", "read_hygiene", "read_before_edit", "ordering", "context_hygiene",
+            "test_command", "validation", "command", "path_scope", "hook_bypass", "git_workflow", "commit_hygiene", "read_hygiene", "read_before_edit", "ordering", "context_hygiene",
         }
         opportunities = applicable if measurable else 0
         undecided = 0

@@ -1486,3 +1486,30 @@ def test_git_workflow_does_not_flag_normal_push(tmp_path: Path) -> None:
         con.close()
     assert audit.applicable_sessions == 0
     assert audit.violation_sessions == 0
+
+
+def test_commit_hygiene_audit_detects_large_uncommitted_streak(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Git\n\n- Commit your work as frequent as possible.\n")
+    assert parse_agents(path)[0].category == "commit_hygiene"
+    db = tmp_path / "commit_audit.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[
+                    ToolCall("Edit", f"src/f{i}.py", action_type="edit", target=f"src/f{i}.py")
+                    for i in range(8)
+                ],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.applicable_sessions == 1
+    assert audit.violation_sessions == 1

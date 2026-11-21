@@ -92,6 +92,12 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
     ):
         return "git_workflow"
     if re.search(
+        r"(?i)\bcommit\b.*\b(?:frequent|frequently|small|batch|early|often)\b|"
+        r"\bcommit (?:your|the) work\b",
+        lower,
+    ):
+        return "commit_hygiene"
+    if re.search(
         r"(?i)(?:whole[- ]file|cat -n|nl -ba|read only.*range|context blast|line ranges|full re-read)",
         lower,
     ):

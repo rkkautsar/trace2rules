@@ -12,7 +12,7 @@ Update dependencies only in `pyproject.toml` and commit the regenerated `uv.lock
 
 ## Validation
 
-For a behavior change under `src/trace2rules/`, reproduce the defect with a failing test before editing source; if no existing test covers it, add a failing test first.
+For a behavior change under `src/trace2rules/`, reproduce the defect with a failing `uv run pytest -q` before editing source; if no existing test covers it, add a failing test first.
 
 Narrow one failing CLI case with:
 

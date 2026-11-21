@@ -15,6 +15,7 @@ def repeated_reads(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
         per_session_min=2,
         total_min=2,
         sessions_min=2,
+        limit=limit,
     ):
         step = con.execute(
             "SELECT min(step_idx) FROM tool_events WHERE session_id = ? AND target = ? AND action_type = 'read'",
@@ -41,4 +42,4 @@ def repeated_reads(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
                 ),
             )
         )
-    return findings[:limit] if limit is not None else findings
+    return findings

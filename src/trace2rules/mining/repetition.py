@@ -33,6 +33,7 @@ def repetition_findings(
     total_min: int,
     sessions_min: int,
     include_family: bool = False,
+    limit: int | None = None,
 ) -> list[Repetition]:
     """Find the same action on the same target repeated across sessions.
 
@@ -72,6 +73,7 @@ def repetition_findings(
         GROUP BY 1, 2
         HAVING sum(actions) >= ? AND count(*) >= ?
         ORDER BY actions DESC, sessions DESC
+        {f"LIMIT {int(limit)}" if limit is not None else ""}
         """,
         [action_type, int(total_min), int(sessions_min)],
     ).fetchall()

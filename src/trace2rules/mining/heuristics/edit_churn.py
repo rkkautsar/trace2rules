@@ -17,6 +17,7 @@ def edit_churn(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list
         per_session_min=3,
         total_min=3,
         sessions_min=2,
+        limit=limit,
     ):
         step = con.execute(
             "SELECT min(step_idx) FROM tool_events WHERE session_id = ? AND target = ? AND action_type = 'edit'",
@@ -45,4 +46,4 @@ def edit_churn(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list
                 ),
             )
         )
-    return findings[:limit] if limit is not None else findings
+    return findings

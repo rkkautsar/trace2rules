@@ -75,28 +75,39 @@ def error_transitions(
             costs[key] += session_cost[session_key]
             examples.setdefault(key, (session_id, class_steps[session_key][first]))
 
+    summaries = [
+        (
+            key,
+            repo,
+            first,
+            second,
+            len(sessions[key]),
+            int(costs[key]),
+            f"{occurrences[key]} ordered transitions across {len(instances[key])} instances",
+            examples.get(key),
+        )
+        for key in sessions
+        for repo, first, second in [key]
+        if len(sessions[key]) >= 5 and len(instances[key]) >= 2
+    ]
+    summaries.sort(key=lambda item: (item[4], item[5]), reverse=True)
+    selected = summaries[:limit] if limit is not None else summaries
     findings = [
         Finding(
             kind="error_transition",
             repo=repo,
             title=f"{first} -> {second}",
-            sessions=len(sessions[key]),
-            tokens=int(costs[key]),
-            detail=(
-                f"{occurrences[key]} ordered transitions across "
-                f"{len(instances[key])} instances"
-            ),
+            sessions=session_count,
+            tokens=tokens,
+            detail=detail,
             failure_family=f"{first}->{second}",
             side="agent",
             recommendation=(
                 "Treat these as one failure chain: resolve the earlier error "
                 "class before changing the next command or test selector."
             ),
-            window=_representative_window(con, *examples[key]),
+            window=_representative_window(con, *example) if example else (),
         )
-        for key in sessions
-        for repo, first, second in [key]
-        if len(sessions[key]) >= 5 and len(instances[key]) >= 2
+        for _key, repo, first, second, session_count, tokens, detail, example in selected
     ]
-    findings.sort(key=lambda finding: (finding.sessions, finding.tokens), reverse=True)
-    return findings[:limit] if limit is not None else findings
+    return findings

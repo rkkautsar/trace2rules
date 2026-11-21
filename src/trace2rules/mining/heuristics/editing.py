@@ -48,9 +48,10 @@ def stuck_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> lis
             total_min=3,
             sessions_min=2,
             include_family=True,
+            limit=limit,
         )
     ]
-    return findings[:limit] if limit is not None else findings
+    return findings
 
 def site_edit_mismatch(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
     rows = con.execute(

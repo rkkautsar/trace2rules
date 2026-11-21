@@ -222,8 +222,6 @@ def _existing_markdown(existing: dict | None) -> list[str]:
             details.append(f"existing {_text(rule['existing_enforcement'], 160)}")
         if details:
             lines.append("  - " + " · ".join(details))
-        if rule.get("suggestion"):
-            lines.append(f"  - Suggestion: {_text(rule['suggestion'], 300)}")
     return lines
 
 

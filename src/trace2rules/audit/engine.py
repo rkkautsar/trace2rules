@@ -121,9 +121,9 @@ class RuleAudit:
             "source_path": self.source_path,
             "source_scope": self.source_scope,
             "verdict": self.verdict,
+            "suggestion": self.suggestion,
             "enforceable": self.enforceable,
             "enforcement": self.enforcement,
-            "suggestion": self.suggestion,
         }
 
 

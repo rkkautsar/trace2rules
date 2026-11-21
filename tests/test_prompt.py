@@ -260,3 +260,23 @@ def test_proposal_scope_is_repo_when_file_is_outside_checkout(tmp_path: Path) ->
     finally:
         con.close()
     assert [rule["source_scope"] for rule in payload["rules"]] == ["repo"]
+
+
+def test_audit_prompt_omits_deterministic_suggestions() -> None:
+    from trace2rules.synthesis.prompt import _prompt
+
+    prompt = _prompt(
+        [],
+        "acme/repo",
+        existing={
+            "sessions": 1,
+            "rules": [
+                {
+                    "text": "Run `pytest` after edits.",
+                    "verdict": "enforce",
+                    "suggestion": "MOVE THIS INTO CI",
+                }
+            ],
+        },
+    )
+    assert "MOVE THIS INTO CI" not in prompt

@@ -1201,3 +1201,64 @@ def test_source_read_does_not_match_same_basename_in_another_directory() -> None
 
     assert not _is_source_read("read", "src/a/api.py", "src/a/api.py", "src/b/api.py")
     assert _is_source_read("read", "src/a/api.py", "src/a/api.py", "src/a/api.py")
+
+
+def test_read_before_edit_is_not_applicable_to_created_files(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Editing\n\n- Read the target file before editing it.\n")
+    db = tmp_path / "created.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[
+                    ToolCall(
+                        "Create",
+                        "src/new_module.py",
+                        action_type="edit",
+                        target="src/new_module.py",
+                        verb="create",
+                    )
+                ],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.applicable_sessions == 0
+    assert audit.not_applicable_sessions == 1
+    assert audit.verdict == "not_applicable"
+
+
+def test_test_rule_is_not_violated_by_docs_only_edit(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_api.py").write_text("")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "api.py").write_text("")
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Validation\n\n- Run `pytest tests/test_api.py` after editing.\n")
+    db = tmp_path / "docs_only.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[
+                    ToolCall("Edit", "README.md", action_type="edit", target="README.md"),
+                ],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path), root=tmp_path)[0]
+    finally:
+        con.close()
+    assert audit.applicable_sessions == 0
+    assert audit.violation_sessions == 0

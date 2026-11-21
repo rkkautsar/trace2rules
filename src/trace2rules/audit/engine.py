@@ -233,7 +233,7 @@ def audit_agents(
     rows = con.execute(
         f"""
         SELECT e.session_id, e.step_idx, e.action_type, e.raw_target,
-               e.target, e.object_id, e.outcome, s.cwd
+               e.target, e.object_id, e.outcome, s.cwd, e.verb
         FROM tool_events e JOIN sessions s USING (session_id)
         WHERE {' AND '.join(filters)}
         ORDER BY e.session_id, e.step_idx
@@ -242,10 +242,13 @@ def audit_agents(
     ).fetchall()
     sessions: dict[str, list[tuple]] = {}
     cwds: dict[str, str] = {}
+    new_file_steps: dict[str, set[int]] = {}
     for row in rows:
         session_id = row[0]
         sessions.setdefault(session_id, []).append(row[:7])
         cwds[session_id] = row[7] or ""
+        if str(row[8]).lower() in {"create", "write_file"}:
+            new_file_steps.setdefault(session_id, set()).add(row[1])
 
     audits: list[RuleAudit] = []
     for rule in rules:
@@ -271,11 +274,20 @@ def audit_agents(
                 if not cwd or not _cwd_within(cwd, rule_dir):
                     not_applicable += 1
                     continue
-            edit_events = [
+            all_edit_events = [
                 (step, target)
                 for _sid, step, action, _raw, target, _object, outcome in events
                 if action == "edit" and outcome not in ("err", "timeout")
             ]
+            created_steps = new_file_steps.get(session_id, set())
+            edit_events = [
+                (step, target)
+                for step, target in all_edit_events
+                if step not in created_steps
+            ]
+            if all_edit_events and not edit_events:
+                not_applicable += 1
+                continue
             if scope:
                 edit_events = [
                     (step, target)

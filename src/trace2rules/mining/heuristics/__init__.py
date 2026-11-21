@@ -1,4 +1,5 @@
 from .command_errors import command_errors
+from .commit_hygiene import commit_hygiene
 from .context import prompt_context
 from .edit_churn import edit_churn
 from .editing import blind_edits, dependency_drift, edit_rejections, generated_edits, site_edit_mismatch, stuck_loops
@@ -17,6 +18,7 @@ from .validation import false_completions, low_validation, no_reproduction, prem
 __all__ = [
     "blind_edits",
     "command_errors",
+    "commit_hygiene",
     "context_blasts",
     "correction_loops",
     "destructive_commands",

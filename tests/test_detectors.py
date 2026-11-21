@@ -398,3 +398,35 @@ def test_path_and_runner_heuristics_cover_multiple_languages() -> None:
     for target in ("cargo test", "go test ./...", "npm test"):
         advice = _context_advice(target, "exec")[1]
         assert "pytest" not in advice.lower()
+
+
+def test_destructive_commands_include_publish_and_release(monkeypatch) -> None:
+    import trace2rules.mining.heuristics.safety as safety_module
+
+    monkeypatch.setattr(safety_module, "_representative_window", lambda *args: ())
+    con = _detector_db(monkeypatch)
+    _add_sessions(con, 2)
+    con.executemany(
+        "INSERT INTO tool_events VALUES ('acme/repo', ?, 1, 'exec', ?, ?, 'ok', 10, '', '', false)",
+        [
+            ("s0", "npm publish", "npm publish"),
+            ("s1", "gh release create v1", "gh release create v1"),
+        ],
+    )
+    findings = destructive_commands(con)
+    assert {finding.title for finding in findings} == {"npm publish", "gh release create v1"}
+
+
+def test_commit_hygiene_finds_edit_streak_without_commit(monkeypatch) -> None:
+    from trace2rules.mining import commit_hygiene
+
+    module = importlib.import_module("trace2rules.mining.heuristics.commit_hygiene")
+    monkeypatch.setattr(module, "_representative_window", lambda *args: ())
+    con = _detector_db(monkeypatch)
+    _add_sessions(con, 1)
+    for step in range(8):
+        _add_edit(con, "s0", step)
+    finding = commit_hygiene(con)[0]
+    assert finding.kind == "commit_hygiene"
+    assert finding.sessions == 1
+    assert "no commit" in finding.title

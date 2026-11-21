@@ -8,6 +8,7 @@ import duckdb
 from .heuristics import (
     blind_edits,
     command_errors,
+    commit_hygiene,
     context_blasts,
     correction_loops,
     destructive_commands,
@@ -64,6 +65,7 @@ def mine(
         "reread": repeated_reads,
         "edit_churn": edit_churn,
         "command_error": command_errors,
+        "commit_hygiene": commit_hygiene,
         "feedback": feedback_loops,
         "failure_loop": failure_loops,
         "edit_rejection": edit_rejections,

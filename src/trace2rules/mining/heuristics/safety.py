@@ -27,7 +27,7 @@ def destructive_commands(con: duckdb.DuckDBPyConnection, limit: int | None = Non
         WHERE action_type = 'exec'
           AND regexp_matches(
               coalesce(raw_target, target),
-              '(?i)(git\s+reset\s+--hard|git\s+clean\s+-[a-z]*f|git\s+checkout\s+(--\s+)?\.|git\s+stash\s+drop|git\s+branch\s+-D|git\s+push\s+.*--force|--no-verify|HUSKY=0|core\.hooksPath|--admin)'
+              '(?i)(git\s+reset\s+--hard|git\s+clean\s+-[a-z]*f|git\s+checkout\s+(--\s+)?\.|git\s+stash\s+drop|git\s+branch\s+-D|git\s+push\s+.*--force|npm\s+publish|cargo\s+publish|pdm\s+publish|poetry\s+publish|twine\s+upload|gh\s+release|--no-verify|HUSKY=0|core\.hooksPath|--admin)'
           )
         GROUP BY 1, 2
         ORDER BY sessions DESC, events DESC

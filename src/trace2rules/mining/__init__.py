@@ -4,6 +4,7 @@ from .core import session_summary
 from .heuristics import (
     blind_edits,
     command_errors,
+    commit_hygiene,
     context_blasts,
     correction_loops,
     destructive_commands,
@@ -46,6 +47,7 @@ __all__ = [
     "Finding",
     "blind_edits",
     "command_errors",
+    "commit_hygiene",
     "context_blasts",
     "correction_loops",
     "destructive_commands",

@@ -191,11 +191,11 @@ uv sync
 
 | Format | What it reads |
 |---|---|
-| `open-swe` | [nvidia/Open-SWE-Traces](https://huggingface.co/datasets/nvidia/Open-SWE-Traces) parquet, cached locally; `--repos owner/name` is required |
-| `swe-rebench` | [nebius/SWE-rebench-openhands-trajectories](https://huggingface.co/datasets/nebius/SWE-rebench-openhands-trajectories) parquet, opt-in and cached locally |
+| `open-swe` | [nvidia/Open-SWE-Traces](https://huggingface.co/datasets/nvidia/Open-SWE-Traces) parquet, downloaded on first use; `--repos owner/name` is required |
+| `swe-rebench` | [nebius/SWE-rebench-openhands-trajectories](https://huggingface.co/datasets/nebius/SWE-rebench-openhands-trajectories) parquet, downloaded on first use; `--repos` takes instance prefixes such as `django__django` |
 | `agent-trajectory` | Local Claude Code, Codex, Pi, OMP, OpenCode SQLite/JSON |
 
-Datasets are not included in this repository.
+Public datasets require no Hugging Face token. The first run downloads the parquet into `~/.cache/trace2rules`; set `TRACE2RULES_CACHE_DIR` to move it, or pass `--refresh-cache` to re-download. Datasets are not included in this repository.
 
 ## Configuration
 

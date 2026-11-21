@@ -38,6 +38,7 @@ from .models import Finding
 from .error_transitions import error_transitions
 from .persistence import persistent_failure_sites
 from .read_recipes import read_recipes
+from .selector_effectiveness import selector_effectiveness
 from .prevention import prevention_deltas
 from .sequences import exact_sequences, friction_windows
 
@@ -74,6 +75,7 @@ __all__ = [
     "recovery_loops",
     "read_recipes",
     "repeated_reads",
+    "selector_effectiveness",
     "selector_misses",
     "session_summary",
     "site_edit_mismatch",

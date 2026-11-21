@@ -39,6 +39,7 @@ from .models import Finding
 from .error_transitions import error_transitions
 from .persistence import persistent_failure_sites
 from .read_recipes import read_recipes
+from .selector_effectiveness import selector_effectiveness
 from .prevention import prevention_deltas
 
 
@@ -79,6 +80,7 @@ def mine(
         "error_transition": error_transitions,
         "persistent_site": persistent_failure_sites,
         "read_recipe": read_recipes,
+        "selector_effectiveness": selector_effectiveness,
         "prevention_delta": prevention_deltas,
     }
     workers = workers or min(2, len(jobs), os.cpu_count() or 1)

@@ -59,6 +59,7 @@ def _candidate_score(finding: Finding) -> float:
         "error_transition": 1.4,
         "persistent_site": 1.5,
         "read_recipe": 1.2,
+        "selector_effectiveness": 1.5,
         "recovery": 1.0,
         "context": 0.7,
         "hotspot": 0.8,
@@ -138,6 +139,7 @@ def select_findings(
         "error_transition",
         "persistent_site",
         "read_recipe",
+        "selector_effectiveness",
     ):
         candidates.extend(
             finding

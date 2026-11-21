@@ -56,43 +56,40 @@ trace2rules audit --proposal AGENTS.proposed.md
 
 `--proposal` parses the proposed Markdown, audits it against sessions, and prints verdicts before you apply it.
 
-On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` audit finds 65 rules: 9 measured, 1 partial, and 55 unmeasured.
+On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` audit finds 65 rules: 10 measured, 0 partial, and 55 unmeasured.
 
-| Rule | Coverage | Followed | Violations | Confidence | Enforcement |
-|---|---|---:|---|---|---|
-| Commit frequently | measured | 136 | 52/188 (28%) | high | missing |
-| No nightly-only rustc features | measured | 172 | 16/188 (9%) | low | missing |
-| Use `gh` for GitHub data | measured | 18 | 6/24 (25%) | medium | `.github/workflows/CI.yml` |
-| Snapshot update with `UPDATE=1 cargo test` | measured | 23 | 2/25 (8%) | medium | missing |
-| `--no-verify` guard | partial | 13 | 1/14 (7%) | low | missing |
-| Read the codebase before editing | measured | 123 | 62/185 (34%) | high | guidance only |
-| Verify assumptions against source/tests | measured | 123 | 62/185 (34%) | high | guidance only |
-| Submodule update before tests | measured | 0 | 32/32 (100%) | medium | guidance only |
-| `git commit` only after `git add` | measured | 8 | 6/14 (43%) | low | guidance only |
-| `cargo test -p <crate>` | measured | 14 | 0/14 (0%) | low | missing |
-
-`configured` means the command appears in `.github/workflows/CI.yml`; it does not prove the check is required by branch protection. `available` means a Makefile/package target exists but is not wired into CI. `missing` means no mechanism was found.
-
-The two read rules are separate clauses but share the `read_before_edit` detector. Their identical followed/violation counts are expected, not evidence that they are the same rule.
-
-The MSRV rule is unmeasured: the trace does not declare a `rust-version`, and a `RUSTC_BOOTSTRAP` marker is not proof of an MSRV violation. Nightly counts all sessions with Rust toolchain activity; 16 of 188 used `RUSTC_BOOTSTRAP` or `+nightly`.
+| Rule | Followed | Violations | Confidence | Enforcement |
+|---|---:|---|---|---|
+| Commit frequently | 136 | 52/188 (28%) | high | missing |
+| No nightly-only rustc features | 172 | 16/188 (9%) | low | missing |
+| Use `gh` for GitHub data | 18 | 6/24 (25%) | medium | `.github/workflows/CI.yml` |
+| Snapshot update with `UPDATE=1 cargo test` | 23 | 2/25 (8%) | medium | missing |
+| `--no-verify` guard | 13 | 1/14 (7%) | low | missing |
+| Read the codebase before editing | 123 | 62/185 (34%) | high | guidance only |
+| Verify assumptions against source/tests | 123 | 62/185 (34%) | high | guidance only |
+| Submodule update before tests | 0 | 32/32 (100%) | medium | guidance only |
+| `git commit` only after `git add` | 8 | 6/14 (43%) | low | guidance only |
+| `cargo test -p <crate>` | 14 | 0/14 (0%) | low | missing |
 
 #### LLM review of the swc audit
 
 An `audit --prompt` pass over the same table suggests:
 
-- Delete the four stale binding `test.sh` commands; they are unmeasured and reference paths that no longer exist.
-- Enforce commit cadence with a pre-push clean-worktree check and reject `WIP`, `fixup!`, and `squash!` subjects.
-- Enforce the nightly rule with a stable-toolchain check and reject `#![feature(...)]`; MSRV remains unmeasured until a declared `rust-version` check exists.
-- Reject `curl`/`wget` to GitHub in CI so `gh` remains the access path.
-- Run snapshot tests with `UPDATE` unset and fail on uncommitted fixture changes.
-- Run the same checks in CI as in hooks so `--no-verify` cannot bypass them.
-- Consolidate the two read rules into a PR verification requirement: read the implementation, fixtures, and tests, then list verified paths.
-- Move submodule initialization into CI and test wrappers; add explicit staging and `git commit -a` checks.
+- Delete the four stale binding commands and add a workflow that checks backticked `AGENTS.md` paths at `HEAD`.
+- Reword commit cadence: commit one logical change after `cargo fmt --all -- --check` and the narrowest affected `cargo test -p <crate>`.
+- Enforce the nightly rule with `cargo +stable check` and a guard rejecting `#![feature(...)]`, `RUSTC_BOOTSTRAP`, and nightly `rust-toolchain.toml`.
+- Replace the GitHub access rule with: use `gh`; CI fails on `curl`/`wget` to `github.com`.
+- Run snapshot tests with `UPDATE` unset; keep `UPDATE=1` local-only for regeneration.
+- Make hooks and CI apply the same checks so `--no-verify` cannot bypass them.
+- Consolidate the two read rules into a PR `Source:`/`Test:` requirement.
+- Initialize submodules before every test job.
+- Stage explicit paths with `git add`; reject `git commit -a`.
 
-The review also proposed seven new rules: clean handoff, commit-subject hygiene, no `git commit -a`, no GitHub scraping, no `UPDATE` in CI, submodule wrappers, and an MSRV workflow.
+The review proposed three new rules: no package-scoped test commands in root `AGENTS.md`, every AGENTS path must exist at `HEAD`, and CI must run with `UPDATE` unset.
 
-`audit` prints the audited/total session count and defaults to the latest `AGENTS.md` commit cutoff. Pass `--all-sessions` for full history.
+MSRV is not measured yet, so the review does not propose a separate MSRV enforcement rule.
+
+`audit` prints the audited/total session count and audits all sessions by default. Pass `--latest-commit` to use the latest `AGENTS.md` commit as a cutoff; use `--since`/`--until` for explicit dates. By default, audit output shows measured and partial rules only; pass `--all-rules` to include unmeasured rules.
 
 ## Generating rules
 
@@ -157,6 +154,7 @@ trace2rules patterns --top 10
 trace2rules audit --agents AGENTS.md
 trace2rules audit --agents AGENTS.md --commit HEAD --json
 trace2rules audit --agents AGENTS.md --root . --prompt
+trace2rules audit --agents AGENTS.md --all-rules
 trace2rules holdout --agents AGENTS.md --fraction 0.3
 trace2rules mine --prompt --min-support 5
 trace2rules mine --prompt --max-rules 5

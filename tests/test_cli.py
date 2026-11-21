@@ -498,3 +498,50 @@ def test_mine_auto_ingests_an_explicit_source(tmp_path: Path, monkeypatch) -> No
     result = runner.invoke(app, ["mine", "--source", "/good", "--db", str(db)])
     assert result.exit_code == 0, result.output
     assert calls and calls[0][0] == "/good"
+
+
+def test_audit_hides_unmeasured_rules_by_default(tmp_path: Path) -> None:
+    db = tmp_path / "audit-filter.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s1",
+                "acme/repo",
+                source="test",
+                calls=[
+                    ToolCall("Edit", "src/a.py", action_type="edit", target="src/a.py"),
+                    ToolCall("Bash", "uv run pytest -q", action_type="exec"),
+                ],
+            )
+        ],
+    )
+    agents = tmp_path / "AGENTS.md"
+    agents.write_text(
+        "## Validation\n\n- Run `uv run pytest -q` after editing.\n\n"
+        "## Docs\n\n- Write documentation for public APIs.\n"
+    )
+    filtered = runner.invoke(
+        app,
+        ["audit", "--agents", str(agents), "--all-sessions", "--json", "--db", str(db)],
+    )
+    assert filtered.exit_code == 0
+    payload = json.loads(filtered.output)
+    assert [rule["text"] for rule in payload["rules"]] == ["Run `uv run pytest -q` after editing."]
+    assert payload["hidden_rules"] == 1
+
+    full = runner.invoke(
+        app,
+        [
+            "audit",
+            "--agents",
+            str(agents),
+            "--all-sessions",
+            "--all-rules",
+            "--json",
+            "--db",
+            str(db),
+        ],
+    )
+    assert full.exit_code == 0
+    assert len(json.loads(full.output)["rules"]) == 2

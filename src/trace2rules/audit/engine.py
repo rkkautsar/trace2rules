@@ -561,8 +561,14 @@ def audit_agents(
             coverage = "not_applicable"
             coverage_reason = "all sessions are outside this nested rule's cwd"
         elif rule.category == "hook_bypass":
-            coverage = "partial"
-            coverage_reason = "observable pre-commit bypass; other clauses are not scored"
+            if "--no-verify" in rule.text and not re.search(
+                r"(?i)pre-commit hook|skip(?:ping)? (?:the )?pre-commit", rule.text
+            ):
+                coverage = "measured"
+                coverage_reason = "observable --no-verify usage"
+            else:
+                coverage = "partial"
+                coverage_reason = "observable pre-commit bypass; other clauses are not scored"
         elif measurable and opportunities:
             coverage = "measured"
             coverage_reason = "observable command or path evidence"
@@ -979,8 +985,8 @@ def audit_commit(
 def audit_prompt(payload: dict[str, Any]) -> str:
     def rule_lines(rules: list[dict[str, Any]]) -> list[str]:
         lines = [
-            "| Rule | Scope | Source | Verdict | Coverage | Followed | Violations | Confidence | Enforcement |",
-            "|---|---|---|---|---|---|---|---|---|",
+            "| Rule | Scope | Source | Verdict | Followed | Violations | Confidence | Enforcement |",
+            "|---|---|---|---|---|---|---|---|",
         ]
         for rule in rules:
             lines.append(
@@ -991,7 +997,6 @@ def audit_prompt(payload: dict[str, Any]) -> str:
                         str(rule.get("source_scope", "repo")),
                         redact_text(str(rule.get("source_path", ""))[:160]),
                         str(rule.get("verdict", "keep")),
-                        str(rule.get("coverage", "unmeasured")),
                         str(rule.get("followed", 0)),
                         str(rule.get("violation_sessions", 0)),
                         str(rule.get("confidence", "none")),

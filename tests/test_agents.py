@@ -639,7 +639,7 @@ def test_hook_bypass_detector_counts_commits(tmp_path: Path) -> None:
     finally:
         con.close()
     assert audit.category == "hook_bypass"
-    assert audit.coverage == "partial"
+    assert audit.coverage == "measured"
     assert (audit.opportunities, audit.followed, audit.violation_sessions) == (2, 1, 1)
 
 

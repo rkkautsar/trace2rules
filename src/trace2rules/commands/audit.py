@@ -53,9 +53,9 @@ def _audit_command(
         bool,
         typer.Option(
             "--latest-commit/--all-sessions",
-            help="Use the latest AGENTS.md commit as the default session cutoff.",
+            help="Use the latest AGENTS.md commit as a session cutoff (default: all sessions).",
         ),
-    ] = True,
+    ] = False,
     commit: Annotated[
         str | None,
         typer.Option("--commit", help="Compare rule effectiveness before/after a commit."),
@@ -65,6 +65,10 @@ def _audit_command(
         typer.Option("--prompt", help="Emit a prompt for a fresh-context review agent."),
     ] = False,
     json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON.")] = False,
+    all_rules: Annotated[
+        bool,
+        typer.Option("--all-rules", help="Include unmeasured and non-applicable rules."),
+    ] = False,
     source: Annotated[
         list[str] | None,
         typer.Option("--source", "-s", help="Session root or parquet path; repeat for multiple."),
@@ -211,6 +215,19 @@ def _audit_command(
                 payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt, root=repo_root, source_scope="repo" if proposal is not None else None)
     finally:
         con.close()
+    if not all_rules and not commit:
+        payload["hidden_rules"] = sum(
+            1 for rule in payload["rules"] if rule.get("coverage") not in {"measured", "partial"}
+        )
+        payload["rules"] = [
+            rule for rule in payload["rules"] if rule.get("coverage") in {"measured", "partial"}
+        ]
+        payload["hidden_global_rules"] = sum(
+            1 for rule in payload.get("global_rules", []) if rule.get("coverage") not in {"measured", "partial"}
+        )
+        payload["global_rules"] = [
+            rule for rule in payload.get("global_rules", []) if rule.get("coverage") in {"measured", "partial"}
+        ]
     if prompt_output:
         from ..agents import audit_prompt
 
@@ -226,12 +243,11 @@ def _audit_command(
         console.print(f"Added rules: {len(payload['added'])}; removed: {len(payload['removed'])}")
         for label, key in (("After", "after"), ("Before", "before")):
             table = Table(title=f"{label} commit audit: {repo}")
-            for column in ("Rule", "Coverage", "Followed", "Violations", "Confidence", "Enforcement"):
+            for column in ("Rule", "Followed", "Violations", "Confidence", "Enforcement"):
                 table.add_column(column)
             for rule in payload[key]:
                 table.add_row(
                     redact_text(rule["text"][:90]),
-                    rule.get("coverage", "unmeasured"),
                     str(rule.get("followed", 0)),
                     _violations(rule),
                     rule.get("confidence", "none"),
@@ -255,13 +271,12 @@ def _audit_command(
             "[yellow]No sessions matched this cutoff; pass --all-sessions to audit full history.[/yellow]"
         )
     table = Table(title=f"AGENTS.md audit: {repo}")
-    for column in ("Rule", "Verdict", "Coverage", "Followed", "Violations", "Confidence", "Enforcement"):
+    for column in ("Rule", "Verdict", "Followed", "Violations", "Confidence", "Enforcement"):
         table.add_column(column)
     for rule in payload["rules"]:
         table.add_row(
             redact_text(rule["text"][:90]),
             rule.get("verdict", "keep"),
-            rule.get("coverage", "unmeasured"),
             str(rule.get("followed", 0)),
             _violations(rule),
             rule.get("confidence", "none"),
@@ -270,13 +285,12 @@ def _audit_command(
     console.print(table)
     if payload.get("global_rules"):
         global_table = Table(title=f"Global AGENTS.md: {repo}")
-        for column in ("Rule", "Verdict", "Coverage", "Followed", "Violations", "Confidence", "Enforcement"):
+        for column in ("Rule", "Verdict", "Followed", "Violations", "Confidence", "Enforcement"):
             global_table.add_column(column)
         for rule in payload["global_rules"]:
             global_table.add_row(
                 redact_text(rule["text"][:90]),
                 rule.get("verdict", "keep"),
-                rule.get("coverage", "unmeasured"),
                 str(rule.get("followed", 0)),
                 _violations(rule),
                 rule.get("confidence", "none"),

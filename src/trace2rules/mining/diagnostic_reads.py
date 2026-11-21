@@ -43,6 +43,7 @@ def diagnostic_reads(
                     if events[j][4] == "read"
                     and events[j][5] not in {"", "."}
                     and not events[j][5].startswith(("xd:", "skill:"))
+                    and re.search(r"\.[A-Za-z0-9]+$", events[j][5])
                 ),
                 None,
             )

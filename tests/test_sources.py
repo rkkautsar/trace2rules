@@ -16,9 +16,12 @@ from trace2rules.ingest.sources.agent_trajectory import (
     TranscriptMeta,
     _assign_unique_session_ids,
     _detect_source,
+    _normalize_batch,
     _records_to_session,
     _relevant_line,
     _resolve_instance,
+    _resolve_repos,
+    _scan_transcript,
     extract_transcript_meta,
     ingest_agent_sessions,
 )
@@ -577,3 +580,81 @@ def test_duplicate_session_ids_are_suffixed() -> None:
 def test_compaction_markers_are_relevant() -> None:
     assert _relevant_line('{"tool_call": "x"}', "omp")
     assert _relevant_line('{"isCompactSummary": true}', "claude-code")
+
+
+def test_normalize_batch_bisects_instead_of_retrying_each_file(tmp_path: Path) -> None:
+    paths = [tmp_path / f"{index}.jsonl" for index in range(16)]
+    for index, path in enumerate(paths):
+        path.write_text("boom\n" if index == 15 else f"ok-{index}\n")
+    calls: list[int] = []
+
+    def fake_normalize(requests):
+        calls.append(len(requests))
+        if any("boom" in request["transcript"] for request in requests):
+            raise RuntimeError("runtime crashed")
+        return [
+            {"records": [{"role": "meta", "marker": request["transcript"].strip()}]}
+            for request in requests
+        ]
+
+    batch = [(path, TranscriptMeta()) for path in paths]
+    results = _normalize_batch("omp", {}, batch, {}, fake_normalize)
+
+    # Bisection isolates the bad file in O(log n) requests, not one request per file.
+    assert len(calls) < len(paths)
+    assert len(results) == len(batch)
+    assert results[15] == {"records": [], "diagnostics": []}
+    for index in range(15):
+        assert results[index]["records"][0]["marker"] == f"ok-{index}"
+
+
+def test_normalize_batch_reuses_scanned_text(tmp_path: Path) -> None:
+    path = tmp_path / "session.jsonl"
+    path.write_text("hello\n")
+    _path, _meta, text, error = _scan_transcript(path, "omp")
+    assert error is None and text == "hello\n"
+    path.unlink()
+    seen: list[str] = []
+
+    def fake_normalize(requests):
+        seen.append(requests[0]["transcript"])
+        return [{"records": [{"role": "meta"}]}]
+
+    results = _normalize_batch(
+        "omp", {}, [(path, TranscriptMeta())], {path: text}, fake_normalize
+    )
+    assert seen == ["hello\n"]
+    assert results[0]["records"] == [{"role": "meta"}]
+
+
+def test_resolve_repos_resolves_each_cwd_once(monkeypatch) -> None:
+    from trace2rules.ingest.sources import agent_trajectory
+
+    calls: list[str] = []
+
+    def fake_repo(cwd):
+        calls.append(cwd)
+        return f"repo:{cwd}"
+
+    monkeypatch.setattr(agent_trajectory, "_repo_from_cwd", fake_repo)
+    repos = _resolve_repos(["/a", "/a", "/b", "", None])
+
+    assert repos == {"/a": "repo:/a", "/b": "repo:/b"}
+    assert sorted(calls) == ["/a", "/b"]
+
+
+def test_records_to_session_uses_pre_resolved_repo(monkeypatch) -> None:
+    from trace2rules.ingest.sources import agent_trajectory
+
+    def fail(cwd):
+        raise AssertionError("git lookup should not run for a pre-resolved cwd")
+
+    monkeypatch.setattr(agent_trajectory, "_repo_from_cwd", fail)
+    session = _records_to_session(
+        Path("session.jsonl"),
+        "omp",
+        [{"role": "meta", "cwd": "/work/repo"}],
+        None,
+        repos={"/work/repo": "acme/repo"},
+    )
+    assert session.repo == "acme/repo"

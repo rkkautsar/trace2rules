@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -225,11 +226,90 @@ def extract_transcript_meta(path: Path, source: str, text: str) -> TranscriptMet
 
 
 def _scan_transcript(path: Path, source: str):
+    """Return the decoded transcript so normalization does not read it again."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as error:
-        return path, None, error
-    return path, extract_transcript_meta(path, source, text), None
+        return path, None, None, error
+    return path, extract_transcript_meta(path, source, text), text, None
+
+
+# Cap on decoded transcripts kept for the normalize pass. Scanning has to finish
+# before normalization (session ids are assigned across the whole source root),
+# so retaining every fresh transcript would hold the entire corpus in memory.
+# Texts are cached in scan order up to this budget (counted in characters, a
+# close enough proxy for bytes on these transcripts) and reused by the batches
+# that consume the same prefix; anything beyond it is read a second time.
+TEXT_CACHE_BYTES = 128 * 1024 * 1024
+
+
+def _normalize_bisect(
+    normalize_many,
+    source: str,
+    bounds: dict,
+    items: list[tuple[int, Path, str]],
+) -> dict[int, dict]:
+    """Normalize ``items``, bisecting failing requests down to single files.
+
+    A malformed or oversized transcript can crash the Node runtime. Splitting
+    the batch in half isolates it in O(log n) requests instead of retrying every
+    file individually. Results stay keyed by the caller's index.
+    """
+    results: dict[int, dict] = {}
+
+    def attempt(chunk: list[tuple[int, Path, str]]) -> None:
+        try:
+            normalized = list(
+                normalize_many(
+                    [
+                        {"source": source, "transcript": text, "bounds": bounds}
+                        for _index, _path, text in chunk
+                    ]
+                )
+            )
+        except Exception as error:
+            if len(chunk) == 1:
+                index, path, _text = chunk[0]
+                print(f"Skipping {path}: {error}")
+                results[index] = {"records": [], "diagnostics": []}
+                return
+            middle = len(chunk) // 2
+            attempt(chunk[:middle])
+            attempt(chunk[middle:])
+            return
+        for (index, _path, _text), result in zip(chunk, normalized):
+            results[index] = result
+
+    if items:
+        attempt(items)
+    return results
+
+
+def _normalize_batch(
+    source: str,
+    bounds: dict,
+    batch: list[tuple[Path, TranscriptMeta]],
+    cache: dict[Path, str],
+    normalize_many,
+) -> list[dict]:
+    """Normalize one batch, reusing texts decoded during the scan pass.
+
+    Returns one entry per batch item so callers can zip it against the batch.
+    """
+    results = [{"records": [], "diagnostics": []} for _ in batch]
+    items: list[tuple[int, Path, str]] = []
+    for index, (path, _meta) in enumerate(batch):
+        text = cache.pop(path, None)
+        if text is None:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError as error:
+                print(f"Skipping {path}: {error}")
+                continue
+        items.append((index, path, text))
+    for index, result in _normalize_bisect(normalize_many, source, bounds, items).items():
+        results[index] = result
+    return results
 
 
 def _assign_unique_session_ids(
@@ -408,6 +488,16 @@ def _repo_from_cwd(cwd: str | None) -> str:
     return root.name or path.name
 
 
+def _resolve_repos(cwds: Iterable[str | None]) -> dict[str, str]:
+    """Resolve each distinct cwd to a repo label once, in parallel (git is fork-bound)."""
+    unique = sorted({cwd for cwd in cwds if cwd})
+    if not unique:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(8, len(unique))) as pool:
+        resolved = pool.map(_repo_from_cwd, unique)
+        return dict(zip(unique, resolved))
+
+
 def _session_id(path: Path) -> str:
     digest = hashlib.sha1(str(path.resolve()).encode()).hexdigest()[:12]
     return f"{path.stem}-{digest}"
@@ -420,9 +510,13 @@ def _records_to_session(
     repo_override: str | None,
     *,
     meta: TranscriptMeta | None = None,
+    repos: dict[str, str] | None = None,
 ) -> Session:
     meta_record = next((record for record in records if record.get("role") == "meta"), {})
-    repo = repo_override or _repo_from_cwd(meta_record.get("cwd")) or "unknown"
+    cwd = meta_record.get("cwd")
+    repo = repo_override
+    if not repo:
+        repo = (repos or {}).get(cwd or "") or _repo_from_cwd(cwd) or "unknown"
     session_id = (meta.session_id if meta and meta.session_id else _session_id(path))
     started_at = None
     for record in records:
@@ -646,27 +740,45 @@ def ingest_agent_sessions(
                         progress.update(scan_task, advance=1)
                     continue
                 fresh_paths.append(path)
+            text_cache: dict[Path, str] = {}
+            cached_bytes = 0
             if fresh_paths:
-                with ThreadPoolExecutor(max_workers=min(2, len(fresh_paths))) as pool:
-                    scanned = list(
-                        pool.map(
-                            lambda path: _scan_transcript(path, source_name), fresh_paths
-                        )
-                    )
-            else:
-                scanned = []
-            for path, meta, error in scanned:
-                    if error is not None:
-                        print(f"Skipping {path}: {error}")
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    # Bound in-flight submissions: map() would let a fast worker
+                    # decode every later file while the first result is pending.
+                    pending = [
+                        pool.submit(_scan_transcript, path, source_name)
+                        for path in fresh_paths[:2]
+                    ]
+                    next_index = len(pending)
+                    while pending:
+                        path, meta, text, error = pending.pop(0).result()
+                        if next_index < len(fresh_paths):
+                            pending.append(
+                                pool.submit(
+                                    _scan_transcript,
+                                    fresh_paths[next_index],
+                                    source_name,
+                                )
+                            )
+                            next_index += 1
+                        if error is not None:
+                            print(f"Skipping {path}: {error}")
+                            if progress and scan_task is not None:
+                                progress.update(scan_task, advance=1)
+                            continue
+                        meta.session_id = meta.session_id or _session_id(path)
+                        if meta.session_id not in metas_by_id:
+                            metas_by_id[meta.session_id] = meta
+                        transcript_metas.append((path, meta))
+                        if (
+                            text is not None
+                            and cached_bytes + len(text) <= TEXT_CACHE_BYTES
+                        ):
+                            text_cache[path] = text
+                            cached_bytes += len(text)
                         if progress and scan_task is not None:
                             progress.update(scan_task, advance=1)
-                        continue
-                    meta.session_id = meta.session_id or _session_id(path)
-                    if meta.session_id not in metas_by_id:
-                        metas_by_id[meta.session_id] = meta
-                    transcript_metas.append((path, meta))
-                    if progress and scan_task is not None:
-                        progress.update(scan_task, advance=1)
             for meta in metas_by_id.values():
                 meta.instance_id = _resolve_instance(meta.session_id, metas_by_id)
             _assign_unique_session_ids(transcript_metas)
@@ -682,42 +794,9 @@ def ingest_agent_sessions(
             source_calls = 0
 
             def normalize_batch(batch):
-                normalized = []
-                texts: list[tuple[Path, str]] = []
-                for path, _meta in batch:
-                    try:
-                        texts.append((path, path.read_text(encoding="utf-8", errors="replace")))
-                    except OSError as error:
-                        print(f"Skipping {path}: {error}")
-                if not texts:
-                    return [{"records": [], "diagnostics": []} for _ in batch]
-                try:
-                    normalized = list(
-                        normalize_many(
-                            [
-                                {"source": source_name, "transcript": text, "bounds": bounds}
-                                for _path, text in texts
-                            ]
-                        )
-                    )
-                except Exception:
-                    # A single malformed or oversized transcript can crash the
-                    # Node runtime. Isolate each file so the whole ingest does
-                    # not die with it.
-                    normalized = []
-                    for path, text in texts:
-                        try:
-                            normalized.extend(
-                                [
-                                    normalize_many(
-                                        [{"source": source_name, "transcript": text, "bounds": bounds}]
-                                    )[0]
-                                ]
-                            )
-                        except Exception as error:
-                            print(f"Skipping {path}: {error}")
-                            normalized.append({"records": [], "diagnostics": []})
-                return normalized
+                return _normalize_batch(
+                    source_name, bounds, batch, text_cache, normalize_many
+                )
 
             BATCH_BYTES = 8 * 1024 * 1024
             batches: list[list[tuple[Path, TranscriptMeta]]] = []
@@ -738,11 +817,31 @@ def ingest_agent_sessions(
 
             def consume(batch, results) -> None:
                 nonlocal chunk, source_sessions, source_calls
-                for (_path, meta), result in zip(batch, results):
-                    if not result.get("records"):
-                        continue
+                usable = [
+                    (path, meta, result["records"])
+                    for (path, meta), result in zip(batch, results)
+                    if result.get("records")
+                ]
+                repos: dict[str, str] = {}
+                if repo is None and usable:
+                    cwds = [
+                        cwd
+                        for _path, _meta, records in usable
+                        if (
+                            cwd := next(
+                                (
+                                    record.get("cwd")
+                                    for record in records
+                                    if record.get("role") == "meta"
+                                ),
+                                None,
+                            )
+                        )
+                    ]
+                    repos = _resolve_repos(cwds)
+                for path, meta, records in usable:
                     session = _records_to_session(
-                        _path, source_name, result["records"], repo, meta=meta
+                        path, source_name, records, repo, meta=meta, repos=repos
                     )
                     if session.session_id in seen_session_ids:
                         continue
@@ -785,15 +884,26 @@ def ingest_agent_sessions(
             )
             manifest_con = _connect(db_path)
             try:
+                rows = []
                 for path in selected_paths:
                     try:
                         stat = path.stat()
                     except OSError:
                         continue
-                    manifest_con.execute(
-                        "INSERT OR REPLACE INTO ingest_files VALUES (?, ?, ?, ?)",
-                        [str(path), stat.st_mtime_ns, stat.st_size, split_compactions],
+                    rows.append(
+                        [str(path), stat.st_mtime_ns, stat.st_size, split_compactions]
                     )
+                if rows:
+                    manifest_con.execute("BEGIN TRANSACTION")
+                    try:
+                        manifest_con.executemany(
+                            "INSERT OR REPLACE INTO ingest_files VALUES (?, ?, ?, ?)",
+                            rows,
+                        )
+                        manifest_con.execute("COMMIT")
+                    except Exception:
+                        manifest_con.execute("ROLLBACK")
+                        raise
             finally:
                 manifest_con.close()
     except NodeUnavailableError as error:

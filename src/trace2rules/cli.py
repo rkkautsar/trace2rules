@@ -301,6 +301,7 @@ def _print_detector_tables(mined: dict, limit: int = 10) -> None:
         ("test_shrink", "test shrink"),
         ("error_transition", "error transition"),
         ("persistent_site", "persistent site"),
+        ("read_recipe", "read recipe"),
     ):
         for finding in mined.get(key, [])[:limit]:
             signal_rows.append((label, finding))

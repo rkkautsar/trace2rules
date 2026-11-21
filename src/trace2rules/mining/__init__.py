@@ -37,6 +37,7 @@ from .mine import mine
 from .models import Finding
 from .error_transitions import error_transitions
 from .persistence import persistent_failure_sites
+from .read_recipes import read_recipes
 from .prevention import prevention_deltas
 from .sequences import exact_sequences, friction_windows
 
@@ -71,6 +72,7 @@ __all__ = [
     "prevention_deltas",
     "prompt_context",
     "recovery_loops",
+    "read_recipes",
     "repeated_reads",
     "selector_misses",
     "session_summary",

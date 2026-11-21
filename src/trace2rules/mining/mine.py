@@ -38,6 +38,7 @@ from .heuristics import (
 from .models import Finding
 from .error_transitions import error_transitions
 from .persistence import persistent_failure_sites
+from .read_recipes import read_recipes
 from .prevention import prevention_deltas
 
 
@@ -77,6 +78,7 @@ def mine(
         "correction_loop": correction_loops,
         "error_transition": error_transitions,
         "persistent_site": persistent_failure_sites,
+        "read_recipe": read_recipes,
         "prevention_delta": prevention_deltas,
     }
     workers = workers or min(2, len(jobs), os.cpu_count() or 1)

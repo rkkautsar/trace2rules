@@ -15,6 +15,24 @@ VALIDATION_RUN_RE = re.compile(
     r"(?i)\b(pdm run lint|npm run lint|yarn lint|pnpm lint|ruff|eslint|prettier|"
     r"mypy|pyright|tsc|biome|cargo fmt|cargo clippy|make (?:lint|style))\b"
 )
+COMMAND_TOKENS = {
+    "bash", "cargo", "cd", "curl", "docker", "git", "gh", "go", "make",
+    "npm", "npx", "pnpm", "pip", "pdm", "python", "pytest", "rg", "sed", "sh",
+    "uv", "yarn",
+}
+
+
+def _command_rule(text: str, commands: tuple[str, ...]) -> bool:
+    if not commands or not re.search(
+        r"(?i)^\s*(?:always\s+)?(?:run|rerun|use|execute|invoke|call|find)\b", text
+    ):
+        return False
+    for command in commands:
+        token = re.sub(r"^[A-Z_][A-Z0-9_]*=", "", command.strip().split()[0])
+        token = token.lstrip("(").lower()
+        if token in COMMAND_TOKENS:
+            return True
+    return False
 NEGATIVE_RULE_RE = re.compile(r"(?i)\b(never|do not|don't|avoid)\b")
 VALIDATION_RE = re.compile(
     r"(?i)\b(test|tests|lint|typecheck|validate|validation|pytest|cargo test|go test|"
@@ -90,6 +108,12 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
         return "validation"
     if TEST_RUN_RE.search(lower) and not NEGATIVE_RULE_RE.search(lower):
         return "test_command"
+    if paths and re.search(
+        r"(?i)\b(?:create|add|register|write|update|modify|put)\b", lower
+    ):
+        return "path_scope"
+    if _command_rule(text, tuple(COMMAND_RE.findall(text))) and not paths:
+        return "command"
     if paths or any(
         token in lower
         for token in ("directory", "package", "module", "src/", "crate", "dialect", "parser")
@@ -134,7 +158,7 @@ def _make_rule(
 
 
 def _dedupe_key(rule: AgentRule) -> tuple:
-    if rule.category in {"test_command", "validation"} and rule.commands:
+    if rule.category in {"test_command", "validation", "command"} and rule.commands:
         polarity = bool(NEGATIVE_RULE_RE.search(rule.text))
         return (
             rule.source,

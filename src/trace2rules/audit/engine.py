@@ -11,10 +11,12 @@ from typing import Any, Sequence
 
 import duckdb
 
+from .heuristics.command_usage import evaluate as evaluate_command_usage
 from .heuristics.context_hygiene import evaluate as evaluate_context_hygiene
 from .heuristics.generic import evaluate as evaluate_generic
 from .heuristics.hook_bypass import evaluate as evaluate_hook_bypass
 from .heuristics.ordering import evaluate as evaluate_ordering
+from .heuristics.path_scope import evaluate as evaluate_path_scope
 from .heuristics.read_before_edit import evaluate as evaluate_read_before_edit
 from .heuristics.read_hygiene import evaluate as evaluate_read_hygiene
 from ..redact import redact_text
@@ -340,6 +342,23 @@ def audit_agents(
                 for key, count in outcome.test_outcomes.items():
                     test_outcomes[key] = test_outcomes.get(key, 0) + count
                 examples.extend(outcome.examples)
+            elif rule.category == "command":
+                outcome = evaluate_command_usage(rule, events, _matches)
+                if outcome is None:
+                    continue
+                applicable += outcome.applicable
+                observed += outcome.observed
+                compliant += outcome.compliant
+                violations += outcome.violations
+                examples.extend(outcome.examples)
+            elif rule.category == "path_scope":
+                outcome = evaluate_path_scope(rule, edit_events, _path_matches)
+                if outcome is None:
+                    continue
+                applicable += outcome.applicable
+                observed += outcome.observed
+                compliant += outcome.compliant
+                examples.extend(outcome.examples)
             elif rule.category == "ordering":
                 outcome = evaluate_ordering(
                     rule, events, _normalize_command, _argv_match, TEST_RUN_RE
@@ -417,11 +436,13 @@ def audit_agents(
         detector = {
             "test_command": "test-after-change",
             "validation": "validation-after-change",
+            "command": "command-usage",
+            "path_scope": "path-scope",
             "context_hygiene": "scratch-file-hygiene",
             "architecture_map": "path-ownership",
         }.get(rule.category, "generic")
         measurable = rule.category in {
-            "test_command", "validation", "hook_bypass", "read_hygiene", "read_before_edit", "ordering", "context_hygiene",
+            "test_command", "validation", "command", "path_scope", "hook_bypass", "read_hygiene", "read_before_edit", "ordering", "context_hygiene",
         }
         opportunities = applicable if measurable else 0
         undecided = 0

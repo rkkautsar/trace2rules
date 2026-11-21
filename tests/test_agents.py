@@ -1370,3 +1370,55 @@ def test_descriptive_architecture_components_are_not_rules(tmp_path: Path) -> No
         "2. **Resolver** (`src/resolver/`): Resolves dependencies.\n"
     )
     assert parse_agents(path) == []
+
+
+def test_command_usage_rule_is_measured_only_when_invoked(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Setup\n\n- Run `make install`.\n")
+    assert parse_agents(path)[0].category == "command"
+    db = tmp_path / "command_usage.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[
+                    ToolCall("Edit", "src/a.py", action_type="edit", target="src/a.py"),
+                    ToolCall("Bash", "make install", action_type="exec", is_error=False),
+                ],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.coverage == "measured"
+    assert audit.compliant_sessions == 1
+    assert audit.verdict == "keep"
+
+
+def test_path_scope_rule_is_measured_by_edits(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("# Rules\n\n- Create new files in `src/commands/`.\n")
+    assert parse_agents(path)[0].category == "path_scope"
+    db = tmp_path / "path_scope.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[ToolCall("Edit", "src/commands/new.py", action_type="edit", target="src/commands/new.py")],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.coverage == "measured"
+    assert audit.compliant_sessions == 1

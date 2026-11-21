@@ -9,6 +9,11 @@ from .parsing import PATH_RE, _normalize_command
 
 
 def enforcement_for(rule: AgentRule) -> str:
+    if rule.category == "command":
+        command = rule.commands[0] if rule.commands else "the documented command"
+        return f"CI/pre-commit check running `{command}`."
+    if rule.category == "path_scope":
+        return "Import-boundary lint, CODEOWNERS, or a required path check."
     if rule.category in {"test_command", "validation"}:
         command = rule.commands[0] if rule.commands else "the documented validation command"
         return f"CI required check / pre-commit hook running `{command}`."

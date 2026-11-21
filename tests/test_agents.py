@@ -1324,3 +1324,49 @@ def test_bare_test_command_is_observed_not_violated_by_edits(tmp_path: Path) -> 
     assert audit.applicable_sessions == 0
     assert audit.violation_sessions == 0
     assert audit.verdict == "not_measured"
+
+
+def test_pdm_lint_is_a_validation_command() -> None:
+    rule = parse_agents_text("## Validation\n\n- Run `pdm run lint`.\n")[0]
+    assert rule.category == "validation"
+
+
+def test_compound_test_command_is_measured(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Testing\n\n- `(cd packages/core && pnpm build:dev && pnpm test)`\n")
+    db = tmp_path / "compound.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[
+                    ToolCall(
+                        "Bash",
+                        "(cd packages/core && pnpm build:dev && pnpm test)",
+                        action_type="exec",
+                        is_error=False,
+                    )
+                ],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.applicable_sessions == 1
+    assert audit.compliant_sessions == 1
+
+
+def test_descriptive_architecture_components_are_not_rules(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text(
+        "## Core Architecture\n\n"
+        "### Key Components\n\n"
+        "1. **Project Management** (`src/project/`): Handles project configuration.\n"
+        "2. **Resolver** (`src/resolver/`): Resolves dependencies.\n"
+    )
+    assert parse_agents(path) == []

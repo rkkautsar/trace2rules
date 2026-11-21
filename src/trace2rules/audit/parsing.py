@@ -11,6 +11,10 @@ TEST_RUN_RE = re.compile(
     r"swift test|make (?:test|check|unit)|python -m (?:pytest|unittest)|"
     r"cargo (?:fmt|clippy))\b"
 )
+VALIDATION_RUN_RE = re.compile(
+    r"(?i)\b(pdm run lint|npm run lint|yarn lint|pnpm lint|ruff|eslint|prettier|"
+    r"mypy|pyright|tsc|biome|cargo fmt|cargo clippy|make (?:lint|style))\b"
+)
 NEGATIVE_RULE_RE = re.compile(r"(?i)\b(never|do not|don't|avoid)\b")
 VALIDATION_RE = re.compile(
     r"(?i)\b(test|tests|lint|typecheck|validate|validation|pytest|cargo test|go test|"
@@ -30,7 +34,8 @@ COMMAND_SECTION_RE = re.compile(
 )
 NON_ACTIONABLE_SECTION_RE = re.compile(
     r"(?i)(about|overview|architecture|key concepts|common usage|important files|"
-    r"entry points|philosophy)"
+    r"entry points|philosophy|key components|project structure|repository layout|"
+    r"module layout)"
 )
 IMPERATIVE_RE = re.compile(
     r"(?i)^(?:run|use|add|keep|avoid|do not|don't|never|make|update|ensure|"
@@ -45,6 +50,8 @@ OPTIONAL_RULE_RE = re.compile(r"(?i)^(?:you can|you may|optionally|feel free|con
 
 def _normalize_command(command: str) -> str:
     command = command.strip()
+    if command.startswith("(") and command.endswith(")"):
+        command = command[1:-1].strip()
     command = re.sub(r"^(?:cd\s+\S+\s*&&\s*)+", "", command)
     command = re.sub(
         r"^(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S+)\s+)+",
@@ -79,6 +86,8 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
         token in lower for token in ("do not", "don't", "never", "keep", "outside")
     ):
         return "context_hygiene"
+    if VALIDATION_RUN_RE.search(lower) and not NEGATIVE_RULE_RE.search(lower):
+        return "validation"
     if TEST_RUN_RE.search(lower) and not NEGATIVE_RULE_RE.search(lower):
         return "test_command"
     if paths or any(
@@ -125,7 +134,7 @@ def _make_rule(
 
 
 def _dedupe_key(rule: AgentRule) -> tuple:
-    if rule.category == "test_command" and rule.commands:
+    if rule.category in {"test_command", "validation"} and rule.commands:
         polarity = bool(NEGATIVE_RULE_RE.search(rule.text))
         return (
             rule.source,

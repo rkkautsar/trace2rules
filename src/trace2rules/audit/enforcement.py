@@ -9,7 +9,7 @@ from .parsing import PATH_RE, _normalize_command
 
 
 def enforcement_for(rule: AgentRule) -> str:
-    if rule.category == "test_command":
+    if rule.category in {"test_command", "validation"}:
         command = rule.commands[0] if rule.commands else "the documented validation command"
         return f"CI required check / pre-commit hook running `{command}`."
     if rule.category == "hook_bypass":

@@ -307,7 +307,7 @@ def audit_agents(
                 "hook_bypass",
             }:
                 observed += 1
-            if rule.category == "test_command":
+            if rule.category in {"test_command", "validation"}:
                 outcome = evaluate_test_command(
                     rule,
                     events,
@@ -416,15 +416,16 @@ def audit_agents(
             suggestion = "Rule was exercised without detected violations; keep as guidance."
         detector = {
             "test_command": "test-after-change",
+            "validation": "validation-after-change",
             "context_hygiene": "scratch-file-hygiene",
             "architecture_map": "path-ownership",
         }.get(rule.category, "generic")
         measurable = rule.category in {
-            "test_command", "hook_bypass", "read_hygiene", "read_before_edit", "ordering", "context_hygiene",
+            "test_command", "validation", "hook_bypass", "read_hygiene", "read_before_edit", "ordering", "context_hygiene",
         }
         opportunities = applicable if measurable else 0
         undecided = 0
-        if rule.category == "test_command":
+        if rule.category in {"test_command", "validation"}:
             followed = compliant
             undecided = undecided_count
             violations = max(applicable - followed - undecided, 0)

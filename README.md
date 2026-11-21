@@ -20,10 +20,15 @@ Or run the audit manually:
 
 ```bash
 trace2rules audit
+```
+
+That is the deterministic audit: counts, coverage, verdicts, and enforcement status. To ask a fresh agent for suggested changes, generate the audit evidence prompt:
+
+```bash
 trace2rules audit --prompt > audit.txt
 ```
 
-After an agent writes a proposed rule file, validate it before applying:
+`audit --prompt` does not call an LLM itself; give `audit.txt` to your own agent. After the agent writes a proposed rule file, validate it before applying:
 
 ```bash
 trace2rules audit --proposal AGENTS.proposed.md
@@ -67,6 +72,19 @@ On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` 
 `configured` means the command appears in `.github/workflows/CI.yml`; it does not prove the check is required by branch protection. `available` means a Makefile/package target exists but is not wired into CI. `missing` means no mechanism was found.
 
 The two read rules are separate clauses but share the `read_before_edit` detector. Their identical followed/violation counts are expected, not evidence that they are the same rule.
+
+#### LLM review of the swc audit
+
+An `audit --prompt` pass over the same table suggests:
+
+- Move submodule initialization into CI test setup; the agent-side prerequisite was 0 compliant across 32 opportunities.
+- Consolidate the two overlapping read rules into one: “Before changing behavior, inspect the relevant source, fixtures, and tests; base the change on observed code, not assumptions.”
+- Reword commit cadence to “Commit staged changes in small, logical commits; do not create empty commits.”
+- Enforce `git add` before commit with an empty-index check; reject `git commit -a` in agent workflows.
+- Reject `curl`/`wget` to GitHub in agent scripts so `gh` is the only access path.
+- Rerun documented crate tests without `UPDATE` on snapshot changes.
+- Run the same checks in CI as in hooks so `--no-verify` cannot bypass them.
+- No new rules were supported; these are replacements or enforcement changes for existing rules.
 
 `audit` prints the audited/total session count and defaults to the latest `AGENTS.md` commit cutoff. Pass `--all-sessions` for full history.
 

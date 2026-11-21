@@ -41,6 +41,8 @@ def _ensure_local_sessions(
     db: Path,
     source: Path = Path.home(),
     limit: int = 200,
+    *,
+    refresh: bool = False,
 ) -> bool:
     from .db import connect
     from .ingest.sources.agent_trajectory import ingest_agent_sessions
@@ -51,7 +53,7 @@ def _ensure_local_sessions(
         count = con.execute("SELECT count(*) FROM sessions").fetchone()[0]
     finally:
         con.close()
-    if count:
+    if count and not refresh:
         return False
 
     cmd_console = Console(stderr=True)

@@ -687,11 +687,6 @@ def ingest_agent_sessions(
                 continue
             files = _iter_files(source_root, source_name, limit)
             if not files:
-                if source_name == "opencode":
-                    raise ValueError(
-                        "agent-trajectory does not read OpenCode SQLite directly; "
-                        "export sessions with `opencode export <session-id>` first."
-                    )
                 continue
             metas_by_id: dict[str, TranscriptMeta] = {}
             transcript_metas: list[tuple[Path, TranscriptMeta]] = []

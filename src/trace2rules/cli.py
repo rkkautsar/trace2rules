@@ -402,7 +402,8 @@ def _mine_command(
     top: Annotated[int, typer.Option(help="Clusters / rows per detector to show.")] = 25,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
-    _ensure_local_sessions(db)
+    if db == DB_PATH:
+        _ensure_local_sessions(db, refresh=True)
     con = connect(db)
     try:
         session_count = con.execute("SELECT count(*) FROM sessions").fetchone()[0]

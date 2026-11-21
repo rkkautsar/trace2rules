@@ -11,7 +11,7 @@ import typer
 from rich.table import Table
 
 from ..agents import _agents_root, audit_commit, audit_payload, latest_agents_commit, resolve_agents
-from ..cli_common import _resolve_repo_label, console
+from ..cli_common import _ensure_local_sessions, _resolve_repo_label, console
 from ..db import DB_PATH, connect
 from ..redact import redact_text, redact_value
 
@@ -108,6 +108,11 @@ def _audit_command(
     if commit and (since or until):
         console.print("[red]--commit cannot be combined with --since/--until[/red]")
         raise typer.Exit(2)
+    try:
+        if db == DB_PATH:
+            _ensure_local_sessions(db)
+    except Exception as error:
+        console.print(f"[yellow]Could not auto-ingest local sessions: {error}[/yellow]")
     con = connect(db)
     try:
         if con.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0:
@@ -196,6 +201,17 @@ def _audit_command(
                 )
             console.print(table)
         return
+    filtered = payload.get("filtered_sessions", 0)
+    total = payload.get("sessions", 0)
+    cutoff = payload.get("commit")
+    console.print(
+        f"Audited [bold]{filtered}/{total}[/bold] sessions"
+        + (f" since {cutoff[:12]}" if cutoff else "")
+    )
+    if filtered == 0:
+        console.print(
+            "[yellow]No sessions matched this cutoff; pass --all-sessions to audit full history.[/yellow]"
+        )
     table = Table(title=f"AGENTS.md audit: {repo}")
     for column in ("Rule", "Verdict", "Coverage", "Followed", "Violations", "Confidence", "Enforcement"):
         table.add_column(column)

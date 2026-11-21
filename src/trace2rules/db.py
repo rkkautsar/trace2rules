@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 
 import duckdb
 
-DB_PATH = Path(
-    os.environ.get(
-        "TRACE2RULES_DB",
-        Path(tempfile.gettempdir()) / "trace2rules" / "trace2rules.duckdb",
-    )
-)
+def _default_db_path() -> Path:
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return data_home / "trace2rules" / "trace2rules.duckdb"
+
+
+DB_PATH = Path(os.environ.get("TRACE2RULES_DB", _default_db_path()))
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (

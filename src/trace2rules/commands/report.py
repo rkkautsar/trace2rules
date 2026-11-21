@@ -291,7 +291,8 @@ def _run_command(
     ] = DEFAULT_MAX_RULES,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
-    _ensure_local_sessions(db, source, limit)
+    if db == DB_PATH:
+        _ensure_local_sessions(db, source, limit, refresh=True)
     _report_command(
         top=25,
         repo=None,

@@ -1,6 +1,7 @@
 from .command_errors import command_errors
 from .commit_hygiene import commit_hygiene
 from .lockfile import lockfile_edits
+from .toolchain import toolchain_churn
 from .context import prompt_context
 from .edit_churn import edit_churn
 from .editing import blind_edits, dependency_drift, edit_rejections, generated_edits, site_edit_mismatch, stuck_loops
@@ -21,6 +22,7 @@ __all__ = [
     "command_errors",
     "commit_hygiene",
     "lockfile_edits",
+    "toolchain_churn",
     "context_blasts",
     "correction_loops",
     "destructive_commands",

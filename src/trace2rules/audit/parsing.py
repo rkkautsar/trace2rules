@@ -41,6 +41,10 @@ LOCKFILE_RE = re.compile(
     r"(?i)(?:^|/)(?:Cargo\.lock|uv\.lock|pdm\.lock|package-lock\.json|"
     r"pnpm-lock\.yaml|yarn\.lock)$"
 )
+TOOLCHAIN_RE = re.compile(
+    r"(?i)\b(?:toolchain|nightly|msrv|minimum supported|requires-python|"
+    r"python version|node version|go version|nvmrc|rust-toolchain|\.python-version)\b"
+)
 VALIDATION_RE = re.compile(
     r"(?i)\b(test|tests|lint|typecheck|validate|validation|pytest|cargo test|go test|"
     r"npm test|vitest|jest|pdm (?:run )?test|make (?:unit|test)|check|cargo (?:fmt|clippy))\b"
@@ -109,6 +113,8 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
         lower,
     ):
         return "commit_hygiene"
+    if TOOLCHAIN_RE.search(lower):
+        return "toolchain"
     if (
         paths
         and NEGATIVE_RULE_RE.search(lower)

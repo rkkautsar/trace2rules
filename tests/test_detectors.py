@@ -445,3 +445,19 @@ def test_lockfile_edits_are_mined_without_manifest_change(monkeypatch) -> None:
     finding = lockfile_edits(con)[0]
     assert finding.kind == "lockfile_edit"
     assert finding.sessions == 1
+
+
+def test_toolchain_churn_is_mined(monkeypatch) -> None:
+    from trace2rules.mining import toolchain_churn
+
+    module = importlib.import_module("trace2rules.mining.heuristics.toolchain")
+    monkeypatch.setattr(module, "_representative_window", lambda *args: ())
+    con = _detector_db(monkeypatch)
+    _add_sessions(con, 2)
+    con.executemany(
+        "INSERT INTO tool_events VALUES ('acme/repo', ?, 1, 'exec', 'cargo +nightly check', 'cargo +nightly check', 'ok', 10, '', '', false)",
+        [("s0",), ("s1",)],
+    )
+    finding = toolchain_churn(con)[0]
+    assert finding.kind == "toolchain_churn"
+    assert finding.sessions == 2

@@ -25,6 +25,8 @@ def enforcement_for(rule: AgentRule) -> str:
         return "Pre-commit or CI check for commit cadence/batch size; otherwise guidance only."
     if rule.category == "lockfile":
         return "Pre-commit or CI check that lockfiles are regenerated only through the package manager."
+    if rule.category == "toolchain":
+        return "CI pins the declared toolchain and rejects ad-hoc toolchain switching."
     if rule.category == "read_hygiene":
         return "No mechanical enforcement; harness/context-budget hooks can observe reads."
     if rule.category == "read_before_edit":

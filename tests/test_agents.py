@@ -1560,3 +1560,21 @@ def test_lockfile_rule_flags_direct_edits(tmp_path: Path) -> None:
         con.close()
     assert audit.applicable_sessions == 1
     assert audit.violation_sessions == 1
+
+
+def test_toolchain_policy_flags_explicit_nightly_use(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Toolchain\n\n- Do not use nightly toolchains.\n")
+    assert parse_agents(path)[0].category == "toolchain"
+    db = tmp_path / "toolchain.duckdb"
+    write_sessions(
+        db,
+        [Session("s", "acme/repo", calls=[ToolCall("Bash", "cargo +nightly check", action_type="exec")])],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.applicable_sessions == 1
+    assert audit.violation_sessions == 1

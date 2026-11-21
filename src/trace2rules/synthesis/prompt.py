@@ -63,6 +63,7 @@ def _finding_markdown(finding: Finding, index: int) -> list[str]:
         ("Detail", finding.detail),
         ("Failure family", finding.failure_family),
         ("Side", finding.side),
+        ("Evidence class", finding.evidence_kind),
         ("Sequence", finding.sequence),
         ("Cause", finding.cause),
     ):
@@ -72,6 +73,12 @@ def _finding_markdown(finding: Finding, index: int) -> list[str]:
         lines.append("- Variants: " + "; ".join(_text(item, 240) for item in finding.variants))
     if finding.cause_support_sessions:
         lines.append(f"- Cause support: {finding.cause_support_sessions} sessions")
+    if finding.treatment_sessions or finding.control_sessions:
+        lines.append(
+            f"- Contrast: treatment {finding.treatment_sessions} sessions, "
+            f"control {finding.control_sessions} sessions, "
+            f"delta {finding.delta:+.2f}"
+        )
     if finding.window:
         lines.append("- Evidence window:")
         window_events = (

@@ -39,6 +39,7 @@ def premature_completion(con: duckdb.DuckDBPyConnection, limit: int | None = Non
     findings = [
         Finding(
             kind="premature_completion",
+            evidence_kind="failure",
             repo=item.repo,
             title="session ends after an edit without validation",
             sessions=item.sessions,
@@ -76,6 +77,7 @@ def low_validation(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> 
     findings = [
         Finding(
             kind="low_validation",
+            evidence_kind="failure",
             repo=item.repo,
             title="edits without a validation command",
             sessions=item.sessions,
@@ -217,6 +219,7 @@ def no_reproduction(con: duckdb.DuckDBPyConnection, limit: int | None = None) ->
     findings = [
         Finding(
             kind="no_reproduction",
+            evidence_kind="failure",
             repo=item.repo,
             title="source edits before any failing reproduction",
             sessions=item.sessions,

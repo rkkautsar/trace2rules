@@ -301,7 +301,10 @@ def prevention_deltas(
         findings.append(
             Finding(
                 kind="prevention_delta",
+                evidence_kind="preventive",
                 repo=repo,
+                treatment_sessions=sessions,
+                control_sessions=control,
                 title=f"{delta} before {entity_label}",
                 sessions=sessions,
                 tokens=int(value["tokens"]),

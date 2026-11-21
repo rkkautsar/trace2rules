@@ -133,6 +133,7 @@ def failure_loops(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> l
     return [
         Finding(
             kind="failure_loop",
+            evidence_kind="failure",
             repo=repo,
             title=f"{signature} at {site}",
             sessions=sessions,

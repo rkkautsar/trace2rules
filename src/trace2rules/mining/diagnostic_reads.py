@@ -116,6 +116,7 @@ def diagnostic_reads(
     return [
         Finding(
             kind="diagnostic_read",
+            evidence_kind="descriptive",
             repo=repo,
             title=f"read {read_target} before editing {edit_target} after {error}",
             sessions=sessions_count,

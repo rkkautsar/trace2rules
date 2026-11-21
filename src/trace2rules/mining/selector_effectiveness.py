@@ -73,6 +73,7 @@ def selector_effectiveness(
         findings.append(
             Finding(
                 kind="selector_effectiveness",
+                evidence_kind="descriptive",
                 repo=repo,
                 title=f"{best} selector: {rates[best]:.0%} failures vs {worst}: {rates[worst]:.0%}",
                 sessions=len(repo_sessions[repo]),

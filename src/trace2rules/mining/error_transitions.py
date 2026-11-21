@@ -95,6 +95,7 @@ def error_transitions(
     findings = [
         Finding(
             kind="error_transition",
+            evidence_kind="failure",
             repo=repo,
             title=f"{first} -> {second}",
             sessions=session_count,

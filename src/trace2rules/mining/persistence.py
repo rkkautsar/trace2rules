@@ -51,6 +51,7 @@ def persistent_failure_sites(
     return [
         Finding(
             kind="persistent_site",
+            evidence_kind="failure",
             repo=repo,
             title=f"{signature} at {site}",
             sessions=int(sessions),

@@ -84,6 +84,7 @@ def read_recipes(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> li
     return [
         Finding(
             kind="read_recipe",
+            evidence_kind="descriptive",
             repo=repo,
             title=f"read {read_target} before editing {edit_target}",
             sessions=sessions,

@@ -179,6 +179,7 @@ def blind_edits(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> lis
     findings = [
         Finding(
             kind="blind_edit",
+            evidence_kind="failure",
             repo=item.repo,
             title="edits without a preceding read",
             sessions=item.sessions,

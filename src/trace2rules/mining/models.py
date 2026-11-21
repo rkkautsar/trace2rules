@@ -28,6 +28,10 @@ class Finding:
     recommendation: str = ""
     window: tuple[dict, ...] = field(default_factory=tuple)
     edit_sessions: int = 0
+    evidence_kind: str = ""  # preventive | failure | descriptive
+    treatment_sessions: int = 0
+    control_sessions: int = 0
+    delta: float = 0.0
 
     @property
     def evidence(self) -> str:

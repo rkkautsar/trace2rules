@@ -24,9 +24,15 @@ Generate evidence prompts for new rules:
 trace2rules run --out-dir reports/
 ```
 
-Give the reports to your own agent. See [Generating rules](#generating-rules).
+Paste this into your coding agent to turn the reports into rules:
 
-To have a coding agent audit and suggest changes, paste this:
+```text
+Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules run --out-dir reports/` for my local agent sessions. Read the report files and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
+```
+
+See [Generating rules](#generating-rules).
+
+To have a coding agent audit and suggest changes instead, paste this:
 
 ```text
 Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules audit --prompt > audit.txt`, read audit.txt, and report unobserved, violated, and unenforced rules. Propose concrete enforcement without duplicating existing CI/pre-commit checks.

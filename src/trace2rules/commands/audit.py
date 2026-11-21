@@ -43,6 +43,10 @@ def _audit_command(
         Path | None,
         typer.Option("--agents", help="AGENTS.md or CLAUDE.md path; auto-detects both when omitted."),
     ] = None,
+    proposal: Annotated[
+        Path | None,
+        typer.Option("--proposal", help="Validate a proposed rules file before applying it."),
+    ] = None,
     since: Annotated[str | None, typer.Option("--since", help="Only sessions at/after ISO timestamp.")] = None,
     until: Annotated[str | None, typer.Option("--until", help="Only sessions before ISO timestamp.")] = None,
     latest_commit: Annotated[
@@ -63,6 +67,15 @@ def _audit_command(
     json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON.")] = False,
     db: Annotated[Path, typer.Option(help="DuckDB database path.")] = DB_PATH,
 ) -> None:
+    if proposal is not None:
+        if agents is not None:
+            console.print("[red]--proposal cannot be combined with --agents[/red]")
+            raise typer.Exit(2)
+        if commit:
+            console.print("[red]--proposal cannot be combined with --commit[/red]")
+            raise typer.Exit(2)
+        agents = proposal
+        latest_commit = False
     agent_paths = resolve_agents(agents)
     if not agent_paths:
         console.print("[red]No AGENTS.md or CLAUDE.md found.[/red]")

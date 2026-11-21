@@ -446,3 +446,25 @@ def test_report_includes_global_and_nested_agents(tmp_path: Path, monkeypatch) -
     assert "GLOBAL_SENTINEL" in result.output
     assert "ROOT_SENTINEL" in result.output
     assert "NESTED_SENTINEL" in result.output
+
+
+def test_audit_can_validate_a_proposal(tmp_path: Path) -> None:
+    db = tmp_path / "proposal.duckdb"
+    write_sessions(db, [Session("s", "acme/repo")])
+    proposal = tmp_path / "AGENTS.proposed.md"
+    proposal.write_text("## Validation\n\n- Run `pytest tests/test_api.py` after editing.\n")
+    result = runner.invoke(
+        app,
+        [
+            "audit",
+            "--repo",
+            "acme/repo",
+            "--proposal",
+            str(proposal),
+            "--all-sessions",
+            "--db",
+            str(db),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Verdict" in result.output

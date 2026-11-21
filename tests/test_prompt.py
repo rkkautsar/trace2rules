@@ -188,3 +188,24 @@ def test_selection_dedupes_same_prevention_action_across_entities() -> None:
     )
     assert [finding.kind for finding in selected] == ["prevention_delta"]
 
+
+
+def test_existing_audit_verdict_is_rendered() -> None:
+    from trace2rules.synthesis.prompt import _prompt
+
+    prompt = _prompt(
+        [],
+        "acme/repo",
+        existing={
+            "sessions": 1,
+            "rules": [
+                {
+                    "text": "Read the target before editing.",
+                    "verdict": "delete",
+                    "stale_paths": ["src/old.py"],
+                }
+            ],
+        },
+    )
+    assert "verdict delete" in prompt
+    assert "If its verdict is `delete`, omit it." in prompt

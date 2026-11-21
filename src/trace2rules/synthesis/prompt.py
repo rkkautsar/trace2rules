@@ -207,6 +207,8 @@ def _existing_markdown(existing: dict | None) -> list[str]:
             details.append(f"followed {float(rule['rate']):.0%}")
         if rule.get("confidence"):
             details.append(f"confidence {rule['confidence']}")
+        if rule.get("verdict"):
+            details.append(f"verdict {rule['verdict']}")
         if rule.get("source_scope"):
             details.append(f"scope {rule['source_scope']}")
         if rule.get("source_path"):
@@ -256,7 +258,7 @@ def _prompt(
         '- Emit only durable, normative policy. Do not encode memories, historical facts, decisions, dates, owners, task state, or "what happened" summaries. If the evidence is descriptive rather than prescriptive, omit it.', 
         "- A valid rule is either enforceable by a CI/pre-commit/lint check or stable policy that should apply to future agents in the same repo. If neither is true, omit it.",
         "- Categories: test_command, architecture_map, context_hygiene, convention.",
-        "- Do not repeat an existing AGENTS.md rule. If an existing rule is violated or unenforced, propose the concrete enforcement (CI/pre-commit/lint) instead.",
+        "- Do not repeat an existing AGENTS.md rule. If an existing rule is violated or unenforced, propose the concrete enforcement (CI/pre-commit/lint) instead. If its verdict is `delete`, omit it.",
         "- Mark a rule enforceable only when a repository CI/pre-commit/lint check can observe and enforce it; include that exact check. Otherwise use guidance only.",
         "- Rules about agent read behavior, tool-call ordering, or context usage are guidance-only. Unmeasured guidance is allowed when useful; omit only rules that the existing audit explicitly marks stale or violated.",
         '- Use 1-2 imperative sentences with concrete command or file names. No generic platitudes ("be careful", "read the docs").', 

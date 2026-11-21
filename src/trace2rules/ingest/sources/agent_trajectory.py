@@ -620,41 +620,53 @@ def ingest_agent_sessions(
             finally:
                 manifest_con.close()
             selected_paths: list[Path] = []
+            fresh_paths: list[Path] = []
             scan_task = (
                 progress.add_task(f"Scanning {source_name}", total=len(files))
                 if progress
                 else None
             )
-            with ThreadPoolExecutor(max_workers=min(2, len(files))) as pool:
-                scanned = pool.map(
-                    lambda path: _scan_transcript(path, source_name), files
-                )
-                for path, meta, error in scanned:
+            # Decide from stat + manifest before reading the transcript. The
+            # metadata scan used to run for every cached file and was discarded.
+            for path in files:
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                selected_paths.append(path)
+                cached = manifest.get(str(path))
+                if (
+                    cached
+                    and cached[0] == stat.st_mtime_ns
+                    and cached[1] == stat.st_size
+                    and cached[2] == split_compactions
+                    and str(path) in ingested_refs
+                ):
+                    if progress and scan_task is not None:
+                        progress.update(scan_task, advance=1)
+                    continue
+                fresh_paths.append(path)
+            if fresh_paths:
+                with ThreadPoolExecutor(max_workers=min(2, len(fresh_paths))) as pool:
+                    scanned = list(
+                        pool.map(
+                            lambda path: _scan_transcript(path, source_name), fresh_paths
+                        )
+                    )
+            else:
+                scanned = []
+            for path, meta, error in scanned:
                     if error is not None:
                         print(f"Skipping {path}: {error}")
-                        continue
-                    meta.session_id = meta.session_id or _session_id(path)
-                    try:
-                        stat = path.stat()
-                    except OSError:
-                        continue
-                    selected_paths.append(path)
-                    cached = manifest.get(str(path))
-                    if (
-                        cached
-                        and cached[0] == stat.st_mtime_ns
-                        and cached[1] == stat.st_size
-                        and cached[2] == split_compactions
-                        and str(path) in ingested_refs
-                    ):
                         if progress and scan_task is not None:
                             progress.update(scan_task, advance=1)
                         continue
-                    if progress and scan_task is not None:
-                        progress.update(scan_task, advance=1)
+                    meta.session_id = meta.session_id or _session_id(path)
                     if meta.session_id not in metas_by_id:
                         metas_by_id[meta.session_id] = meta
                     transcript_metas.append((path, meta))
+                    if progress and scan_task is not None:
+                        progress.update(scan_task, advance=1)
             for meta in metas_by_id.values():
                 meta.instance_id = _resolve_instance(meta.session_id, metas_by_id)
             _assign_unique_session_ids(transcript_metas)

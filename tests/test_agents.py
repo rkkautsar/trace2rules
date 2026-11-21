@@ -1011,3 +1011,16 @@ def test_command_errors_are_mined(tmp_path: Path) -> None:
     assert len(findings) == 1
     assert findings[0].kind == "command_error"
     assert findings[0].sessions == 2
+
+
+def test_stale_paths_in_plain_backticks(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Reading\n\n- Do not read `synthesis/service.py` whole.\n")
+    db = tmp_path / "stale_plain.duckdb"
+    write_sessions(db, [Session("s", "acme/repo")])
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path), root=tmp_path)[0]
+    finally:
+        con.close()
+    assert audit.stale_paths == ("synthesis/service.py",)

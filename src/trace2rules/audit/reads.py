@@ -112,20 +112,22 @@ def _stale_paths(rule: AgentRule, root: Path | None) -> tuple[str, ...]:
     if root is None or not root.is_dir():
         return ()
     stale: list[str] = []
+    candidates = list(rule.paths)
     for value in COMMAND_RE.findall(rule.text):
-        for candidate in PATH_RE.findall(value):
-            candidate = candidate.strip().strip("`")
-            if (
-                not candidate
-                or candidate.startswith(("/", "~"))
-                or candidate.startswith(("http://", "https://"))
-                or re.search(r"[*<>]", candidate)
-                or (
-                    len(candidate.split("/")) == 2
-                    and not Path(candidate).suffix
-                )
-            ):
-                continue
-            if not (root / candidate).exists():
-                stale.append(candidate)
+        candidates.extend(PATH_RE.findall(value))
+    for candidate in candidates:
+        candidate = candidate.strip().strip("`")
+        if (
+            not candidate
+            or candidate.startswith(("/", "~"))
+            or candidate.startswith(("http://", "https://"))
+            or re.search(r"[*<>]", candidate)
+            or (
+                len(candidate.split("/")) == 2
+                and not Path(candidate).suffix
+            )
+        ):
+            continue
+        if not (root / candidate).exists():
+            stale.append(candidate)
     return tuple(dict.fromkeys(stale))

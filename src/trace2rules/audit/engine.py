@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -566,15 +567,22 @@ def _agents_root(start: Path) -> Path:
 
 def _global_agents() -> list[Path]:
     home = Path.home()
+    codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex"))
+    candidates = [codex_home / "AGENTS.override.md", codex_home / "AGENTS.md"]
+    codex_agents = next((path for path in candidates if path.is_file()), candidates[-1])
     return [
-        home / ".codex" / "AGENTS.md",
+        codex_agents,
         home / ".claude" / "CLAUDE.md",
         home / ".omp" / "agent" / "AGENTS.md",
     ]
 
 
 def _agent_files(directory: Path) -> list[Path]:
-    return [directory / "AGENTS.md", directory / "CLAUDE.md"]
+    for name in ("AGENTS.override.md", "AGENTS.md", "CLAUDE.md"):
+        candidate = directory / name
+        if candidate.is_file():
+            return [candidate]
+    return []
 
 
 def _agent_directories(start: Path, root: Path) -> list[Path]:

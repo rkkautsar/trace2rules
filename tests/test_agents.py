@@ -1094,3 +1094,18 @@ def test_report_drops_findings_with_stale_paths(tmp_path: Path) -> None:
     ]
     kept = _drop_stale_findings(findings, tmp_path)
     assert [finding.title for finding in kept] == ["current"]
+
+
+def test_resolve_agents_prefers_override_in_each_directory(tmp_path: Path, monkeypatch) -> None:
+    from trace2rules.agents import resolve_agents
+
+    home = tmp_path / "home"
+    home.mkdir()
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "AGENTS.md").write_text("- Base rule.\n")
+    (repo / "AGENTS.override.md").write_text("- Override rule.\n")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.chdir(repo)
+
+    assert [path.name for path in resolve_agents()] == ["AGENTS.override.md"]

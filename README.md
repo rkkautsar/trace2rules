@@ -10,50 +10,47 @@ The output is a proposal, not an automatically applied `AGENTS.md`.
 
 ## Quick start
 
-Paste this into your coding agent to audit the current checkout:
-
-```text
-Install trace2rules if missing (`uv tool install trace2rules`). Audit this repo's AGENTS.md and CLAUDE.md against my local sessions with `trace2rules audit`. Report unobserved, violated, and unenforced rules, and propose existing CI/pre-commit checks without duplicating configured enforcement.
-```
-
-Or run the audit manually:
+Audit the current checkout:
 
 ```bash
 trace2rules audit
 ```
 
-That is the deterministic audit: counts, coverage, verdicts, and enforcement status. To ask a fresh agent for suggested changes, generate the audit evidence prompt:
+`audit` is deterministic. For suggested changes from a fresh agent, see [Auditing AGENTS.md](#auditing-agentsmd).
+
+Generate evidence prompts for new rules:
+
+```bash
+trace2rules run --out-dir reports/
+```
+
+Give the reports to your own agent. See [Generating rules](#generating-rules).
+
+To have a coding agent audit and suggest changes, paste this:
+
+```text
+Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules audit --prompt > audit.txt`, read audit.txt, and report unobserved, violated, and unenforced rules. Propose concrete enforcement without duplicating existing CI/pre-commit checks.
+```
+
+## Auditing AGENTS.md
+
+`trace2rules audit` is deterministic: it reports counts, coverage, verdicts, enforcement status, and deterministic suggestions.
+
+For a fresh-agent review, emit the evidence prompt:
 
 ```bash
 trace2rules audit --prompt > audit.txt
 ```
 
-`audit --prompt` does not call an LLM itself; give `audit.txt` to your own agent. After the agent writes a proposed rule file, validate it before applying:
+Give `audit.txt` to your agent. The LLM receives the audit table but not the deterministic suggestions.
+
+After the agent writes proposed rules, validate them:
 
 ```bash
 trace2rules audit --proposal AGENTS.proposed.md
 ```
 
-Paste this into your coding agent to mine your local sessions:
-
-```text
-Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules run --out-dir reports/` for my local agent sessions. Read the report files and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
-```
-
-Or run it manually:
-
-```bash
-uv tool install trace2rules
-trace2rules run --out-dir reports/
-```
-
-An existing `AGENTS.md` or `CLAUDE.md` in a session’s `cwd` is discovered automatically and included in that repo’s prompt. Use `--agents PATH` only to override discovery from a different checkout.
-
-Then give `reports/*.md` to your own coding agent to synthesize the rules. `run` ingests local sessions automatically when the database is empty.
-
-## Examples
-
-### Auditing a real `AGENTS.md`
+`--proposal` parses the proposed Markdown, audits it against sessions, and reports verdicts before you apply it.
 
 On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` audit finds 65 rules: 8 measured, 1 partial, and 56 unmeasured.
 
@@ -88,7 +85,9 @@ An `audit --prompt` pass over the same table suggests:
 
 `audit` prints the audited/total session count and defaults to the latest `AGENTS.md` commit cutoff. Pass `--all-sessions` for full history.
 
-### Rules generated from report prompts
+## Generating rules
+
+Mining and reporting produce evidence, not rules. `trace2rules run --out-dir reports/` writes one prompt per detected repository; give those prompts to your agent. The agent proposes rules, then validate them with `audit --proposal`.
 
 **`swc-project/swc`**
 

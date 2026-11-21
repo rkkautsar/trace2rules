@@ -10,33 +10,31 @@ The output is a proposal, not an automatically applied `AGENTS.md`.
 
 ## Quick start
 
-Audit the current checkout:
+Paste this into your coding agent to audit the current checkout:
+
+```text
+Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules audit --prompt > audit.txt`, read audit.txt, and report unobserved, violated, and unenforced rules. Propose concrete enforcement without duplicating existing CI/pre-commit checks.
+```
+
+Or run the deterministic audit manually:
 
 ```bash
 trace2rules audit
 ```
 
-`audit` is deterministic. For suggested changes from a fresh agent, see [Auditing AGENTS.md](#auditing-agentsmd).
-
-Generate evidence prompts for new rules:
-
-```bash
-trace2rules run --out-dir reports/
-```
-
-Paste this into your coding agent to turn the reports into rules:
+Paste this into your coding agent to generate rules:
 
 ```text
 Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules run --out-dir reports/` for my local agent sessions. Read the report files and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
 ```
 
-See [Generating rules](#generating-rules).
+Or generate the evidence prompts manually:
 
-To have a coding agent audit and suggest changes instead, paste this:
-
-```text
-Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules audit --prompt > audit.txt`, read audit.txt, and report unobserved, violated, and unenforced rules. Propose concrete enforcement without duplicating existing CI/pre-commit checks.
+```bash
+trace2rules run --out-dir reports/
 ```
+
+See [Auditing AGENTS.md](#auditing-agentsmd) and [Generating rules](#generating-rules) for the full flows.
 
 ## Auditing AGENTS.md
 

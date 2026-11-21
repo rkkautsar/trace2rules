@@ -188,33 +188,3 @@ def test_selection_dedupes_same_prevention_action_across_entities() -> None:
     )
     assert [finding.kind for finding in selected] == ["prevention_delta"]
 
-
-def test_selection_omits_unauditable_read_findings() -> None:
-    read_finding = Finding(
-        kind="blind_edit",
-        repo="acme/repo",
-        title="edits without reads",
-        sessions=10,
-        tokens=100,
-    )
-    reread = Finding(
-        kind="reread",
-        repo="acme/repo",
-        title="src/trace2rules/cli.py",
-        sessions=10,
-        tokens=100,
-    )
-    selected = select_findings(
-        [],
-        {"blind_edit": [read_finding], "reread": [reread], "hotspots": []},
-        "acme/repo",
-    )
-    assert selected == []
-
-
-def test_prompt_forbids_unauditable_guidance() -> None:
-    from trace2rules.synthesis.prompt import _prompt
-
-    prompt = _prompt([], "acme/repo")
-    assert "Do not emit rules about agent read behavior" in prompt
-    assert "Audit cannot validate them" in prompt

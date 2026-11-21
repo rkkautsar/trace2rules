@@ -10,10 +10,6 @@ GENERATED_VERIFIER_RE = re.compile(
     r"(?:reproduce|repro|scratch|debug|verif)[\w.-]*\.(?:py|ts|js|go|rs|java|rb|php|sh|c|cpp)"
 )
 
-# These findings describe agent read behavior that audit can only mark as
-# guidance; they cannot produce a rule that audit will accept as clean.
-NON_AUDITABLE_KINDS = {"blind_edit", "reread", "read_recipe", "diagnostic_read"}
-
 
 def _generated_verifier(sequence: str) -> bool:
     if GENERATED_VERIFIER_RE.search(sequence):
@@ -149,7 +145,6 @@ def select_findings(
             finding
             for finding in mined.get(key, [])
             if finding.repo == repo
-            and finding.kind not in NON_AUDITABLE_KINDS
             and (
                 finding.sessions >= min_sessions
                 or finding.kind in {"feedback_loop", "destructive_command"}

@@ -258,7 +258,7 @@ def _prompt(
         "- Categories: test_command, architecture_map, context_hygiene, convention.",
         "- Do not repeat an existing AGENTS.md rule. If an existing rule is violated or unenforced, propose the concrete enforcement (CI/pre-commit/lint) instead.",
         "- Mark a rule enforceable only when a repository CI/pre-commit/lint check can observe and enforce it; include that exact check. Otherwise use guidance only.",
-        "- Do not emit rules about agent read behavior, tool-call ordering, or context usage. Audit cannot validate them and will flag them; omit the finding instead.",
+        "- Rules about agent read behavior, tool-call ordering, or context usage are guidance-only. Unmeasured guidance is allowed when useful; omit only rules that the existing audit explicitly marks stale or violated.",
         '- Use 1-2 imperative sentences with concrete command or file names. No generic platitudes ("be careful", "read the docs").', 
         "- Ignore task-specific verifier scripts, one-off filenames, and normal edit -> test-fail loops.",
         "- For any failure, loop, recovery, attribute_pattern, prevention_delta, error_transition, persistent_site, or read_recipe finding, write the rule that prevents the failure before it happens: setup, import path, test selection, or CI check. Do not restate the obvious recovery step, such as 'fix the error', 'rerun after correcting', or 'do not repeat the command'. If the evidence does not support a concrete prevention, omit the finding.",

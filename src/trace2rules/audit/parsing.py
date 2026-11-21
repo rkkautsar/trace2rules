@@ -86,6 +86,12 @@ def _category(text: str, paths: tuple[str, ...]) -> str:
     if re.search(r"(?i)(?:--no-verify|skip(?:ping)? (?:the )?pre-commit|pre-commit hook)", lower):
         return "hook_bypass"
     if re.search(
+        r"(?i)(?:force[- ]push|--force-with-lease|git reset --hard|git clean|"
+        r"publish (?:packages?|releases?)|npm publish|cargo publish|gh release)",
+        lower,
+    ):
+        return "git_workflow"
+    if re.search(
         r"(?i)(?:whole[- ]file|cat -n|nl -ba|read only.*range|context blast|line ranges|full re-read)",
         lower,
     ):

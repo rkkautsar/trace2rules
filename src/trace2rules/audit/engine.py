@@ -14,6 +14,7 @@ import duckdb
 from .heuristics.command_usage import evaluate as evaluate_command_usage
 from .heuristics.context_hygiene import evaluate as evaluate_context_hygiene
 from .heuristics.generic import evaluate as evaluate_generic
+from .heuristics.git_workflow import evaluate as evaluate_git_workflow
 from .heuristics.hook_bypass import evaluate as evaluate_hook_bypass
 from .heuristics.ordering import evaluate as evaluate_ordering
 from .heuristics.path_scope import evaluate as evaluate_path_scope
@@ -395,6 +396,15 @@ def audit_agents(
                 compliant += outcome.compliant
                 violations += outcome.violations
                 examples.extend(outcome.examples)
+            elif rule.category == "git_workflow":
+                outcome = evaluate_git_workflow(rule, events)
+                if outcome is None:
+                    continue
+                applicable += outcome.applicable
+                observed += outcome.observed
+                compliant += outcome.compliant
+                violations += outcome.violations
+                examples.extend(outcome.examples)
             elif rule.category == "context_hygiene":
                 outcome = evaluate_context_hygiene(
                     rule,
@@ -438,11 +448,12 @@ def audit_agents(
             "validation": "validation-after-change",
             "command": "command-usage",
             "path_scope": "path-scope",
+            "git_workflow": "git-workflow",
             "context_hygiene": "scratch-file-hygiene",
             "architecture_map": "path-ownership",
         }.get(rule.category, "generic")
         measurable = rule.category in {
-            "test_command", "validation", "command", "path_scope", "hook_bypass", "read_hygiene", "read_before_edit", "ordering", "context_hygiene",
+            "test_command", "validation", "command", "path_scope", "hook_bypass", "git_workflow", "read_hygiene", "read_before_edit", "ordering", "context_hygiene",
         }
         opportunities = applicable if measurable else 0
         undecided = 0

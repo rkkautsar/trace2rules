@@ -19,6 +19,8 @@ def enforcement_for(rule: AgentRule) -> str:
         return f"CI required check / pre-commit hook running `{command}`."
     if rule.category == "hook_bypass":
         return "Pre-commit hook plus a CI check rejecting `--no-verify` commits."
+    if rule.category == "git_workflow":
+        return "Branch protection, release workflow approval, and protected-branch rules."
     if rule.category == "read_hygiene":
         return "No mechanical enforcement; harness/context-budget hooks can observe reads."
     if rule.category == "read_before_edit":

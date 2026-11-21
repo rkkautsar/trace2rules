@@ -1422,3 +1422,67 @@ def test_path_scope_rule_is_measured_by_edits(tmp_path: Path) -> None:
         con.close()
     assert audit.coverage == "measured"
     assert audit.compliant_sessions == 1
+
+
+def test_git_workflow_detects_force_push(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Git\n\n- Do not force push to shared branches.\n")
+    assert parse_agents(path)[0].category == "git_workflow"
+    db = tmp_path / "git_workflow.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[
+                    ToolCall(
+                        "Bash",
+                        "git push --force origin main",
+                        action_type="exec",
+                        target="git push --force origin main",
+                        is_error=False,
+                    )
+                ],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.applicable_sessions == 1
+    assert audit.violation_sessions == 1
+    assert audit.verdict == "enforce"
+
+
+def test_git_workflow_does_not_flag_normal_push(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Git\n\n- Do not force push to shared branches.\n")
+    db = tmp_path / "git_normal.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[
+                    ToolCall(
+                        "Bash",
+                        "git push origin main",
+                        action_type="exec",
+                        target="git push origin main",
+                        is_error=False,
+                    )
+                ],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.applicable_sessions == 0
+    assert audit.violation_sessions == 0

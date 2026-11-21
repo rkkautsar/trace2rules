@@ -319,6 +319,14 @@ def audit_agents(
                     normalize=_normalize_command,
                     argv_match=_argv_match,
                     validation_re=VALIDATION_RE,
+                    after_edit=bool(
+                        re.search(
+                            r"(?i)(?:\bafter\b.{0,80}\b(?:edit|change|modif|implement|fix|patch)|"
+                            r"\bbefore (?:finishing|committing)|"
+                            r"\bfor each (?:touched|changed)\b)",
+                            rule.text,
+                        )
+                    ),
                 )
                 if outcome is None:
                     continue

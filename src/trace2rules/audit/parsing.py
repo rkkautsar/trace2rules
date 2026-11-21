@@ -7,14 +7,14 @@ from .models import AgentRule
 
 TEST_RUN_RE = re.compile(
     r"(?i)\b(pytest|unittest|cargo test|go test|npm test|npm run test|pnpm test|"
-    r"yarn test|mvn test|gradle test|dotnet test|rspec|phpunit|mix test|"
-    r"swift test|make (?:test|check)|python -m (?:pytest|unittest)|"
+    r"yarn test|pdm (?:run )?test|mvn test|gradle test|dotnet test|rspec|phpunit|mix test|"
+    r"swift test|make (?:test|check|unit)|python -m (?:pytest|unittest)|"
     r"cargo (?:fmt|clippy))\b"
 )
 NEGATIVE_RULE_RE = re.compile(r"(?i)\b(never|do not|don't|avoid)\b")
 VALIDATION_RE = re.compile(
     r"(?i)\b(test|tests|lint|typecheck|validate|validation|pytest|cargo test|go test|"
-    r"npm test|vitest|jest|make (?:unit|test)|check|cargo (?:fmt|clippy))\b"
+    r"npm test|vitest|jest|pdm (?:run )?test|make (?:unit|test)|check|cargo (?:fmt|clippy))\b"
 )
 SCRATCH_RE = re.compile(r"(?i)\b(?:reproduce|repro|scratch|debug|artifact)[\w.-]*\b")
 PATH_RE = re.compile(r"(?<![\w./-])(?:[\w.-]+/){1,}[\w.-]+")

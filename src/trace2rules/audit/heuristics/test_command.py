@@ -18,7 +18,29 @@ def evaluate(
     normalize: Callable[[str], str],
     argv_match: Callable[[str, str], bool],
     validation_re: re.Pattern[str],
+    after_edit: bool = True,
 ) -> AuditOutcome | None:
+    if not after_edit:
+        hits = [
+            event
+            for event in events
+            if event[2] == "exec"
+            and (
+                matches(rule, event[3], event[4], event[5])
+                if rule.commands
+                else bool(validation_re.search(str(event[3])))
+            )
+        ]
+        if not hits:
+            return None
+        return AuditOutcome(
+            applicable=1,
+            observed=1,
+            compliant=1 if any(event[6] == "ok" for event in hits) else 0,
+            violations=0 if any(event[6] == "ok" for event in hits) else 1,
+            examples=[event[3][:240] for event in hits[:2]],
+            test_outcomes={"command_observed": 1},
+        )
     edit_events = [
         (step, target)
         for step, target in edit_events

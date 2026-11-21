@@ -1279,3 +1279,48 @@ def test_unmeasured_rule_is_not_reported_compliant(tmp_path: Path) -> None:
     assert audit.coverage == "unmeasured"
     assert audit.compliant_sessions == 0
     assert audit.verdict == "not_measured"
+
+
+def test_generic_rule_has_no_applicable_sessions(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("# Rules\n\n- Keep `src/api.py` free of CLI imports.\n")
+    db = tmp_path / "generic.duckdb"
+    write_sessions(db, [Session("s", "acme/repo")])
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.category == "architecture_map"
+    assert audit.applicable_sessions == 0
+    assert audit.coverage == "unmeasured"
+    assert audit.verdict == "not_measured"
+
+
+def test_pdm_test_command_is_recognized() -> None:
+    rule = parse_agents_text("- Run `pdm run test` after editing.")[0]
+    assert rule.category == "test_command"
+
+
+def test_bare_test_command_is_observed_not_violated_by_edits(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("## Testing\n\n- Run `make test`.\n")
+    db = tmp_path / "bare_test.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s",
+                "acme/repo",
+                calls=[ToolCall("Edit", "src/api.py", action_type="edit", target="src/api.py")],
+            )
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path))[0]
+    finally:
+        con.close()
+    assert audit.applicable_sessions == 0
+    assert audit.violation_sessions == 0
+    assert audit.verdict == "not_measured"

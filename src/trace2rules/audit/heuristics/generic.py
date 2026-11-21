@@ -4,4 +4,4 @@ from .common import AuditOutcome
 
 
 def evaluate(matched: bool) -> AuditOutcome:
-    return AuditOutcome(applicable=1, not_observed=0 if matched else 1)
+    return AuditOutcome(applicable=0)

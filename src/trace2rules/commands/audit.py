@@ -178,11 +178,12 @@ def _audit_command(
             console.print(table)
         return
     table = Table(title=f"AGENTS.md audit: {repo}")
-    for column in ("Rule", "Coverage", "Followed", "Violations", "Confidence", "Enforcement"):
+    for column in ("Rule", "Verdict", "Coverage", "Followed", "Violations", "Confidence", "Enforcement"):
         table.add_column(column)
     for rule in payload["rules"]:
         table.add_row(
             redact_text(rule["text"][:90]),
+            rule.get("verdict", "keep"),
             rule.get("coverage", "unmeasured"),
             str(rule.get("followed", 0)),
             _violations(rule),
@@ -192,11 +193,12 @@ def _audit_command(
     console.print(table)
     if payload.get("global_rules"):
         global_table = Table(title=f"Global AGENTS.md: {repo}")
-        for column in ("Rule", "Coverage", "Followed", "Violations", "Confidence", "Enforcement"):
+        for column in ("Rule", "Verdict", "Coverage", "Followed", "Violations", "Confidence", "Enforcement"):
             global_table.add_column(column)
         for rule in payload["global_rules"]:
             global_table.add_row(
                 redact_text(rule["text"][:90]),
+                rule.get("verdict", "keep"),
                 rule.get("coverage", "unmeasured"),
                 str(rule.get("followed", 0)),
                 _violations(rule),

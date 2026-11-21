@@ -80,6 +80,7 @@ class RuleAudit:
     source_path: str = ""
     source_scope: str = "repo"
     not_applicable_sessions: int = 0
+    verdict: str = "keep"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +116,7 @@ class RuleAudit:
             "examples": list(self.examples),
             "source_path": self.source_path,
             "source_scope": self.source_scope,
+            "verdict": self.verdict,
             "enforceable": self.enforceable,
             "enforcement": self.enforcement,
             "suggestion": self.suggestion,
@@ -512,6 +514,18 @@ def audit_agents(
         audit.source_path = rule.source_path
         audit.source_scope = rule.source_scope
         audit.not_applicable_sessions = not_applicable
+        if stale_paths:
+            audit.verdict = "delete"
+        elif not applicable and not_applicable:
+            audit.verdict = "not_applicable"
+        elif opportunities == 0:
+            audit.verdict = "not_measured"
+        elif violations == 0:
+            audit.verdict = "keep"
+        elif enforceable:
+            audit.verdict = "enforce"
+        else:
+            audit.verdict = "reword"
         if rule.category in {"read_before_edit", "read_hygiene", "ordering"}:
             audit.required = False
             audit.required_reason = "guidance only; not enforceable by repository checks"
@@ -820,8 +834,8 @@ def audit_commit(
 def audit_prompt(payload: dict[str, Any]) -> str:
     def rule_lines(rules: list[dict[str, Any]]) -> list[str]:
         lines = [
-            "| Rule | Scope | Source | Coverage | Followed | Violations | Confidence | Enforcement |",
-            "|---|---|---|---|---|---|---|---|",
+            "| Rule | Scope | Source | Verdict | Coverage | Followed | Violations | Confidence | Enforcement |",
+            "|---|---|---|---|---|---|---|---|---|",
         ]
         for rule in rules:
             lines.append(
@@ -831,6 +845,7 @@ def audit_prompt(payload: dict[str, Any]) -> str:
                         redact_text(str(rule.get("text", ""))[:160]),
                         str(rule.get("source_scope", "repo")),
                         redact_text(str(rule.get("source_path", ""))[:160]),
+                        str(rule.get("verdict", "keep")),
                         str(rule.get("coverage", "unmeasured")),
                         str(rule.get("followed", 0)),
                         str(rule.get("violation_sessions", 0)),

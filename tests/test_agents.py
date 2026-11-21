@@ -606,6 +606,7 @@ def test_audit_reports_stale_paths_and_conditional_wording(tmp_path: Path) -> No
         con.close()
     assert audit.wording == "conditional"
     assert audit.stale_paths == ("tests/test_missing.py",)
+    assert audit.verdict == "delete"
 
 
 def test_stale_paths_ignore_markdown_links(tmp_path: Path) -> None:
@@ -1152,6 +1153,8 @@ def test_nested_rule_is_scoped_to_session_cwd(tmp_path: Path) -> None:
     (repo / ".git").mkdir(parents=True)
     nested = repo / "pkg"
     nested.mkdir()
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_api.py").write_text("")
     path = nested / "AGENTS.md"
     path.write_text("## Validation\n\n- Run `pytest tests/test_api.py` after editing.\n")
     db = tmp_path / "nested_scope.duckdb"
@@ -1190,6 +1193,7 @@ def test_nested_rule_is_scoped_to_session_cwd(tmp_path: Path) -> None:
     assert audit.applicable_sessions == 1
     assert audit.not_applicable_sessions == 1
     assert audit.violation_sessions == 0
+    assert audit.verdict == "keep"
 
 
 def test_source_read_does_not_match_same_basename_in_another_directory() -> None:

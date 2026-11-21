@@ -6,15 +6,7 @@ Mine and audit coding-agent sessions into evidence-backed `AGENTS.md` rules.
 
 The output is a proposal, not an automatically applied `AGENTS.md`.
 
-> **Small local corpus?** Results are most useful with about 10+ local sessions. With fewer, ingest a public dataset first:
->
-> ```bash
-> trace2rules ingest --format swe-rebench
-> # or
-> trace2rules ingest --format open-swe --repos owner/name
-> ```
->
-> See [Public datasets](#public-datasets).
+> **Small local corpus?** Results are most useful with about 10+ local sessions. With fewer, ingest a public dataset first; see [Public datasets](#public-datasets).
 
 ## Quick start
 

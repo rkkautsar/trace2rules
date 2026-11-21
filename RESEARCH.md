@@ -22,7 +22,7 @@ completion judges found AUROC <= 0.65
 `noop_retry`, `stuck_loop`, `recovery`, `failure_loop`, `low_validation`,
 `premature_completion`, `site_edit_mismatch`, `workaround_script`,
 `context_blasts`, `selector_miss`, `repeated_reads`, `edit_churn`,
-`command_error`, `permission_denied`, and `feedback_loop`.
+`command_error`, `permission_denied`, `feedback_loop`, and `commit_hygiene`.
 
 These cover repetition and missing validation well. They do not cover claim
 state, test-oracle integrity, rejected edit recovery, environment thrash, or
@@ -242,12 +242,13 @@ Implemented from Wave 2:
   test event after the last edit.
 - `correction_loop`, using local user corrections rather than benchmark labels.
 - `test_regression`, using local test summaries stored in `test_results`.
-- `test_shrink`, comparing local test totals around test-path edits.
+- `commit_hygiene`, using edit/commit cadence and final-edit state.
+- `destructive_command` coverage for publish/release commands.
 
 Also added an enforcement inventory for existing CI, pre-commit, hook, and
-repository-script checks. Offline synthesis, built-in label backends, and the
-eval command were removed; `synthesize --report` is a thin LLM wrapper over an
-existing report prompt.
+repository-script checks. The current CLI has no offline synthesis, label
+backend, eval command, or `synthesize --report`; report prompts are generated
+by `report` and validated separately with `audit --proposal`.
 
 Deliberately not implemented yet:
 

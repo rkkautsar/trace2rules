@@ -208,6 +208,10 @@ def _audit_command(
         f"Audited [bold]{filtered}/{total}[/bold] sessions"
         + (f" since {cutoff[:12]}" if cutoff else "")
     )
+    if total < 10:
+        console.print(
+            "[yellow]Fewer than 10 local sessions; treat these rates as weak evidence.[/yellow]"
+        )
     if filtered == 0:
         console.print(
             "[yellow]No sessions matched this cutoff; pass --all-sessions to audit full history.[/yellow]"

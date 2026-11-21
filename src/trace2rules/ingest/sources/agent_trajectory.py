@@ -404,6 +404,21 @@ def _append_root(
         roots.append((source, candidate))
 
 
+def _windows_stores_enabled(root: Path) -> bool:
+    setting = os.environ.get("TRACE2RULES_WINDOWS_STORES", "").lower()
+    if setting in {"0", "false", "no"}:
+        return False
+    if setting in {"1", "true", "yes"}:
+        return True
+    if root.resolve() != Path.home().resolve() or not Path("/mnt/c/Users").is_dir():
+        return False
+    try:
+        version = Path("/proc/version").read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
+    return "microsoft" in version or "wsl" in version
+
+
 def _source_roots(root: Path) -> list[tuple[str, Path]]:
     roots: list[tuple[str, Path]] = []
     seen: set[Path] = set()
@@ -426,10 +441,7 @@ def _source_roots(root: Path) -> list[tuple[str, Path]]:
         )
         for candidate in candidates:
             _append_root(roots, seen, source, candidate)
-    if (
-        root.resolve() == Path.home().resolve()
-        and os.environ.get("TRACE2RULES_WINDOWS_STORES") == "1"
-    ):
+    if _windows_stores_enabled(root):
         for user in sorted(Path("/mnt/c/Users").glob("*")):
             for relative, source in WINDOWS_AGENT_STORES:
                 _append_root(roots, seen, source, user / relative)

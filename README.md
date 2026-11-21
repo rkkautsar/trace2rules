@@ -6,6 +6,8 @@ Mine and audit coding-agent sessions into evidence-backed `AGENTS.md` rules.
 
 The output is a proposal, not an automatically applied `AGENTS.md`.
 
+> **Small local corpus?** Results are most useful with about 10+ local sessions. With fewer, try the public `open-swe` or `swe-rebench` datasets; see [Supported ingestion formats](#supported-ingestion-formats).
+
 ## Quick start
 
 Paste this into your coding agent to audit the current checkout:
@@ -61,6 +63,13 @@ On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` 
 `audit` prints the audited/total session count and defaults to the latest `AGENTS.md` commit cutoff. Pass `--all-sessions` for full history.
 
 ### Rules generated from report prompts
+
+**`swc-project/swc`**
+
+- [guidance] Before changing production code in a crate, add or run a focused reproduction in that crate's existing tests or examples and confirm it fails on the unmodified tree.
+- [guidance] Validate edits with `cargo test -p <crate> --offline <test-filter>`; use `cargo check -p <crate> --offline` only for compile-only changes, and do not substitute a standalone mock for the affected crate's tests.
+- [guidance] Read the exact file and line range before editing it, using `rg` and `sed -n`; do not edit from `git diff`, filenames, or prior snippets alone.
+- [guidance] Do not create a new workspace crate or edit `Cargo.toml`/`Cargo.lock` to hold a reproduction; place it in the affected crate's `tests/` or `examples/` directory.
 
 **`rkkautsar/trace2rules`**
 
@@ -182,7 +191,7 @@ Variables are read from the process environment. trace2rules does not load `.env
 |---|---|
 | `TRACE2RULES_DB` | Override the default DuckDB path |
 | `TRACE2RULES_CACHE_DIR` | Local parquet cache; defaults to `~/.cache/trace2rules` |
-| `TRACE2RULES_WINDOWS_STORES` | Set to `1` to scan Windows agent stores from WSL |
+| `TRACE2RULES_WINDOWS_STORES` | Auto-detects WSL and scans `/mnt/c/Users`; set to `0` to disable or `1` to force |
 
 ## Data and privacy
 

@@ -10,7 +10,7 @@ from typing import Annotated
 import typer
 from rich.table import Table
 
-from ..agents import audit_commit, audit_payload, latest_agents_commit, resolve_agents
+from ..agents import _agents_root, audit_commit, audit_payload, latest_agents_commit, resolve_agents
 from ..cli_common import _resolve_repo_label, console
 from ..db import DB_PATH, connect
 from ..redact import redact_text, redact_value
@@ -67,7 +67,17 @@ def _audit_command(
     if not agent_paths:
         console.print("[red]No AGENTS.md or CLAUDE.md found.[/red]")
         raise typer.Exit(1)
-    agents = agent_paths[0]
+    repo_root = None
+    repo_agents: list[Path] = []
+    for agent_path in agent_paths:
+        candidate = _agents_root(agent_path.resolve().parent)
+        if (candidate / ".git").exists():
+            repo_root = candidate
+            repo_agents.append(agent_path)
+    if not repo_agents:
+        repo_agents = [agent_paths[0]]
+        repo_root = _agents_root(agent_paths[0].resolve().parent)
+    agents = repo_agents[0]
     def parse_time(value: str | None) -> datetime | None:
         if value is None:
             return None
@@ -105,7 +115,7 @@ def _audit_command(
             if latest_commit:
                 try:
                     sha, committed_at = max(
-                        (latest_agents_commit(path) for path in agent_paths),
+                        (latest_agents_commit(path) for path in repo_agents),
                         key=lambda item: item[1],
                     )
                     coverage = con.execute(
@@ -116,7 +126,7 @@ def _audit_command(
                     if coverage[1]:
                         if since_dt is None:
                             since_dt = committed_at
-                        payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt)
+                        payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt, root=repo_root)
                         payload["commit"] = sha
                         payload["committed_at"] = committed_at.isoformat()
                         if coverage[1] < coverage[0]:
@@ -125,7 +135,7 @@ def _audit_command(
                                 f"{coverage[0] - coverage[1]} sessions have no timestamp and were excluded."
                             )
                     else:
-                        payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt)
+                        payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt, root=repo_root)
                         payload["commit"] = sha
                         payload["committed_at"] = committed_at.isoformat()
                         payload["warning"] = (
@@ -133,10 +143,10 @@ def _audit_command(
                             "instead of the latest AGENTS.md commit cutoff."
                         )
                 except (subprocess.CalledProcessError, OSError, ValueError) as error:
-                    payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt)
+                    payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt, root=repo_root)
                     payload["warning"] = f"Could not resolve latest AGENTS.md commit: {error}"
             else:
-                payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt)
+                payload = audit_payload(con, repo, agent_paths, since=since_dt, until=until_dt, root=repo_root)
     finally:
         con.close()
     if prompt_output:

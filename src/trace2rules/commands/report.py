@@ -12,7 +12,7 @@ from typing import Annotated
 
 import typer
 
-from ..agents import audit_payload, resolve_agents
+from ..agents import _agents_root, audit_payload, resolve_agents
 from ..cli_common import _ensure_local_sessions, _repo_matches_cwd, console
 from ..db import DB_PATH, connect
 from ..patterns import mine_sequences
@@ -165,10 +165,15 @@ def _report_command(
                 return None
             for repo_name, _count in repo_rows:
                 repo_agents = agents_for(repo_name)
-                existing = audit_payload(con, repo_name, repo_agents) if repo_agents else None
                 repo_root = None
                 if repo_agents:
-                    repo_root = Path(repo_agents[0]).resolve().parent
+                    for agent_path in repo_agents:
+                        candidate = _agents_root(agent_path.resolve().parent)
+                        if (candidate / ".git").exists():
+                            repo_root = candidate
+                            break
+                    if repo_root is None:
+                        repo_root = _agents_root(repo_agents[0].resolve().parent)
                 else:
                     cwd_row = con.execute(
                         "SELECT cwd FROM sessions WHERE repo = ? AND cwd <> '' LIMIT 1",
@@ -176,6 +181,11 @@ def _report_command(
                     ).fetchone()
                     if cwd_row and Path(cwd_row[0]).is_dir():
                         repo_root = Path(cwd_row[0])
+                existing = (
+                    audit_payload(con, repo_name, repo_agents, root=repo_root)
+                    if repo_agents
+                    else None
+                )
                 selected_findings = select_findings(
                     exact,
                     mined,

@@ -133,9 +133,35 @@ def test_audit_since_filters_sessions(tmp_path: Path) -> None:
 def test_resolve_agents_detects_claude_md(tmp_path: Path, monkeypatch) -> None:
     from trace2rules.agents import resolve_agents
 
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     (tmp_path / "CLAUDE.md").write_text("- Run `pytest tests/test_api.py` after editing.\n")
     monkeypatch.chdir(tmp_path)
     assert [path.name for path in resolve_agents()] == ["CLAUDE.md"]
+
+
+def test_resolve_agents_discovers_global_and_nested(tmp_path: Path, monkeypatch) -> None:
+    from trace2rules.agents import resolve_agents
+
+    home = tmp_path / "home"
+    global_agents = home / ".omp" / "agent" / "AGENTS.md"
+    global_agents.parent.mkdir(parents=True)
+    global_agents.write_text("- Use `uv run pytest -q`.\n")
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "AGENTS.md").write_text("- Root rule.\n")
+    nested = repo / "pkg"
+    nested.mkdir()
+    (nested / "AGENTS.md").write_text("- Nested rule.\n")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.chdir(nested)
+
+    assert [path.relative_to(tmp_path).as_posix() for path in resolve_agents()] == [
+        "home/.omp/agent/AGENTS.md",
+        "repo/AGENTS.md",
+        "repo/pkg/AGENTS.md",
+    ]
 
 
 def test_parse_agents_collects_shell_commands(tmp_path: Path) -> None:

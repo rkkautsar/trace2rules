@@ -6,6 +6,7 @@ New code should import from ``trace2rules.audit.*``.
 from .audit.enforcement import discover_enforcement, enforcement_inventory
 from .audit.engine import (
     RuleAudit,
+    _agents_root,
     _infer_scope,
     _matches,
     _rule_conflicts,
@@ -36,6 +37,7 @@ __all__ = [
     "parse_agents",
     "parse_agents_text",
     "resolve_agents",
+    "_agents_root",
     "_infer_scope",
     "_matches",
     "_rule_conflicts",

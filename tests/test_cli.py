@@ -410,3 +410,39 @@ def test_report_uses_session_cwd_for_agents(tmp_path: Path, monkeypatch) -> None
     )
     assert result.exit_code == 0
     assert "CWD_RULE_SENTINEL" in result.output
+
+
+def test_report_includes_global_and_nested_agents(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    global_agents = home / ".omp" / "agent" / "AGENTS.md"
+    global_agents.parent.mkdir(parents=True)
+    global_agents.write_text("## Validation\n\n- Run `pytest GLOBAL_SENTINEL` after editing.\n")
+    checkout = tmp_path / "checkout"
+    (checkout / ".git").mkdir(parents=True)
+    (checkout / "AGENTS.md").write_text("## Validation\n\n- Run `pytest ROOT_SENTINEL` after editing.\n")
+    nested = checkout / "pkg"
+    nested.mkdir()
+    (nested / "AGENTS.md").write_text("## Validation\n\n- Run `pytest NESTED_SENTINEL` after editing.\n")
+    db = tmp_path / "nested.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "s1",
+                "acme/repo",
+                source="test",
+                cwd=str(nested),
+                calls=[ToolCall("Read", "src/a.py", action_type="read")],
+            )
+        ],
+    )
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(
+        app,
+        ["report", "--repo", "acme/repo", "--prompt", "--db", str(db)],
+    )
+    assert result.exit_code == 0
+    assert "GLOBAL_SENTINEL" in result.output
+    assert "ROOT_SENTINEL" in result.output
+    assert "NESTED_SENTINEL" in result.output

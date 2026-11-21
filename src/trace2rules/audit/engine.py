@@ -564,15 +564,46 @@ def _agents_root(start: Path) -> Path:
     return current
 
 
+def _global_agents() -> list[Path]:
+    home = Path.home()
+    return [
+        home / ".codex" / "AGENTS.md",
+        home / ".claude" / "CLAUDE.md",
+        home / ".omp" / "agent" / "AGENTS.md",
+    ]
+
+
+def _agent_files(directory: Path) -> list[Path]:
+    return [directory / "AGENTS.md", directory / "CLAUDE.md"]
+
+
+def _agent_directories(start: Path, root: Path) -> list[Path]:
+    current = start
+    directories: list[Path] = []
+    while True:
+        directories.append(current)
+        if current == root or root not in current.parents:
+            break
+        current = current.parent
+    directories.reverse()
+    return directories
+
+
 def resolve_agents(path: str | Path | None = None) -> list[Path]:
-    if path is not None and Path(path).is_dir():
-        root = _agents_root(Path(path))
-        candidates = [root / "AGENTS.md", root / "CLAUDE.md"]
-    elif path is not None:
+    if path is not None and not Path(path).is_dir():
         candidates = [Path(path)]
     else:
-        root = _agents_root(Path.cwd())
-        candidates = [root / "AGENTS.md", root / "CLAUDE.md"]
+        start = Path(path) if path is not None else Path.cwd()
+        start = start.resolve()
+        root = _agents_root(start)
+        candidates = [
+            *_global_agents(),
+            *[
+                candidate
+                for directory in _agent_directories(start, root)
+                for candidate in _agent_files(directory)
+            ],
+        ]
     paths: list[Path] = []
     seen: set[Path] = set()
     for candidate in candidates:
@@ -593,6 +624,7 @@ def audit_payload(
     *,
     since: datetime | None = None,
     until: datetime | None = None,
+    root: Path | None = None,
 ) -> dict[str, Any]:
     raw_paths = (
         [Path(path)]
@@ -609,6 +641,14 @@ def audit_payload(
             seen.add(resolved)
             paths.append(candidate)
     rules = [rule for file in paths for rule in parse_agents(file)]
+    if root is None and paths:
+        for file in paths:
+            candidate = _agents_root(file.parent)
+            if (candidate / ".git").exists():
+                root = candidate
+                break
+        if root is None:
+            root = _agents_root(paths[0].parent)
     coverage = con.execute(
         "SELECT count(*), count(*) FILTER (WHERE started_at IS NOT NULL) FROM sessions WHERE repo = ?",
         [repo],
@@ -642,7 +682,7 @@ def audit_payload(
                 rules,
                 since=since,
                 until=until,
-                root=paths[0].parent if paths else None,
+                root=root,
             )
         ],
     }

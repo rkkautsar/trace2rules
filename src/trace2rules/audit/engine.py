@@ -79,6 +79,7 @@ class RuleAudit:
     examples: tuple[str, ...] = ()
     source_path: str = ""
     source_scope: str = "repo"
+    not_applicable_sessions: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -93,6 +94,7 @@ class RuleAudit:
             "violation_sessions": self.violation_sessions,
             "failed_validation_sessions": self.failed_validation_sessions,
             "not_observed_sessions": self.not_observed_sessions,
+            "not_applicable_sessions": self.not_applicable_sessions,
             "scope": self.scope,
             "existing_enforcement": self.existing_enforcement,
             "enforcement_status": self.enforcement_status,
@@ -199,6 +201,14 @@ def _normalize_rule_paths(rule: AgentRule, root: Path | None) -> None:
     rule.paths = tuple(dict.fromkeys(normalized))
 
 
+def _cwd_within(cwd: str, directory: Path) -> bool:
+    try:
+        Path(cwd).resolve().relative_to(directory.resolve())
+    except ValueError:
+        return False
+    return True
+
+
 def audit_agents(
     con: duckdb.DuckDBPyConnection,
     repo: str,
@@ -221,7 +231,7 @@ def audit_agents(
     rows = con.execute(
         f"""
         SELECT e.session_id, e.step_idx, e.action_type, e.raw_target,
-               e.target, e.object_id, e.outcome
+               e.target, e.object_id, e.outcome, s.cwd
         FROM tool_events e JOIN sessions s USING (session_id)
         WHERE {' AND '.join(filters)}
         ORDER BY e.session_id, e.step_idx
@@ -229,8 +239,11 @@ def audit_agents(
         params,
     ).fetchall()
     sessions: dict[str, list[tuple]] = {}
+    cwds: dict[str, str] = {}
     for row in rows:
-        sessions.setdefault(row[0], []).append(row)
+        session_id = row[0]
+        sessions.setdefault(session_id, []).append(row[:7])
+        cwds[session_id] = row[7] or ""
 
     audits: list[RuleAudit] = []
     for rule in rules:
@@ -242,11 +255,20 @@ def audit_agents(
         failed_validation = 0
         violations = 0
         not_observed = 0
+        not_applicable = 0
         undecided_count = 0
         test_outcomes: dict[str, int] = {}
         examples: list[str] = []
         scope = _infer_scope(rule, root)
-        for events in sessions.values():
+        rule_dir = None
+        if rule.source_scope == "nested" and root is not None and rule.source_path:
+            rule_dir = Path(rule.source_path).resolve().parent
+        for session_id, events in sessions.items():
+            if rule_dir is not None:
+                cwd = cwds.get(session_id, "")
+                if not cwd or not _cwd_within(cwd, rule_dir):
+                    not_applicable += 1
+                    continue
             edit_events = [
                 (step, target)
                 for _sid, step, action, _raw, target, _object, outcome in events
@@ -391,7 +413,10 @@ def audit_agents(
             followed = max(applicable - violations, 0)
         else:
             followed = 0
-        if rule.category == "hook_bypass":
+        if not applicable and not_applicable:
+            coverage = "not_applicable"
+            coverage_reason = "all sessions are outside this nested rule's cwd"
+        elif rule.category == "hook_bypass":
             coverage = "partial"
             coverage_reason = "observable pre-commit bypass; other clauses are not scored"
         elif measurable and opportunities:
@@ -486,6 +511,7 @@ def audit_agents(
         audit.examples = tuple(dict.fromkeys(examples))[:3]
         audit.source_path = rule.source_path
         audit.source_scope = rule.source_scope
+        audit.not_applicable_sessions = not_applicable
         if rule.category in {"read_before_edit", "read_hygiene", "ordering"}:
             audit.required = False
             audit.required_reason = "guidance only; not enforceable by repository checks"

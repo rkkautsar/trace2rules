@@ -1145,3 +1145,48 @@ def test_audit_payload_separates_global_rules(tmp_path: Path) -> None:
     assert [rule["source_scope"] for rule in payload["rules"]] == ["repo"]
     assert [rule["source_scope"] for rule in payload["global_rules"]] == ["global"]
     assert payload["global_rules"][0]["source_path"] == str(global_path.resolve())
+
+
+def test_nested_rule_is_scoped_to_session_cwd(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    nested = repo / "pkg"
+    nested.mkdir()
+    path = nested / "AGENTS.md"
+    path.write_text("## Validation\n\n- Run `pytest tests/test_api.py` after editing.\n")
+    db = tmp_path / "nested_scope.duckdb"
+    write_sessions(
+        db,
+        [
+            Session(
+                "outside",
+                "acme/repo",
+                cwd=str(repo),
+                calls=[ToolCall("Edit", "src/a.py", action_type="edit", target="src/a.py")],
+            ),
+            Session(
+                "inside",
+                "acme/repo",
+                cwd=str(nested),
+                calls=[
+                    ToolCall("Edit", "pkg/a.py", action_type="edit", target="pkg/a.py"),
+                    ToolCall(
+                        "Bash",
+                        "pytest tests/test_api.py",
+                        action_type="exec",
+                        target="pytest tests/test_api.py",
+                        object_id="pytest",
+                        is_error=False,
+                    ),
+                ],
+            ),
+        ],
+    )
+    con = connect(db)
+    try:
+        audit = audit_agents(con, "acme/repo", parse_agents(path), root=repo)[0]
+    finally:
+        con.close()
+    assert audit.applicable_sessions == 1
+    assert audit.not_applicable_sessions == 1
+    assert audit.violation_sessions == 0

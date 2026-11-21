@@ -14,7 +14,7 @@ The output is a proposal, not an automatically applied `AGENTS.md`.
 > trace2rules ingest --format open-swe --repos owner/name
 > ```
 >
-> See [Supported ingestion formats](#supported-ingestion-formats).
+> See [Public datasets](#public-datasets).
 
 ## Quick start
 
@@ -171,6 +171,35 @@ Local ingest treats each compaction segment as its own session by default; use `
 
 `run`, `mine`, and `audit` auto-ingest local sessions when the database is empty. `ingest` writes to `$XDG_DATA_HOME/trace2rules/trace2rules.duckdb` by default (`~/.local/share/...`). Set `TRACE2RULES_DB` to override it.
 
+## Public datasets
+
+Use a public dataset when the local corpus is small. Both datasets are public and require no Hugging Face token. The first run downloads the parquet into `~/.cache/trace2rules`; set `TRACE2RULES_CACHE_DIR` to move it, or pass `--refresh-cache` to re-download.
+
+### `swe-rebench`
+
+[nebius/SWE-rebench-openhands-trajectories](https://huggingface.co/datasets/nebius/SWE-rebench-openhands-trajectories)
+
+```bash
+trace2rules ingest --format swe-rebench
+trace2rules ingest --format swe-rebench --repos django__django --limit 50
+```
+
+The default repositories are `django__django` and `pytest-dev__pytest`. For `swe-rebench`, `--repos` takes instance prefixes such as `django__django`.
+
+### `open-swe`
+
+[nvidia/Open-SWE-Traces](https://huggingface.co/datasets/nvidia/Open-SWE-Traces)
+
+```bash
+trace2rules ingest --format open-swe --repos owner/name
+```
+
+`--repos` is required for `open-swe` and takes repository labels in `owner/name` form. This downloads six public `train-*.parquet` files.
+
+### `agent-trajectory`
+
+Local Claude Code, Codex, Pi, OMP, and OpenCode SQLite/JSON stores. See [Local sessions](#local-sessions).
+
 ## Install
 
 ```bash
@@ -186,16 +215,6 @@ uv sync
 ```
 
 `agent-trajectory` calls its bundled JS bridge through the system Node runtime for Claude Code, Codex, Pi, and OMP. Install Node.js 20 or newer; OpenCode SQLite ingestion is pure Python.
-
-### Supported ingestion formats
-
-| Format | What it reads |
-|---|---|
-| `open-swe` | [nvidia/Open-SWE-Traces](https://huggingface.co/datasets/nvidia/Open-SWE-Traces) parquet, downloaded on first use; `--repos owner/name` is required |
-| `swe-rebench` | [nebius/SWE-rebench-openhands-trajectories](https://huggingface.co/datasets/nebius/SWE-rebench-openhands-trajectories) parquet, downloaded on first use; `--repos` takes instance prefixes such as `django__django` |
-| `agent-trajectory` | Local Claude Code, Codex, Pi, OMP, OpenCode SQLite/JSON |
-
-Public datasets require no Hugging Face token. The first run downloads the parquet into `~/.cache/trace2rules`; set `TRACE2RULES_CACHE_DIR` to move it, or pass `--refresh-cache` to re-download. Datasets are not included in this repository.
 
 ## Configuration
 

@@ -38,6 +38,7 @@ from .heuristics import (
     workaround_scripts,
 )
 from .models import Finding
+from ..db import MEMORY_LIMIT_MB
 from .error_transitions import error_transitions
 from .persistence import persistent_failure_sites
 from .read_recipes import read_recipes
@@ -89,7 +90,16 @@ def mine(
         "diagnostic_read": diagnostic_reads,
         "prevention_delta": prevention_deltas,
     }
-    workers = workers or min(2, len(jobs), os.cpu_count() or 1)
+    if workers is None:
+        workers = int(os.environ.get("TRACE2RULES_WORKERS", "0"))
+    if workers <= 0:
+        try:
+            cpus = len(os.sched_getaffinity(0))
+        except (AttributeError, OSError):
+            cpus = os.cpu_count() or 1
+        budget = max(1, MEMORY_LIMIT_MB // 256) if MEMORY_LIMIT_MB else cpus
+        workers = min(cpus, len(jobs), budget)
+    workers = max(1, min(workers, len(jobs)))
     if workers <= 1:
         return {key: fn(con, limit=top) for key, fn in jobs.items()}
 

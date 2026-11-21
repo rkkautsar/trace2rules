@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from functools import lru_cache
 
 import duckdb
 
@@ -13,6 +14,7 @@ from .models import Finding
 SELECTOR_RE = re.compile(r"(?i)deselected|no tests ran|collected 0 items")
 
 
+@lru_cache(maxsize=65536)
 def _classes(action: str, signature: str, message: str, cause: str) -> list[str]:
     text = f"{message or ''} {cause or ''}"
     classes: list[str] = []

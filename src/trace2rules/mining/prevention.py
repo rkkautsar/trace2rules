@@ -4,6 +4,7 @@ import re
 import shlex
 from collections import defaultdict
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Iterable
 
 import duckdb
@@ -56,6 +57,7 @@ class Delta:
     command: str
 
 
+@lru_cache(maxsize=65536)
 def _normalize_path(value: str) -> str:
     value = value.strip().strip("'\"")
     value = WORKTREE_RE.sub("<root>", value)
@@ -82,17 +84,10 @@ def _strip_env(command: str) -> str:
             command = command[2:].strip()
 
 
+@lru_cache(maxsize=65536)
 def parse_entity(raw: str, target: str = "") -> CommandEntity:
     command = (raw or "").strip()
     cwd = ""
-    cd_match = re.search(r"(?:^|&&|;)\s*cd\s+([^&;]+)", command)
-    if cd_match:
-        cwd = _normalize_path(cd_match.group(1))
-    command = re.sub(r"^(?:cd\s+[^&;]+?\s*&&\s*)+", "", command)
-    command = _strip_env(command)
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
     if "cd " in command:
         cd_match = re.search(r"(?:^|&&|;)\s*cd\s+([^&;]+)", command)
         if cd_match:
@@ -136,6 +131,7 @@ def parse_entity(raw: str, target: str = "") -> CommandEntity:
     )
 
 
+@lru_cache(maxsize=65536)
 def _delta(raw: str) -> Delta | None:
     command = _strip_env((raw or "").strip())
     for part in _split_command(command):

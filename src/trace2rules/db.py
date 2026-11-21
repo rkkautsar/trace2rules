@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import duckdb
@@ -77,31 +78,64 @@ CREATE TABLE IF NOT EXISTS ingest_files (
 );
 
 CREATE TABLE IF NOT EXISTS feedback_events (
-CREATE TABLE IF NOT EXISTS test_results (
     session_id        VARCHAR NOT NULL,
-    repo              VARCHAR NOT NULL,
     step_idx          INTEGER NOT NULL,
     kind              VARCHAR NOT NULL,
     text              VARCHAR NOT NULL,
     keys              VARCHAR NOT NULL,
     repo              VARCHAR DEFAULT ''
-    command           VARCHAR NOT NULL,
-    total             INTEGER NOT NULL,
-    passed            INTEGER NOT NULL,
-    failed            INTEGER NOT NULL,
-    errors            INTEGER NOT NULL,
-    skipped           INTEGER NOT NULL,
-    outcome           VARCHAR NOT NULL,
-    approx_out_tokens INTEGER NOT NULL DEFAULT 0
 );
 
 """
 
 
+def _memory_limit() -> str | None:
+    override = os.environ.get("TRACE2RULES_MEMORY_LIMIT")
+    if override:
+        return override
+    limits: list[int] = []
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            value = Path(path).read_text().strip()
+        except OSError:
+            continue
+        if value and value != "max":
+            try:
+                amount = int(value)
+            except ValueError:
+                continue
+            if 0 < amount < 1 << 60:
+                limits.append(amount)
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                limits.append(int(line.split()[1]) * 1024)
+                break
+    except (OSError, ValueError):
+        pass
+    if not limits:
+        return None
+    # Use a bounded share of available memory, not a fixed cap.
+    return f"{max(64, int(min(limits) * 0.25) // (1024 * 1024))}MB"
+
+
+CONNECTION_CONFIG = {
+    "threads": "1",
+    "preserve_insertion_order": "false",
+}
+_memory = _memory_limit()
+MEMORY_LIMIT_MB = 0
+if _memory:
+    CONNECTION_CONFIG["memory_limit"] = _memory
+    match = re.fullmatch(r"(?i)(\d+)\s*(MB|M|GB|G)?", _memory.strip())
+    if match:
+        amount = int(match.group(1))
+        MEMORY_LIMIT_MB = amount * 1024 if (match.group(2) or "").upper().startswith("G") else amount
+
+
 def connect(path: str | Path = DB_PATH) -> duckdb.DuckDBPyConnection:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-            "memory_limit": "2048MB",
     con = duckdb.connect(str(path), config=CONNECTION_CONFIG)
     con.execute(SCHEMA)
     for ddl in (

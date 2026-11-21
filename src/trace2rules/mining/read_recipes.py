@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from functools import lru_cache
 
 import duckdb
 
@@ -10,6 +11,11 @@ from .models import Finding
 
 TEST_RE = re.compile(r"(?i)pytest|unittest|npm test|yarn test|pnpm test|vitest|jest|cargo test|go test|dotnet test|rspec|phpunit|mix test|swift test")
 SCRATCH_RE = re.compile(r"(?i)(^|/)(reproduce|repro|scratch|debug|verify|comprehensive|final|test_fix|test_repro)")
+
+
+@lru_cache(maxsize=32768)
+def _is_test(command: str) -> bool:
+    return bool(TEST_RE.search(command))
 
 
 def read_recipes(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> list[Finding]:
@@ -44,7 +50,7 @@ def read_recipes(con: duckdb.DuckDBPyConnection, limit: int | None = None) -> li
                 candidate[4] == "exec"
                 and not candidate[7]
                 and candidate[6] == "ok"
-                and TEST_RE.search(candidate[5] or "")
+                and _is_test(candidate[5] or "")
                 for candidate in events[index + 1 : index + 21]
             ):
                 continue

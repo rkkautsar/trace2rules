@@ -273,6 +273,16 @@ def _prompt(
         f"- Stay under {max_rules} rules, {max(MAX_LINES, max_rules * 10)} lines, and {max(MAX_CHARS, max_rules * 500):,} characters.",
         "",
         "Return only copyable Markdown rules. No JSON, preamble, analysis, or summary.",
+        "",
+        "Shape:",
+        "```markdown",
+        "## <category>",
+        "- **Rule:** <1-2 imperative sentences>",
+        "  **Evidence:** <sessions affected and approximate setup/rework token cost>",
+        "  **Enforcement:** <exact CI/pre-commit/lint check, or guidance only>",
+        "  **Source:** `<session_ref>` (step N)",
+        "```",
+        "",
         "Include at least one source copied exactly from an evidence window. If no rule is supported, return: No rules supported by the evidence.",
     ]
     return "\n".join(sections)

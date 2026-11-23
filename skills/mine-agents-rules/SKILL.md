@@ -55,7 +55,7 @@ trace2rules audit --root . --proposal AGENTS.proposed.md
 - Prefer exact commands, paths, tests, and done criteria over advice.
 - Pair every “don’t” with the preferred “do”.
 - Do not encode formatting, lint, naming, or import-order rules that tools already enforce.
-- Put task procedures in skills/references; keep `AGENTS.md` for always-on repository facts.
+- Keep `AGENTS.md` for always-on repository facts; leave task procedures out of it.
 - Scope rules to the closest directory when they only apply there.
 - Make hard constraints enforceable by CI, hooks, permissions, or tests; otherwise label them guidance.
 - Remove duplicate, conflicting, stale, or obvious instructions before adding new ones.
@@ -93,23 +93,9 @@ Each rule should:
 
 Use an existing `AGENTS.md` rule instead of duplicating it. If a rule is violated or unenforced, propose the enforcement, not another soft reminder.
 
-## Output sections
+## Output
 
-The prompt asks for two outputs:
-
-1. Copyable `AGENTS.md` rules in the existing `Rule` / `Evidence` / `Enforcement` / `Source` shape.
-2. An optional `## Skill candidates` section with `Name`, `When`, `Procedure`, and `Evidence`.
-
-Only the rules section belongs in `AGENTS.md`. A skill candidate needs:
-
-- a bounded, repeatable task
-- task-specific applicability: needed for some tasks, not for most changes
-- 2+ independent sessions of support
-- 2–6 ordered steps
-- a concrete completion check
-- concrete commands, paths, or prerequisites
-
-If the guidance applies to every change, it is a rule, not a skill. Single commands, paths, and invariants also stay rules. Do not emit a skill for `Common Usage Patterns`, coding-rule lists, command menus, or architecture reference material.
+Return only copyable `AGENTS.md` rules in the `Rule` / `Evidence` / `Enforcement` / `Source` shape.
 
 ## Enforcement
 

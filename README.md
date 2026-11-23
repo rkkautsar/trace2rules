@@ -89,7 +89,7 @@ Skill candidate:
 
 ## Generating rules
 
-Mining produces evidence, not rules. `trace2rules mine --prompt --out-dir prompts/` writes one prompt per detected repository; give those prompts to your agent. The agent proposes rules and, when the evidence describes a bounded repeatable procedure, optional skill candidates. Validate the rules with `audit --proposal`; the skill section is not `AGENTS.md` content. Use `--root` when the checkout is not the directory containing `AGENTS.md`, so path and enforcement checks inspect the real repository.
+Mining produces evidence, not rules. `trace2rules mine --prompt --out-dir prompts/` writes one prompt per detected repository; give those prompts to your agent. The agent proposes rules, then validate them with `audit --proposal`. Use `--root` when the checkout is not the directory containing `AGENTS.md`, so path and enforcement checks inspect the real repository.
 
 **`swc-project/swc`**
 

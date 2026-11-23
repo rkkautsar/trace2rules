@@ -1,6 +1,6 @@
 [project]
 name = "trace2rules"
-version = "0.2.3"
+version = "0.3.0"
 description = "Mine coding-agent trajectories into evidence-backed AGENTS.md rules"
 readme = "README.md"
 license = "MIT"

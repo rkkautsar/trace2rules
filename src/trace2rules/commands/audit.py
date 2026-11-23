@@ -297,6 +297,19 @@ def _audit_command(
                 _enforcement(rule),
             )
         console.print(global_table)
+    if payload.get("skill_candidates"):
+        skill_table = Table(title="Possible skill extractions")
+        for column in ("Source", "Lines", "Section", "Signals", "Excerpt"):
+            skill_table.add_column(column)
+        for candidate in payload["skill_candidates"]:
+            skill_table.add_row(
+                redact_text(str(candidate.get("source_path", ""))[:80]),
+                f"{candidate.get('line_start')}-{candidate.get('line_end')}",
+                redact_text(str(candidate.get("heading", ""))[:60]),
+                redact_text(", ".join(candidate.get("signals", []))),
+                redact_text(str(candidate.get("excerpt", ""))[:120]),
+            )
+        console.print(skill_table)
     for conflict in payload.get("conflicts", []):
         console.print(
             f"[yellow]Conflict:[/yellow] {conflict['reason']}: "

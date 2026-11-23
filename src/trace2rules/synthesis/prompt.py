@@ -4,7 +4,7 @@ from ..mining.models import Finding
 from ..redact import redact_text
 from .models import DEFAULT_MAX_RULES, MAX_CHARS, MAX_LINES
 
-PROMPT_FINDINGS = 10
+PROMPT_FINDINGS = 20
 PROMPT_WINDOW_EVENTS = 3
 
 
@@ -248,7 +248,7 @@ def _prompt(
         "",
         *evidence,
         "",
-        "## Task: write AGENTS.md rules",
+        "## Task: write AGENTS.md rules and skill candidates",
         "",
         f"Write at most {max_rules} rules for this repository. Fewer are better; zero is valid when the evidence does not support a rule.",
         "",
@@ -272,7 +272,9 @@ def _prompt(
         "- Do not mechanically recommend pipe-to-head; distinguish quiet flags, targeted test selection, and repo entrypoints.",
         f"- Stay under {max_rules} rules, {max(MAX_LINES, max_rules * 10)} lines, and {max(MAX_CHARS, max_rules * 500):,} characters.",
         "",
-        "Return only copyable Markdown rules. No JSON, preamble, analysis, or summary.",
+        "Propose a skill only when the procedure is task-specific: needed for some tasks, not for most changes. If it applies to every change, keep it as an AGENTS.md rule instead. A skill candidate needs 2+ sessions of support, concrete steps, and a completion check; a single command, path, or short invariant stays a rule.",
+        "Return copyable Markdown rules first. Then, only if supported, append a `## Skill candidates` section. That section is not AGENTS.md content and must not be copied into AGENTS.md.",
+        "No JSON, preamble, analysis, or summary.",
         "",
         "Shape:",
         "```markdown",
@@ -284,5 +286,16 @@ def _prompt(
         "```",
         "",
         "Include at least one source copied exactly from an evidence window. If no rule is supported, return: No rules supported by the evidence.",
+        "",
+        "Skill candidate shape:",
+        "```markdown",
+        "## Skill candidates",
+        "- **Name:** <slug>",
+        "  **When:** <specific trigger>",
+        "  **Procedure:** <2-6 ordered steps with a completion check>",
+        "  **Evidence:** <session support and source>",
+        "```",
+        "",
+        "If no skill is supported, omit the section. Do not put skill candidates in AGENTS.md.",
     ]
     return "\n".join(sections)

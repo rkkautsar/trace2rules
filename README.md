@@ -10,10 +10,10 @@ The output is a proposal, not an automatically applied `AGENTS.md`.
 
 ## Quick start
 
-Paste this into your coding agent to audit the current checkout:
+Just ask your coding agent to start auditing AGENTS.md and mine new rules:
 
 ```text
-Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules audit --prompt > audit.txt`, read audit.txt, and list unobserved, violated, and unenforced rules. Propose concrete enforcement without duplicating existing CI/pre-commit checks.
+Use https://raw.githubusercontent.com/rkkautsar/trace2rules/master/skills/SKILL.md to audit or mine AGENTS.md rules.
 ```
 
 Or run the deterministic audit manually:
@@ -22,19 +22,13 @@ Or run the deterministic audit manually:
 trace2rules audit
 ```
 
-Paste this into your coding agent to generate rules:
-
-```text
-Install trace2rules if missing (`uv tool install trace2rules`). Run `trace2rules mine --prompt --out-dir prompts/` for my local agent sessions. Read the prompt files and synthesize repo-specific AGENTS.md rules yourself. Keep only rules supported by the evidence.
-```
-
-Or generate the evidence prompts manually:
+Generate evidence prompts manually:
 
 ```bash
 trace2rules mine --prompt --out-dir prompts/
 ```
 
-See [Auditing AGENTS.md](#auditing-agentsmd) and [Generating rules](#generating-rules) for the full flows.
+See [Auditing AGENTS.md](#auditing-agentsmd) and [Generating rules](#generating-rules) for the flows.
 
 ## Auditing AGENTS.md
 
@@ -75,39 +69,39 @@ On the Open-SWE `swc-project/swc` split (188 sessions), the current `AGENTS.md` 
 
 An `audit --prompt` pass over the same table suggests:
 
-- Delete the four stale binding commands and add a workflow that checks backticked `AGENTS.md` paths at `HEAD`.
-- Reword commit cadence: commit one logical change after `cargo fmt --all -- --check` and the narrowest affected `cargo test -p <crate>`.
-- Enforce the nightly rule with `cargo +stable check` and a guard rejecting `#![feature(...)]`, `RUSTC_BOOTSTRAP`, and nightly `rust-toolchain.toml`.
-- Replace the GitHub access rule with: use `gh`; CI fails on `curl`/`wget` to `github.com`.
-- Run snapshot tests with `UPDATE` unset; keep `UPDATE=1` local-only for regeneration.
-- Make hooks and CI apply the same checks so `--no-verify` cannot bypass them.
-- Consolidate the two read rules into a PR `Source:`/`Test:` requirement.
-- Initialize submodules before every test job.
-- Stage explicit paths with `git add`; reject `git commit -a`.
+- Reword commit cadence as a meaningful, self-contained checkpoint; do not try to enforce a raw commit count in CI.
+- Enforce the stable-Rust rule with a required stable-toolchain CI job and reject nightly feature gates.
+- Limit the `gh` rule to repository automation; a CI lint can cover checked-in scripts and workflows, not ad-hoc local commands.
+- Standardize snapshot updates with a checked-in script and verify regeneration leaves no diff.
+- Enforce `--no-verify` through required CI checks; a local hook cannot prove whether the flag was used.
+- Merge the two source-reading rules into one: search to locate code, then inspect the implementation, fixtures, and tests.
+- Initialize submodules only for tests that depend on them; make missing submodule content fail with an actionable message.
+- Replace “commit only after `git add`” with a review of the staged diff; CI should check the resulting commit, not the staging command.
+- Extract `Fixture Test Common Guide` (`60–67`) into a fixture-testing skill; remove the procedure from `AGENTS.md`.
 
-The review proposed three new rules: no package-scoped test commands in root `AGENTS.md`, every AGENTS path must exist at `HEAD`, and CI must run with `UPDATE` unset.
+Skill candidate:
 
-MSRV is not measured yet, so the review does not propose a separate MSRV enforcement rule.
+| Section | Lines | Recommendation |
+|---|---|---|
+| `Fixture Test Common Guide` | `60–67` | Move the fixture workflow into a skill; skills are auto-discovered by name and description. |
 
-`audit` prints the audited/total session count and audits all sessions by default. Pass `--latest-commit` to use the latest `AGENTS.md` commit as a cutoff; use `--since`/`--until` for explicit dates. By default, audit output shows measured and partial rules only; pass `--all-rules` to include unmeasured rules.
+`audit` prints the audited/total session count and audits all sessions by default. Pass `--latest-commit` to use the latest `AGENTS.md` commit as a cutoff; use `--since`/`--until` for explicit dates. By default, audit output shows measured and partial rules only; pass `--all-rules` to include unmeasured rules. Audit also reports possible skill extractions with source, line range, signals, and a short excerpt.
 
 ## Generating rules
 
-Mining produces evidence, not rules. `trace2rules mine --prompt --out-dir prompts/` writes one prompt per detected repository; give those prompts to your agent. The agent proposes rules, then validate them with `audit --proposal`. Use `--root` when the checkout is not the directory containing `AGENTS.md`, so path and enforcement checks inspect the real repository.
+Mining produces evidence, not rules. `trace2rules mine --prompt --out-dir prompts/` writes one prompt per detected repository; give those prompts to your agent. The agent proposes rules and, when the evidence describes a bounded repeatable procedure, optional skill candidates. Validate the rules with `audit --proposal`; the skill section is not `AGENTS.md` content. Use `--root` when the checkout is not the directory containing `AGENTS.md`, so path and enforcement checks inspect the real repository.
 
 **`swc-project/swc`**
 
-- [guidance] Before changing implementation code, run an existing fixture/test or add a focused failing test and execute it on the unmodified tree; do not use a standalone `/tmp` mock as the only reproduction for changes under `crates/`.
-- [guidance] Create one-off reproductions under `/tmp` or as tests/fixtures in the affected crate; do not add a temporary workspace crate or edit workspace `Cargo.toml`/`Cargo.lock` for a reproduction.
-- [guidance] When the default toolchain rejects repository rustflags, run cargo with `RUSTUP_TOOLCHAIN=<stable>` and set `RUSTFLAGS` at invocation; do not edit `.cargo/config.toml` to work around the toolchain.
-- [guidance] For large source files, read the relevant ranges with `sed -n '<start>,<end>p' <file>` or locate symbols with `rg -n`; do not page whole files until output is clipped.
+- [guidance] For a bug fix, run a focused regression against the unmodified implementation before changing production code when feasible; if that is blocked, record the blocker. Treat a standalone mock as supplementary evidence, not as a test of the actual SWC implementation.
+- [guidance] Enable `set -o pipefail` when piping `cargo build` or `cargo test` output to `tail`, so the pipeline preserves a failed Cargo exit status.
 
 **`rkkautsar/trace2rules`**
 
 - [guidance] Keep `src/trace2rules/cli.py` limited to Typer wiring and option parsing; put non-CLI logic in a dedicated module under `src/trace2rules/`.
 - [guidance] When adding, renaming, or removing a CLI command or option in `src/trace2rules/cli.py`, update the matching row in the `README.md` command table in the same change.
 
-The latest synthesis produced these four rules after the stale-path filter was corrected. Rules are marked `guidance` when no concrete CI, pre-commit, or lint check exists; enforceable rules require a specific check. Validate proposals with `audit --proposal`.
+The latest synthesis produced two rules from nine selected findings. Rules are marked `guidance` when no concrete CI, pre-commit, or lint check exists; enforceable rules require a specific check. Validate proposals with `audit --proposal`.
 
 ## Scope
 

@@ -1637,3 +1637,105 @@ def test_stale_filter_skips_roots_without_source_tree(tmp_path: Path) -> None:
         )
     ]
     assert _drop_stale_findings(findings, tmp_path) == findings
+
+
+def test_skill_candidate_scanner_finds_runbook_not_command_menu() -> None:
+    from trace2rules.audit.skill_candidates import scan_text
+
+    text = """# Agent instructions
+
+## Development Commands
+- Install: `make install`
+- Test: `make test`
+- Lint: `make lint`
+- Bench: `make bench`
+
+## Release
+1. Run `make build`.
+2. Create the tag.
+3. Push the tag and wait for CI.
+4. Verify the release page.
+"""
+    candidates = scan_text(text)
+    assert [candidate.heading for candidate in candidates] == ["Release"]
+    assert candidates[0].line_start == 9
+    assert candidates[0].line_end == 13
+    assert any("ordered steps" in signal for signal in candidates[0].signals)
+
+
+def test_audit_payload_includes_skill_candidates(tmp_path: Path) -> None:
+    from trace2rules.agents import audit_payload
+
+    agents = tmp_path / "AGENTS.md"
+    agents.write_text(
+        "## Release\n\n1. Run `make build`.\n2. Push the tag.\n3. Verify CI is green.\n"
+    )
+    db = tmp_path / "skills.duckdb"
+    session = Session("s", "acme/repo")
+    write_sessions(db, [session])
+    con = connect(db)
+    try:
+        payload = audit_payload(con, "acme/repo", agents, root=tmp_path)
+    finally:
+        con.close()
+    assert payload["skill_candidates"][0]["heading"] == "Release"
+    assert payload["skill_candidates"][0]["line_start"] == 1
+
+
+def test_skill_scanner_requires_task_specific_procedure() -> None:
+    from trace2rules.audit.skill_candidates import scan_text
+
+    text = """## Adding New Packages
+1. Create the folder.
+2. Add the type-check script.
+
+## Regression Tests
+- Tag the test with the issue.
+- Use the fixture server.
+- Run the test on all browsers.
+- Verify it fails before the fix.
+"""
+    candidates = scan_text(text)
+    assert [candidate.heading for candidate in candidates] == ["Regression Tests"]
+
+
+def test_skill_candidate_uses_source_scope_override(tmp_path: Path) -> None:
+    from trace2rules.agents import audit_payload
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside" / "AGENTS.md"
+    outside.parent.mkdir()
+    outside.write_text("## Release\n\n1. Build.\n2. Tag.\n3. Verify.\n")
+    db = tmp_path / "scope.duckdb"
+    write_sessions(db, [Session("s", "acme/repo")])
+    con = connect(db)
+    try:
+        payload = audit_payload(
+            con, "acme/repo", outside, root=root, source_scope="repo"
+        )
+    finally:
+        con.close()
+    assert payload["skill_candidates"][0]["source_scope"] == "repo"
+
+
+def test_audit_prompt_escapes_skill_excerpt_pipes() -> None:
+    from trace2rules.agents import audit_prompt
+
+    prompt = audit_prompt(
+        {
+            "repo": "acme/repo",
+            "rules": [],
+            "skill_candidates": [
+                {
+                    "source_path": "AGENTS.md",
+                    "line_start": 1,
+                    "line_end": 2,
+                    "heading": "Release",
+                    "signals": ["ordered steps"],
+                    "excerpt": "run `a | b`",
+                }
+            ],
+        }
+    )
+    assert r"run `a \| b`" in prompt

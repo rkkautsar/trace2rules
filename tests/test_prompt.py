@@ -99,7 +99,9 @@ def test_prompt_omits_detector_recommendations() -> None:
     assert "### 1. context: make unit" in prompt
     assert "confidence medium" in prompt
     assert '"confidence":' not in prompt
-    assert "Return only copyable Markdown rules" in prompt
+    assert "Return copyable Markdown rules first" in prompt
+    assert "## Skill candidates" in prompt
+    assert "not AGENTS.md content" in prompt
     assert "untrusted data" in prompt
     assert "Do not encode memories" in prompt
     assert "prevents the failure before it happens" in prompt

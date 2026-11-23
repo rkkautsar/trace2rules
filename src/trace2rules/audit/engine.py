@@ -32,6 +32,7 @@ from .enforcement import (
     discover_enforcement,
     enforcement_for as _enforcement,
 )
+from .skill_candidates import scan_file
 from .reads import (
     _is_source_read,
     _read_hygiene,
@@ -863,6 +864,10 @@ def audit_payload(
                 break
         if root is None:
             root = _agents_root(paths[0].parent)
+    skill_candidates = []
+    for file in paths:
+        scope = source_scope or _source_scope(str(file.resolve()), root)
+        skill_candidates.extend(candidate.as_dict() for candidate in scan_file(file, source_scope=scope))
     coverage = con.execute(
         "SELECT count(*), count(*) FILTER (WHERE started_at IS NOT NULL) FROM sessions WHERE repo = ?",
         [repo],
@@ -908,6 +913,7 @@ def audit_payload(
             for audit in audits
             if audit.source_scope == "global"
         ],
+        "skill_candidates": skill_candidates,
     }
 
 
@@ -1025,6 +1031,39 @@ def audit_prompt(payload: dict[str, Any]) -> str:
         lines.extend(["## Existing rules", *rule_lines(payload.get("rules", []))])
         if payload.get("global_rules"):
             lines.extend(["", "## Global rules", *rule_lines(payload.get("global_rules", []))])
+    if payload.get("skill_candidates"):
+        def cell(value: object) -> str:
+            return redact_text(str(value)).replace("|", "\\|").replace("\n", " ")
+
+        lines.extend(
+            [
+                "",
+                "## Possible skill extractions",
+                "| Source | Lines | Section | Signals | Excerpt |",
+                "|---|---|---|---|---|",
+            ]
+        )
+        for candidate in payload["skill_candidates"]:
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        cell(candidate.get("source_path", ""))[:120],
+                        f"{candidate.get('line_start')}-{candidate.get('line_end')}",
+                        cell(candidate.get("heading", ""))[:80],
+                        cell(", ".join(candidate.get("signals", []))),
+                        cell(candidate.get("excerpt", ""))[:180],
+                    ]
+                )
+                + " |"
+            )
+        lines.extend(
+            [
+                "",
+                "For each candidate, recommend extract, reuse an existing skill/reference, or keep in AGENTS.md. "
+                "Do not treat these as rule violations.",
+            ]
+        )
     if payload.get("warning"):
         lines.extend(["", f"Warning: {payload['warning']}"])
     lines.extend(
